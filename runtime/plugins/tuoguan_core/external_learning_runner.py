@@ -13,8 +13,9 @@ import json
 import uuid
 from typing import Any
 
-from .autonomous_employee_loop import _owner_user_id, _system_identity
 from .digital_employee_state import submit_industry_learning_candidate
+from .employee_identity import owner_user_id as _owner_user_id
+from .employee_identity import system_identity as _system_identity
 from .research import collect_public_research
 from .store import TuoguanStore
 from .tenant_context import current_tenant_id, read_institution_operating_model

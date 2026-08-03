@@ -2512,7 +2512,13 @@ def _fold_hermes_work_items(store: TuoguanStore) -> dict[str, dict[str, Any]]:
 
 def _compact_work_item_view(item: dict[str, Any], *, update_count: int = 0) -> dict[str, Any]:
     view = deepcopy(item)
-    view.pop("updates", None)
+    updates = view.get("updates")
+    if isinstance(updates, list):
+        view["updates"] = _strip_forbidden(deepcopy(updates[-10:]))
+        if len(updates) > 10:
+            view["updates_total_count"] = len(updates)
+    else:
+        view.pop("updates", None)
     plan = view.get("execution_plan")
     if isinstance(plan, list):
         compact_plan = []

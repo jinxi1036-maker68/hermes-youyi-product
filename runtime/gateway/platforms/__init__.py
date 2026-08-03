@@ -1,0 +1,2 @@
+"""Gateway platform compatibility package."""
+

@@ -13,12 +13,13 @@ import argparse
 import json
 from typing import Any
 
-from .autonomous_employee_loop import _owner_user_id, _system_identity
 from .digital_employee_state import (
     query_attention_threads,
     query_autonomous_work_brief,
     query_hermes_work_items,
 )
+from .employee_identity import owner_user_id as _owner_user_id
+from .employee_identity import system_identity as _system_identity
 from .store import TuoguanStore
 from .tenant_context import current_tenant_id
 from .write_guard import assert_business_write_allowed, authorized_system_write

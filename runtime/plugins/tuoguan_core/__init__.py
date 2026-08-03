@@ -11,10 +11,8 @@ from pathlib import Path
 from typing import Any
 
 from .models import RouteResult
-from .router import TuoguanRouter
 from .store import TuoguanStore, TuoguanStoreError
 from .tenant_context import current_tenant_id
-from .tools import TOOLS, TOOLSET
 from .digital_employee_state import (
     ATTENTION_THREADS_FILE,
     BUSINESS_EVENTS_FILE,
@@ -24,7 +22,6 @@ from .digital_employee_state import (
     update_attention_thread,
     update_relationship_touch_candidate_status,
 )
-from .learning_loop import generate_daily_learning_report, handle_learning_message, process_pending_corrections
 from .runtime_foundation import (
     foundation_enabled as _foundation_enabled,
     block_tool_after_terminal_result as _foundation_block_tool_after_terminal_result,
@@ -63,7 +60,7 @@ def _log_runtime_module_manifest() -> None:
         except Exception as exc:
             logger.error("P0_RUNTIME_MODULE name=%s load_error=%s", name, exc)
 
-_ROUTER: TuoguanRouter | None = None
+_ROUTER: Any | None = None
 _DAILY_PUSH_TASKS: dict[int, asyncio.Task] = {}
 _DAILY_PUSH_WAKE_EVENTS: dict[int, asyncio.Event] = {}
 _ACTIVE_WECom_USERS: dict[str, datetime] = {}
@@ -91,9 +88,11 @@ def _reply_owner_for_routed_reply(metadata: dict[str, Any], reply: str) -> str:
     return "model"
 
 
-def _router() -> TuoguanRouter:
+def _router() -> Any:
     global _ROUTER
     if _ROUTER is None:
+        from .router import TuoguanRouter
+
         _ROUTER = TuoguanRouter()
     return _ROUTER
 
@@ -1172,6 +1171,8 @@ def _on_post_gateway_response(**kwargs: Any) -> None:
 
 def register(ctx) -> None:
     """Register the tutoring business router for Enterprise WeChat callback DMs."""
+    from .tools import TOOLS, TOOLSET
+
     _log_runtime_module_manifest()
     # Model-led restore: old business routers and runtime prompt/response hooks are
     # not registered on the main message path. Keep tools plus passive audit only.
