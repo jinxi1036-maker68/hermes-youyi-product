@@ -1,0 +1,326 @@
+from __future__ import annotations
+
+from datetime import datetime, timezone, timedelta
+import json
+from pathlib import Path
+
+
+def _write_json(path: Path, name: str, payload) -> None:
+    path.mkdir(parents=True, exist_ok=True)
+    (path / name).write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
+
+
+def _append_jsonl(path: Path, name: str, rows: list[dict]) -> None:
+    path.mkdir(parents=True, exist_ok=True)
+    with (path / name).open("w", encoding="utf-8") as handle:
+        for row in rows:
+            handle.write(json.dumps(row, ensure_ascii=False, separators=(",", ":")) + "\n")
+
+
+def _seed_store(tmp_path: Path):
+    from plugins.tuoguan_core.store import TuoguanStore
+
+    _write_json(tmp_path, "write_guard_config.json", {"enabled": True})
+    _write_json(
+        tmp_path,
+        "wecom_whitelist.json",
+        {"super_users": ["boss1"], "allowed_users": ["teacher1"], "user_roles": {"boss1": "boss", "teacher1": "teacher"}},
+    )
+    _write_json(tmp_path, "teacher_wecom_map.json", {"金总": "boss1", "李老师": "teacher1"})
+    _write_json(tmp_path, "staff.json", {"teacher1": {"name": "李老师", "role": "teacher"}})
+    _write_json(tmp_path, "students.json", {})
+    _write_json(tmp_path, "tasks.json", [])
+    _write_json(tmp_path, "notification_outbox.json", [])
+    _write_json(tmp_path, "academic_term_state.json", {"state": "summer_transition", "label": "暑期过渡期"})
+    _append_jsonl(
+        tmp_path,
+        "hermes_work_items.jsonl",
+        [
+            {
+                "work_item_id": "work-goal-1",
+                "tenant_id": "youyi_tuoguan",
+                "record_type": "work_item",
+                "status": "waiting",
+                "focus_key": "goal:sept_renewal",
+                "title": "目标推进：九月份续费率更稳",
+                "focus_summary": "等待老板确认服务类型和主责老师。",
+                "current_waiting": {"wait_for": "老板确认服务类型和主责老师"},
+                "next_attention_at": "2026-07-28T10:00:00+08:00",
+                "created_at": "2026-07-28T08:00:00+08:00",
+                "updated_at": "2026-07-28T08:00:00+08:00",
+                "source": {"actor_user_id": "boss1", "actor_role": "boss"},
+                "auto_effects": {"forces_next_action": False, "changes_router": False},
+            }
+        ],
+    )
+    return TuoguanStore(tmp_path)
+
+
+def _decision(_materials: dict) -> dict:
+    return {
+        "employee_summary": "目标卡在责任确认，不是已经完成。",
+        "institution_understanding": "优益托管当前缺少服务类型和部分主责老师事实。",
+        "goal_progress_view": "应先补事实，再准备第一批沟通名单。",
+        "observations": [{"event_type": "goal_blocked_by_missing_facts", "event_text": "续费目标缺服务关系事实。"}],
+        "work_item_updates": [
+            {
+                "focus_key": "goal:sept_renewal",
+                "title": "目标推进：九月份续费率更稳",
+                "focus_summary": "目标推进卡在责任确认。",
+                "status": "waiting",
+                "update_text": "等待老板确认服务类型、主责老师和当前优先级。",
+                "blocked_by": [{"type": "missing_fact", "text": "服务类型和主责老师未确认"}],
+                "ask_candidates": [{"ask_role": "boss", "question": "请确认服务类型、主责老师和当前优先级。"}],
+                "owner_escalation_reason": "缺少老板确认后无法进入第一批推进。",
+                "value_progress_note": "补齐后可减少错派并推进续费沟通。",
+                "current_waiting": {"wait_type": "owner_confirmation", "wait_for": "服务类型、主责老师、优先级"},
+                "next_contact_after": "2026-07-28T10:30:00+08:00",
+                "next_attention_at": "2026-07-28T11:00:00+08:00",
+            }
+        ],
+        "questions_to_humans": [{"ask_role": "boss", "question": "请确认服务类型、主责老师和当前优先级。"}],
+        "boss_attention_candidates": [
+            {
+                "focus_key": "goal:sept_renewal",
+                "reason": "目标推进缺老板确认事实。",
+                "message": "金总，我现在推进“九月份续费率更稳”卡在责任确认：需要你确认服务类型、主责老师和当前优先级。确认后我会先准备第一批重点沟通名单，不会直接安排老师或发家长。",
+                "urgency": "normal",
+            }
+        ],
+        "self_review": {"what_i_checked": "目标和工作项", "quality_score": 88},
+        "external_actions": [],
+    }
+
+
+def test_daytime_employee_loop_queues_owner_attention_only(tmp_path):
+    from plugins.tuoguan_core.autonomous_employee_loop import run_autonomous_employee_loop
+    from plugins.tuoguan_core.digital_employee_state import query_hermes_work_items
+    from plugins.tuoguan_core.models import UserIdentity
+
+    store = _seed_store(tmp_path)
+    cn_tz = timezone(timedelta(hours=8))
+    result = run_autonomous_employee_loop(store, now=datetime(2026, 7, 28, 10, 0, tzinfo=cn_tz), decision_provider=_decision)
+
+    assert result["ok"] is True
+    assert result["work_cadence"]["owner_attention_allowed"] is True
+    assert any(row["kind"] == "owner_attention_queued" and row["ok"] for row in result["writes"])
+    outbox = json.loads((tmp_path / "notification_outbox.json").read_text(encoding="utf-8"))
+    assert len(outbox) == 1
+    assert outbox[0]["notification_type"] == "autonomous_owner_attention"
+    assert outbox[0]["target_user_id"] == "boss1"
+    assert outbox[0]["touser"] == "boss1"
+    assert outbox[0]["role"] == "boss"
+    assert outbox[0]["auto_effects"]["sends_parent_messages"] is False
+    assert outbox[0]["auto_effects"]["sends_teacher_messages"] is False
+    assert json.loads((tmp_path / "tasks.json").read_text(encoding="utf-8")) == []
+
+    identity = UserIdentity(platform="system", platform_user_id="boss1", canonical_user_id="boss1", person_name="金总", role="boss", approval_state="approved")
+    item = query_hermes_work_items(store, identity=identity, focus_key="goal:sept_renewal")["items"][0]
+    assert item["blocked_by"][0]["type"] == "missing_fact"
+    assert item["ask_candidates"][0]["ask_role"] == "boss"
+    assert item["value_progress_note"]
+
+
+def test_evening_employee_loop_defers_owner_attention(tmp_path):
+    from plugins.tuoguan_core.autonomous_employee_loop import run_autonomous_employee_loop
+
+    store = _seed_store(tmp_path)
+    cn_tz = timezone(timedelta(hours=8))
+    result = run_autonomous_employee_loop(store, now=datetime(2026, 7, 28, 20, 0, tzinfo=cn_tz), decision_provider=_decision)
+
+    assert result["ok"] is True
+    assert result["work_cadence"]["owner_attention_allowed"] is False
+    assert not any(row["kind"] == "owner_attention_queued" and row["ok"] for row in result["writes"])
+    assert json.loads((tmp_path / "notification_outbox.json").read_text(encoding="utf-8")) == []
+
+
+def test_autonomous_policy_is_not_blanket_ban_on_asking(tmp_path):
+    from plugins.tuoguan_core.autonomous_employee_loop import build_employee_loop_materials, _SYSTEM_PROMPT
+    from plugins.tuoguan_core.models import UserIdentity
+
+    store = _seed_store(tmp_path)
+    identity = UserIdentity(platform="system", platform_user_id="boss1", canonical_user_id="boss1", person_name="金总", role="boss", approval_state="approved")
+    materials = build_employee_loop_materials(store, identity=identity, timestamp=datetime(2026, 7, 28, 20, 0, tzinfo=timezone(timedelta(hours=8))))
+
+    assert materials["owner_attention_policy"]["not_a_blanket_ban"]
+    assert "cannot proactively ask" in _SYSTEM_PROMPT
+    assert "Hermes may ask the current conversation participant" in _SYSTEM_PROMPT
+
+
+def test_autonomous_materials_use_confirmed_public_employee_name(tmp_path):
+    from plugins.tuoguan_core.autonomous_employee_loop import build_employee_loop_materials, _SYSTEM_PROMPT
+    from plugins.tuoguan_core.models import UserIdentity
+
+    store = _seed_store(tmp_path)
+    (tmp_path / "operational_facts.json").write_text(json.dumps({
+        "schema_version": 1,
+        "tenant_id": "youyi_tuoguan",
+        "facts": [
+            {
+                "fact_id": "fact_name_xiaoyou",
+                "tenant_id": "youyi_tuoguan",
+                "fact_type": "owner_rule",
+                "subject": "数字员工称呼",
+                "value": "对外称呼为\"小优\"",
+                "scope": "institution",
+                "risk_level": "low",
+                "status": "active",
+                "source_text": "金总说：我给你起一个名字，你以后叫小优",
+                "confirmed_by": "boss1",
+                "confirmed_at": "2026-08-01T21:37:53+08:00",
+            }
+        ],
+    }, ensure_ascii=False), encoding="utf-8")
+    identity = UserIdentity(platform="system", platform_user_id="boss1", canonical_user_id="boss1", person_name="金总", role="boss", approval_state="approved")
+    materials = build_employee_loop_materials(store, identity=identity, timestamp=datetime(2026, 8, 3, 8, 0, tzinfo=timezone(timedelta(hours=8))))
+
+    assert materials["public_identity"]["public_name"] == "小优"
+    assert materials["public_identity"]["internal_name"] == "Hermes"
+    assert "Xiaoyou" in materials["identity"]
+    assert "public-facing digital employee" in _SYSTEM_PROMPT
+
+
+def test_owner_attention_is_deduplicated_per_focus_per_day(tmp_path):
+    from plugins.tuoguan_core.autonomous_employee_loop import run_autonomous_employee_loop
+
+    store = _seed_store(tmp_path)
+    cn_tz = timezone(timedelta(hours=8))
+    now = datetime(2026, 7, 28, 10, 0, tzinfo=cn_tz)
+    first = run_autonomous_employee_loop(store, now=now, decision_provider=_decision)
+    second = run_autonomous_employee_loop(store, now=now.replace(hour=11), decision_provider=_decision)
+
+    assert first["ok"] is True
+    assert second["ok"] is True
+    outbox = json.loads((tmp_path / "notification_outbox.json").read_text(encoding="utf-8"))
+    assert len(outbox) == 1
+    assert any(row["kind"] == "owner_attention_deduplicated" and row["ok"] for row in second["writes"])
+
+
+def test_owner_question_is_bridged_to_attention_candidate(tmp_path):
+    from plugins.tuoguan_core.autonomous_employee_loop import run_autonomous_employee_loop
+
+    def decision_without_candidate(_materials: dict) -> dict:
+        return {
+            "employee_summary": "续费目标需要老板确认优先抓哪类未续原因。",
+            "institution_understanding": "已有续费原因分类。",
+            "goal_progress_view": "缺老板优先级后才能继续整理候选。",
+            "observations": [],
+            "work_item_updates": [
+                {
+                    "focus_key": "goal:sept_renewal",
+                    "title": "目标推进：九月份续费率更稳",
+                    "focus_summary": "需要老板确认优先级。",
+                    "status": "active",
+                    "update_text": "需要老板确认先抓哪类未续原因。",
+                    "next_actions": ["按老板确认的优先类别整理候选和话术。"],
+                    "blocked_by": [{"type": "missing_owner_priority", "text": "未确认优先抓哪类未续原因"}],
+                }
+            ],
+            "questions_to_humans": [
+                {
+                    "ask_role": "boss",
+                    "reason": "缺老板确认：价格、转校、等开学三类未续原因先抓哪一类。",
+                    "question": "请确认价格、转校、等开学三类里，今天先优先抓哪一类？",
+                    "urgency": "normal",
+                }
+            ],
+            "boss_attention_candidates": [],
+            "institution_fact_gaps": [],
+            "value_progress_entries": [],
+            "self_review": {},
+            "external_actions": [],
+        }
+
+    store = _seed_store(tmp_path)
+    cn_tz = timezone(timedelta(hours=8))
+    result = run_autonomous_employee_loop(store, now=datetime(2026, 7, 28, 10, 0, tzinfo=cn_tz), decision_provider=decision_without_candidate)
+
+    assert result["ok"] is True
+    assert any(row["kind"] == "owner_attention_queued" and row["ok"] for row in result["writes"])
+    outbox = json.loads((tmp_path / "notification_outbox.json").read_text(encoding="utf-8"))
+    assert len(outbox) == 1
+    assert "卡点：" in outbox[0]["content"]
+    assert "需要你确认：" in outbox[0]["content"]
+    assert "确认后：" in outbox[0]["content"]
+    assert "价格、转校、等开学" in outbox[0]["content"]
+
+    attention_rows = [
+        json.loads(line)
+        for line in (tmp_path / "attention_threads.jsonl").read_text(encoding="utf-8").splitlines()
+        if line.strip()
+    ]
+    assert attention_rows[-1]["status"] == "queued"
+    assert attention_rows[-1]["source_decision_summary"]
+    assert "价格、转校、等开学" in json.dumps(attention_rows[-1]["needed_facts"], ensure_ascii=False)
+
+
+def test_deferred_service_relation_question_is_not_bridged(tmp_path):
+    from plugins.tuoguan_core.autonomous_employee_loop import run_autonomous_employee_loop
+
+    def deferred_relation_question(_materials: dict) -> dict:
+        return {
+            "employee_summary": "新学期服务关系缺失。",
+            "institution_understanding": "",
+            "goal_progress_view": "",
+            "observations": [],
+            "work_item_updates": [
+                {
+                    "focus_key": "goal:sept_renewal",
+                    "title": "目标推进：九月份续费率更稳",
+                    "focus_summary": "服务关系延后确认。",
+                    "status": "active",
+                    "update_text": "服务关系延后确认。",
+                }
+            ],
+            "questions_to_humans": [
+                {
+                    "ask_role": "boss",
+                    "reason": "缺少新学期服务关系。",
+                    "question": "请确认新学期名单、服务类型和主责老师。",
+                    "urgency": "normal",
+                }
+            ],
+            "boss_attention_candidates": [],
+            "institution_fact_gaps": [],
+            "value_progress_entries": [],
+            "self_review": {},
+            "external_actions": [],
+        }
+
+    store = _seed_store(tmp_path)
+    cn_tz = timezone(timedelta(hours=8))
+    result = run_autonomous_employee_loop(
+        store,
+        now=datetime(2026, 7, 28, 10, 0, tzinfo=cn_tz),
+        decision_provider=deferred_relation_question,
+        wakeup_summary={"term_state": {"service_relation_policy": "defer_until_new_term"}},
+    )
+
+    assert result["ok"] is True
+    assert not any(row["kind"] == "owner_attention_queued" and row["ok"] for row in result["writes"])
+    assert json.loads((tmp_path / "notification_outbox.json").read_text(encoding="utf-8")) == []
+
+
+def test_generic_owner_attention_candidate_is_rejected(tmp_path):
+    from plugins.tuoguan_core.autonomous_employee_loop import run_autonomous_employee_loop
+
+    def generic_candidate(_materials: dict) -> dict:
+        base = _decision(_materials)
+        base["boss_attention_candidates"] = [
+            {
+                "focus_key": "goal:sept_renewal",
+                "reason": "需要沟通。",
+                "message": "金总，我整理好了情况。",
+                "urgency": "normal",
+            }
+        ]
+        base["questions_to_humans"] = []
+        return base
+
+    store = _seed_store(tmp_path)
+    cn_tz = timezone(timedelta(hours=8))
+    result = run_autonomous_employee_loop(store, now=datetime(2026, 7, 28, 10, 0, tzinfo=cn_tz), decision_provider=generic_candidate)
+
+    assert result["ok"] is True
+    assert not any(row["kind"] == "owner_attention_queued" and row["ok"] for row in result["writes"])
+    assert json.loads((tmp_path / "notification_outbox.json").read_text(encoding="utf-8")) == []

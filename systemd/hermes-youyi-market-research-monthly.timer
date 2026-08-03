@@ -1,0 +1,10 @@
+[Unit]
+Description=Run Hermes Youyi local market research report on the first day of each month at 09:30
+
+[Timer]
+OnCalendar=*-*-01 09:30:00
+Persistent=false
+Unit=hermes-youyi-market-research-monthly.service
+
+[Install]
+WantedBy=timers.target
