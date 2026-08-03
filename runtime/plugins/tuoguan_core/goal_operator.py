@@ -17,6 +17,7 @@ from typing import Any
 
 from .models import UserIdentity
 from .store import TuoguanStore
+from .tenant_context import current_tenant_id
 from .responsibility_resolver import (
     REGULAR_PROGRAM_ID,
     regular_manager_names,
@@ -508,7 +509,7 @@ def confirm_goal(store: TuoguanStore, *, identity: UserIdentity, goal_text: str,
     goal = {
         "goal_id": goal_id,
         "goal_type": GOAL_TYPE_PARENT_COMMUNICATION,
-        "tenant_id": "youyi_tuoguan",
+        "tenant_id": current_tenant_id(),
         "program_id": program_id,
         "status": "confirmed",
         "goal_text": str(goal_text or "").strip(),

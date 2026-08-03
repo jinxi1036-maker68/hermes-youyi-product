@@ -265,6 +265,7 @@ def build_runtime_env(tenant_id: str, tenant_root: Path, profile: dict[str, Any]
         f"HERMES_TENANT_CONFIG_DIR={tenant_root / 'config'}",
         f"HERMES_TENANT_MEMORY_DIR={tenant_root / 'memory'}",
         f"HERMES_TENANT_SKILLS_DIR={tenant_root / 'skills'}",
+        "HERMES_TENANT_OPERATING_MODEL_FILE=institution_operating_model.json",
         f"HERMES_TIMEZONE={operation.get('timezone', 'Asia/Shanghai')}",
         "",
     ])

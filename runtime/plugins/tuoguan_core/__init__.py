@@ -13,6 +13,7 @@ from typing import Any
 from .models import RouteResult
 from .router import TuoguanRouter
 from .store import TuoguanStore, TuoguanStoreError
+from .tenant_context import current_tenant_id
 from .tools import TOOLS, TOOLSET
 from .digital_employee_state import (
     ATTENTION_THREADS_FILE,
@@ -748,7 +749,7 @@ def _append_notification_audit(store: TuoguanStore, item: dict[str, Any], event:
     path = store.path_for("business_action_audit.jsonl")
     payload = {
         "audit_event_id": f"audit_notification_{datetime.now().strftime('%Y%m%d%H%M%S%f')}",
-        "tenant_id": "youyi_tuoguan",
+        "tenant_id": current_tenant_id(),
         "channel": "wecom_callback",
         "event": event,
         "action": str(item.get("action") or "notification"),
@@ -1162,7 +1163,7 @@ def _on_post_gateway_response(**kwargs: Any) -> None:
         observe_completed_message(
             data_dir=_router().store.data_dir,
             message_id=str(getattr(event, "message_id", "") or ""),
-            tenant_id="youyi_tuoguan",
+            tenant_id=current_tenant_id(),
             channel="wecom_callback",
         )
     except Exception:

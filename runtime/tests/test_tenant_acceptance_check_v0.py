@@ -54,6 +54,10 @@ def test_acceptance_passes_for_generated_demo(tmp_path):
     assert reports
     report = reports[-1].read_text(encoding="utf-8")
     assert "status: `PASS`" in report
+    assert "## Runtime Context" in report
+    assert "HERMES_TENANT_ID: `demo_tuoguan`" in report
+    assert "HERMES_TENANT_OPERATING_MODEL_FILE: `institution_operating_model.json`" in report
+    assert "forbidden_marker_count: `0`" in report
 
 
 def test_acceptance_fails_when_core_file_missing(tmp_path):
@@ -92,3 +96,17 @@ def test_acceptance_fails_on_plain_secret_or_parent_auto_send(tmp_path):
     assert result.returncode != 0
     assert "企业微信明文密钥字段禁止出现" in result.stdout
     assert "家长自动发送必须关闭" in result.stdout
+
+
+def test_acceptance_fails_on_runtime_tenant_mismatch(tmp_path):
+    tenant_root = generate_demo(tmp_path)
+    runtime_env = tenant_root / "config" / "runtime.env"
+    runtime_env.write_text(
+        runtime_env.read_text(encoding="utf-8").replace("HERMES_TENANT_ID=demo_tuoguan", "HERMES_TENANT_ID=wrong_tenant"),
+        encoding="utf-8",
+    )
+
+    result = run_acceptance(tenant_root)
+
+    assert result.returncode != 0
+    assert "HERMES_TENANT_ID 与 tenant_profile 不一致" in result.stdout

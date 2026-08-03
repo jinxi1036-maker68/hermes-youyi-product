@@ -26,6 +26,7 @@ from .digital_employee_state import (
 )
 from .models import UserIdentity
 from .store import TuoguanStore
+from .tenant_context import current_tenant_id
 from .write_guard import authorized_system_write
 
 
@@ -69,7 +70,7 @@ def run_wakeup_v2_dry_run(
     risks = _risk_items(service_relations, weekly_records, parent_coverage, goals, safety, notifications, term_state)
     summary = {
         "schema_version": 1,
-        "tenant_id": "youyi_tuoguan",
+        "tenant_id": current_tenant_id(),
         "report_type": "wakeup_v2_dry_run",
         "generated_at": timestamp.isoformat(timespec="seconds"),
         "read_only": True,

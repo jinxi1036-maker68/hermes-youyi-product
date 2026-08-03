@@ -20,6 +20,7 @@ from .digital_employee_state import (
 )
 from .models import UserIdentity
 from .store import TuoguanStore
+from .tenant_context import current_tenant_id
 from .wakeup_v2 import run_wakeup_v2_dry_run
 from .autonomous_employee_loop import run_autonomous_employee_loop
 
@@ -57,7 +58,7 @@ def run_autonomous_wakeup_once(
 
     summary = {
         "schema_version": 1,
-        "tenant_id": "youyi_tuoguan",
+        "tenant_id": current_tenant_id(),
         "report_type": "autonomous_wakeup_runner_v1",
         "generated_at": timestamp.isoformat(timespec="seconds"),
         "read_only": True,

@@ -17,6 +17,7 @@ from .autonomous_employee_loop import _owner_user_id, _system_identity
 from .digital_employee_state import submit_industry_learning_candidate
 from .research import collect_public_research
 from .store import TuoguanStore
+from .tenant_context import current_tenant_id, read_institution_operating_model
 from .write_guard import authorized_system_write
 
 
@@ -59,6 +60,7 @@ def run_external_learning(
         normalized_mode = "weekly_industry"
     queries = _queries_for_mode(normalized_mode, topic=topic, query=query, store=actual_store)
     run_id = f"external_research:{normalized_mode}:{timestamp.strftime('%Y%m%d%H%M%S')}"
+    tenant_id = current_tenant_id()
     owner_id = _owner_user_id(actual_store)
     identity = _system_identity()
 
@@ -106,7 +108,7 @@ def run_external_learning(
 
     run_row = {
         "run_id": run_id,
-        "tenant_id": "youyi_tuoguan",
+        "tenant_id": tenant_id,
         "mode": normalized_mode,
         "queries": queries,
         "evidence_count": sum(int(item.get("evidence_count") or 0) for item in research_results),
@@ -174,7 +176,7 @@ def run_external_learning(
             WEEKLY_MARKET_REPORT_RUNS_FILE,
             {
                 "run_id": f"market_report:{normalized_mode}:{timestamp.strftime('%Y%m%d')}",
-                "tenant_id": "youyi_tuoguan",
+                "tenant_id": tenant_id,
                 "mode": normalized_mode,
                 "notification_id": str(outbox_item.get("id") or ""),
                 "queued": bool(outbox_item),
@@ -217,7 +219,7 @@ def _queries_for_mode(mode: str, *, topic: str, query: str, store: TuoguanStore)
 
 
 def _location_hint(store: TuoguanStore) -> str:
-    model = store.read_json("youyi_operating_model.json", {})
+    model = read_institution_operating_model(store)
     if not isinstance(model, dict):
         return ""
     parts: list[str] = []
@@ -260,7 +262,7 @@ def _market_candidate(query: str, evidence: list[Any], timestamp: datetime, resu
     sources = [item for item in evidence if isinstance(item, dict)]
     return {
         "candidate_id": f"market_candidate_{uuid.uuid4().hex[:12]}",
-        "tenant_id": "youyi_tuoguan",
+        "tenant_id": current_tenant_id(),
         "market_scope": "xiangcheng_public_web",
         "query": query,
         "finding": (
@@ -284,7 +286,7 @@ def _competitor_profiles(query: str, evidence: list[Any], timestamp: datetime) -
             continue
         rows.append({
             "profile_id": f"competitor_profile_{uuid.uuid4().hex[:12]}",
-            "tenant_id": "youyi_tuoguan",
+            "tenant_id": current_tenant_id(),
             "query": query,
             "name_or_title": str(item.get("title") or "")[:180],
             "public_url": str(item.get("url") or ""),

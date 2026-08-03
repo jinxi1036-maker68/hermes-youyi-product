@@ -20,6 +20,7 @@ from .digital_employee_state import (
     query_hermes_work_items,
 )
 from .store import TuoguanStore
+from .tenant_context import current_tenant_id
 from .write_guard import assert_business_write_allowed, authorized_system_write
 
 DAILY_REPORT_RUNS_FILE = "daily_report_runs.jsonl"
@@ -39,6 +40,7 @@ def queue_daily_boss_report(
     report_kind = _normalize_kind(kind)
     actual_store = store or TuoguanStore()
     timestamp = now or datetime.now().astimezone()
+    tenant_id = current_tenant_id()
     day = timestamp.strftime("%Y%m%d")
     notification_id = f"autonomous_daily_report:{day}:{report_kind}"
     owner_id = _owner_user_id(actual_store)
@@ -99,7 +101,7 @@ def queue_daily_boss_report(
             DAILY_REPORT_RUNS_FILE,
             {
                 "run_id": f"daily_report_run:{day}:{report_kind}",
-                "tenant_id": "youyi_tuoguan",
+                "tenant_id": tenant_id,
                 "report_kind": report_kind,
                 "notification_id": notification_id,
                 "target_user_id": owner_id,
@@ -166,7 +168,7 @@ def sync_daily_report_delivery_status(
         {
             "record_type": "daily_report_delivery_status",
             "run_id": f"daily_report_run:{_day_from_notification(outbox_item)}:{report_kind}",
-            "tenant_id": "youyi_tuoguan",
+            "tenant_id": current_tenant_id(),
             "report_kind": report_kind,
             "notification_id": notification_id,
             "target_user_id": str(outbox_item.get("target_user_id") or outbox_item.get("touser") or ""),

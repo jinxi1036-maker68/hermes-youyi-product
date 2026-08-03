@@ -57,6 +57,10 @@ def test_tenant_initializer_generates_clean_demo_tenant(tmp_path):
     assert staff["demo_manager_001"]["role"] == "manager"
     assert staff["demo_teacher_001"]["role"] == "teacher"
 
+    runtime_env = (tenant_root / "config" / "runtime.env").read_text(encoding="utf-8")
+    assert "HERMES_TENANT_ID=demo_tuoguan" in runtime_env
+    assert "HERMES_TENANT_OPERATING_MODEL_FILE=institution_operating_model.json" in runtime_env
+
     for ledger in [
         "hermes_work_items.jsonl",
         "wakeup_requests.jsonl",

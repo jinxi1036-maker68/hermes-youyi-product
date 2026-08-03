@@ -77,6 +77,8 @@ class AcceptanceResult:
         self.warnings: list[str] = []
         self.info: list[str] = []
         self.evidence: list[str] = []
+        self.runtime_context: dict[str, str] = {}
+        self.pollution_hits: list[str] = []
 
     @property
     def ok(self) -> bool:
@@ -101,6 +103,20 @@ def read_json(path: Path, result: AcceptanceResult) -> Any:
     except Exception as exc:
         result.fail(f"JSON 文件无法解析：{path} ({exc})")
         return None
+
+
+def read_env_file(path: Path, result: AcceptanceResult) -> dict[str, str]:
+    env: dict[str, str] = {}
+    if not path.is_file():
+        result.fail(f"缺少 runtime env 文件：{path.relative_to(path.parents[1]) if len(path.parents) > 1 else path}")
+        return env
+    for line in path.read_text(encoding="utf-8-sig").splitlines():
+        stripped = line.strip()
+        if not stripped or stripped.startswith("#") or "=" not in stripped:
+            continue
+        key, value = stripped.split("=", 1)
+        env[key.strip()] = value.strip()
+    return env
 
 
 def check_dirs(tenant_root: Path, result: AcceptanceResult) -> None:
@@ -174,6 +190,34 @@ def check_identity(loaded: dict[str, Any], result: AcceptanceResult) -> tuple[st
     return tenant_id, institution_name
 
 
+def check_runtime_context(tenant_root: Path, tenant_id: str, result: AcceptanceResult) -> None:
+    env = read_env_file(tenant_root / "config" / "runtime.env", result)
+    runtime_tenant_id = env.get("HERMES_TENANT_ID", "")
+    data_dir = env.get("HERMES_TUOGUAN_DATA_DIR", "")
+    operating_file = env.get("HERMES_TENANT_OPERATING_MODEL_FILE", "") or "institution_operating_model.json"
+    result.runtime_context = {
+        "HERMES_TENANT_ID": runtime_tenant_id or "<missing>",
+        "HERMES_TUOGUAN_DATA_DIR": data_dir or "<missing>",
+        "HERMES_TENANT_OPERATING_MODEL_FILE": operating_file,
+    }
+    if tenant_id and runtime_tenant_id != tenant_id:
+        result.fail("runtime.env 的 HERMES_TENANT_ID 与 tenant_profile 不一致。")
+    if not data_dir:
+        result.fail("runtime.env 缺少 HERMES_TUOGUAN_DATA_DIR。")
+    else:
+        try:
+            if Path(data_dir).expanduser().resolve() != (tenant_root / "data").resolve():
+                result.fail("runtime.env 的 HERMES_TUOGUAN_DATA_DIR 未指向当前租户 data 目录。")
+        except OSError:
+            result.fail("runtime.env 的 HERMES_TUOGUAN_DATA_DIR 无法解析。")
+    if Path(operating_file).name != operating_file:
+        result.fail("HERMES_TENANT_OPERATING_MODEL_FILE 必须是文件名，不能是路径。")
+    if not (tenant_root / "data" / operating_file).is_file():
+        result.fail(f"机构事实文件不存在：data/{operating_file}")
+    else:
+        result.add_evidence(f"机构事实文件：data/{operating_file}")
+
+
 def check_policy(loaded: dict[str, Any], result: AcceptanceResult) -> None:
     profile = loaded.get("config/tenant_profile.json") if isinstance(loaded.get("config/tenant_profile.json"), dict) else {}
     parent = profile.get("parent_communication_policy") if isinstance(profile.get("parent_communication_policy"), dict) else {}
@@ -220,7 +264,11 @@ def check_forbidden_markers(tenant_root: Path, result: AcceptanceResult) -> None
             continue
         found = [marker for marker in FORBIDDEN_MARKERS if marker in text]
         if found:
-            result.fail(f"发现禁止携带旧机构标记：{path.relative_to(tenant_root)} -> {', '.join(found)}")
+            hit = f"{path.relative_to(tenant_root)} -> {', '.join(found)}"
+            result.pollution_hits.append(hit)
+            result.fail(f"发现禁止携带旧机构标记：{hit}")
+    if not result.pollution_hits:
+        result.add_evidence("跨租户污染扫描：未发现禁止旧机构标记")
 
 
 def check_warnings(loaded: dict[str, Any], result: AcceptanceResult) -> None:
@@ -245,6 +293,10 @@ def render_report(tenant_root: Path, tenant_id: str, institution_name: str, resu
             return f"- {empty}"
         return "\n".join(f"- {item}" for item in items)
 
+    runtime_lines = "\n".join(
+        f"- {key}: `{value}`" for key, value in sorted(result.runtime_context.items())
+    ) or "- 未读取 runtime context"
+
     return f"""# Tenant Acceptance Report
 
 ## Summary
@@ -262,6 +314,15 @@ def render_report(tenant_root: Path, tenant_id: str, institution_name: str, resu
 ## Warnings
 
 {section(result.warnings, "无 warning")}
+
+## Runtime Context
+
+{runtime_lines}
+
+## Cross-Tenant Pollution Scan
+
+- forbidden_marker_count: `{len(result.pollution_hits)}`
+{section(result.pollution_hits, "未发现禁止旧机构标记")}
 
 ## Generated Evidence
 
@@ -290,6 +351,7 @@ def run_acceptance(tenant_root: Path, report_dir: Path | None = None) -> tuple[A
         loaded = check_files(tenant_root, result)
         check_ledgers(tenant_root, result)
         tenant_id, institution_name = check_identity(loaded, result)
+        check_runtime_context(tenant_root, tenant_id, result)
         check_policy(loaded, result)
         check_onboarding_materials(tenant_root, institution_name, result)
         check_forbidden_markers(tenant_root, result)

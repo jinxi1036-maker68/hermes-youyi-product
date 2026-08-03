@@ -13,6 +13,8 @@ from pathlib import Path
 from typing import Any, Iterator
 import uuid
 
+from .tenant_context import current_tenant_id
+
 
 PROTECTED_BUSINESS_FILES = {
     "tasks.json",
@@ -29,6 +31,7 @@ PROTECTED_BUSINESS_FILES = {
     "safety_test_events.json",
     "goal_operator_goals.json",
     "goal_operator_events.jsonl",
+    "institution_operating_model.json",
     "youyi_operating_model.json",
     "operational_facts.json",
     "operational_fact_candidates.jsonl",
@@ -98,7 +101,7 @@ def _append_critical_audit(data_dir: Path, payload: dict[str, Any]) -> str:
     audit_id = str(payload.get("audit_event_id") or f"audit_critical_{uuid.uuid4().hex}")
     row = {
         "audit_event_id": audit_id,
-        "tenant_id": "youyi_tuoguan",
+        "tenant_id": current_tenant_id(),
         "channel": "wecom_callback",
         "event": "unauthorized_write_blocked",
         "action": "business_write_guard",
@@ -162,7 +165,7 @@ def prepare_system_write(
     row = {
         "audit_event_id": audit_id,
         "ledger_id": ledger_id,
-        "tenant_id": "youyi_tuoguan",
+        "tenant_id": current_tenant_id(),
         "channel": "system_job",
         "event": "system_write_authorized",
         "action": job_name,

@@ -16,6 +16,7 @@ from typing import Any
 
 from .models import UserIdentity
 from .store import TuoguanStore
+from .tenant_context import current_tenant_id, read_institution_operating_model
 
 
 SERVICE_RELATIONS_FILE = "service_relations.json"
@@ -521,7 +522,7 @@ def submit_service_relation_fact_candidate(
 ) -> dict[str, Any]:
     row = {
         "candidate_id": _new_id("service_relation_candidate"),
-        "tenant_id": "youyi_tuoguan",
+        "tenant_id": current_tenant_id(),
         "student_name": str(student_name or "").strip(),
         "program_id": str(program_id or "regular_tuoguan"),
         "service_type": str(service_type or ""),
@@ -554,7 +555,7 @@ def submit_information_request_record(
 ) -> dict[str, Any]:
     row = {
         "request_id": _new_id("information_request"),
-        "tenant_id": "youyi_tuoguan",
+        "tenant_id": current_tenant_id(),
         "target_person": str(target_person or "").strip(),
         "reason": str(reason or ""),
         "question": str(question or ""),
@@ -631,7 +632,7 @@ def submit_information_request_update(
     row = {
         "event_id": _new_id("information_request_update"),
         "record_type": "information_request_update",
-        "tenant_id": "youyi_tuoguan",
+        "tenant_id": current_tenant_id(),
         "request_id": request_id,
         "status": status,
         "update_text": str(update_text or ""),
@@ -665,7 +666,7 @@ def submit_profile_candidate(
 ) -> dict[str, Any]:
     row = {
         "candidate_id": _new_id("profile_candidate"),
-        "tenant_id": "youyi_tuoguan",
+        "tenant_id": current_tenant_id(),
         "subject": str(subject or "").strip(),
         "subject_type": str(subject_type or ""),
         "profile_text": str(profile_text or ""),
@@ -708,7 +709,7 @@ def submit_profile_candidate_correction(
         return {"ok": False, "error": "profile_candidate_not_found", "message": "没有找到这条画像候选。"}
     row = {
         "correction_id": _new_id("profile_correction"),
-        "tenant_id": "youyi_tuoguan",
+        "tenant_id": current_tenant_id(),
         "candidate_id": candidate_id,
         "decision": decision,
         "correction_text": str(correction_text or ""),
@@ -737,7 +738,7 @@ def submit_goal_evidence(
 ) -> dict[str, Any]:
     row = {
         "evidence_id": _new_id("goal_evidence"),
-        "tenant_id": "youyi_tuoguan",
+        "tenant_id": current_tenant_id(),
         "goal_id": str(goal_id or "").strip(),
         "subject": str(subject or ""),
         "evidence_text": str(evidence_text or ""),
@@ -766,7 +767,7 @@ def submit_performance_evidence_candidate(
         return {"ok": False, "error": "permission_denied", "message": "绩效证据候选第一阶段仅允许老板或店长提交；不自动扣分、不改工资。"}
     row = {
         "candidate_id": _new_id("performance_evidence"),
-        "tenant_id": "youyi_tuoguan",
+        "tenant_id": current_tenant_id(),
         "staff_user_id": str(staff_user_id or "").strip(),
         "evidence_type": str(evidence_type or "execution"),
         "evidence_text": str(evidence_text or ""),
@@ -878,7 +879,7 @@ def submit_performance_evidence_response(
     row = {
         "response_id": _new_id("performance_response"),
         "record_type": "performance_evidence_response",
-        "tenant_id": "youyi_tuoguan",
+        "tenant_id": current_tenant_id(),
         "candidate_id": candidate_id,
         "staff_user_id": str(candidate.get("staff_user_id") or ""),
         "response_type": response_type,
@@ -919,7 +920,7 @@ def submit_value_ledger_entry(
         normalized_attribution = "participated"
     row = {
         "entry_id": _new_id("value_ledger"),
-        "tenant_id": "youyi_tuoguan",
+        "tenant_id": current_tenant_id(),
         "subject": str(subject or ""),
         "discovered": str(discovered or ""),
         "hermes_action": str(hermes_action or ""),
@@ -990,7 +991,7 @@ def submit_gray_observation(
         return {"ok": False, "error": "invalid_gray_observation_outcome", "message": "outcome 必须是 success、issue、unclear 或 note。"}
     row = {
         "observation_id": _new_id("gray_observation"),
-        "tenant_id": "youyi_tuoguan",
+        "tenant_id": current_tenant_id(),
         "scenario_id": str(scenario_id or "").strip(),
         "outcome": normalized_outcome,
         "observation_text": str(observation_text or "").strip(),
@@ -1068,7 +1069,7 @@ def submit_gray_rollout_decision(
         }
     row = {
         "decision_id": _new_id("gray_decision"),
-        "tenant_id": "youyi_tuoguan",
+        "tenant_id": current_tenant_id(),
         "decision_type": normalized_type,
         "decision_text": str(decision_text or "").strip(),
         "scope": str(scope or "").strip(),
@@ -1167,7 +1168,7 @@ def submit_gray_optimization_decision(
         }
     row = {
         "decision_id": _new_id("gray_optimization_decision"),
-        "tenant_id": "youyi_tuoguan",
+        "tenant_id": current_tenant_id(),
         "candidate_id": str(candidate_id or "").strip(),
         "source_observation_id": str(source_observation_id or "").strip(),
         "candidate_type": str(candidate_type or "").strip(),
@@ -1267,7 +1268,7 @@ def _institution_onboarding_milestones() -> list[dict[str, Any]]:
 
 
 def _institution_understanding_audit(store: TuoguanStore, identity: UserIdentity) -> dict[str, Any]:
-    operating_model = _read_state_dict(store, "youyi_operating_model.json")
+    operating_model = read_institution_operating_model(store)
     students = _students(store)
     active_regular = _active_regular_students(store, identity)
     staff_count = _count_list_json(store, "staff.json")
@@ -1320,7 +1321,7 @@ def _institution_understanding_audit(store: TuoguanStore, identity: UserIdentity
         })
     return {
         "known_facts": {
-            "tenant_id": "youyi_tuoguan",
+            "tenant_id": current_tenant_id(),
             "program_scope": (operating_model.get("scope_note") or "当前主要覆盖正式托管班"),
             "active_regular_student_count": len(active_regular),
             "current_goal_student_count": current_goal_student_count,
@@ -1379,7 +1380,7 @@ def update_institution_understanding(
     now = now_iso()
     state.update({
         "schema_version": 1,
-        "tenant_id": "youyi_tuoguan",
+        "tenant_id": current_tenant_id(),
         "updated_at": now,
         "source_text": _limit_text(source_text),
         "source": _autonomous_source(identity, operation_id, source_message_id),
@@ -1492,7 +1493,7 @@ def submit_institution_fact_gap(
         break
     row = {
         "gap_event_id": _new_id("institution_gap"),
-        "tenant_id": "youyi_tuoguan",
+        "tenant_id": current_tenant_id(),
         "gap_key": normalized_key,
         "gap_text": _limit_text(gap_text),
         "ask_role": str(ask_role or "").strip(),
@@ -1569,7 +1570,7 @@ def submit_employee_self_review(
             }
     row = {
         "review_id": _new_id("employee_review"),
-        "tenant_id": "youyi_tuoguan",
+        "tenant_id": current_tenant_id(),
         "review_date": normalized_review_date,
         "institution_understanding": _limit_text(institution_understanding, 800),
         "goal_progress": _limit_text(goal_progress, 800),
@@ -1714,7 +1715,7 @@ def submit_industry_learning_candidate(
         normalized_status = "pending_review"
     row = {
         "candidate_id": _new_id("industry_learn"),
-        "tenant_id": "youyi_tuoguan",
+        "tenant_id": current_tenant_id(),
         "topic": _limit_text(topic, 200),
         "summary": _limit_text(summary),
         "sources": normalized_sources[:12],
@@ -1827,7 +1828,7 @@ def submit_value_progress_entry(
             }
     row = {
         "entry_id": _new_id("value_progress"),
-        "tenant_id": "youyi_tuoguan",
+        "tenant_id": current_tenant_id(),
         "subject": _limit_text(subject, 200),
         "discovered": _limit_text(discovered),
         "hermes_action": _limit_text(hermes_action),
@@ -1950,7 +1951,7 @@ def submit_agent_delegation(
     row = {
         "record_type": "agent_delegation",
         "delegation_id": _new_id("agent_delegate"),
-        "tenant_id": "youyi_tuoguan",
+        "tenant_id": current_tenant_id(),
         "agent_type": normalized_type,
         "status": normalized_status,
         "parent_work_item_id": str(parent_work_item_id or "").strip(),
@@ -2045,7 +2046,7 @@ def submit_agent_delegation_result(
         normalized_status = "completed"
     row = {
         "result_id": _new_id("agent_result"),
-        "tenant_id": "youyi_tuoguan",
+        "tenant_id": current_tenant_id(),
         "delegation_id": normalized_id,
         "agent_type": normalized_type,
         "status": normalized_status,
@@ -2100,7 +2101,7 @@ def update_agent_delegation_decision(
     row = {
         "record_type": "agent_delegation_decision",
         "decision_id": _new_id("agent_decision"),
-        "tenant_id": "youyi_tuoguan",
+        "tenant_id": current_tenant_id(),
         "delegation_id": normalized_id,
         "main_hermes_decision": decision,
         "decision_note": _limit_text(decision_note),
@@ -2249,7 +2250,7 @@ def submit_relationship_touch_candidate(
             }
     row = {
         "candidate_id": _new_id("relationship_touch"),
-        "tenant_id": "youyi_tuoguan",
+        "tenant_id": current_tenant_id(),
         "target_role": role,
         "target_user_id": str(target_user_id or "").strip(),
         "target_name": _limit_text(target_name, 80),
@@ -2310,7 +2311,7 @@ def update_relationship_touch_candidate_status(
     row = {
         "record_type": "relationship_touch_update",
         "update_id": _new_id("relationship_touch_update"),
-        "tenant_id": "youyi_tuoguan",
+        "tenant_id": current_tenant_id(),
         "candidate_id": normalized_id,
         "status": normalized_status,
         "delivery_receipt": _strip_forbidden(delivery_receipt or {}),
@@ -2664,7 +2665,7 @@ def submit_hermes_work_item(
     row = {
         "record_type": "work_item",
         "work_item_id": _new_id("hermes_work"),
-        "tenant_id": "youyi_tuoguan",
+        "tenant_id": current_tenant_id(),
         "focus_key": normalized_focus,
         "title": _limit_text(title, 200),
         "focus_summary": _limit_text(focus_summary),
@@ -2764,7 +2765,7 @@ def update_hermes_work_item(
         "record_type": "work_item_update",
         "update_id": _new_id("hermes_work_update"),
         "work_item_id": str(item.get("work_item_id") or ""),
-        "tenant_id": "youyi_tuoguan",
+        "tenant_id": current_tenant_id(),
         "focus_key": str(item.get("focus_key") or focus_key or ""),
         "status": normalized_status,
         "update_text": _limit_text(update_text or source_text or "Hermes 更新了工作事项状态。"),
@@ -2952,7 +2953,7 @@ def submit_wakeup_request(
         return {"ok": False, "error": "wakeup_request_requires_reason", "message": "唤醒请求必须包含来源和原因。"}
     row = {
         "wakeup_request_id": _new_id("wakeup"),
-        "tenant_id": "youyi_tuoguan",
+        "tenant_id": current_tenant_id(),
         "wakeup_source": str(wakeup_source or "").strip(),
         "reason": _limit_text(reason),
         "related_work_item_id": str(related_work_item_id or "").strip(),
@@ -2996,7 +2997,7 @@ def update_wakeup_request(
         "record_type": "wakeup_request_update",
         "update_id": _new_id("wakeup_update"),
         "wakeup_request_id": normalized_id,
-        "tenant_id": "youyi_tuoguan",
+        "tenant_id": current_tenant_id(),
         "status": normalized_status,
         "update_text": _limit_text(update_text),
         "source_text": _limit_text(source_text),
@@ -3141,7 +3142,7 @@ def submit_business_event(
             }
     row = {
         "business_event_id": _new_id("business_event"),
-        "tenant_id": "youyi_tuoguan",
+        "tenant_id": current_tenant_id(),
         "event_type": normalized_type,
         "event_text": normalized_text,
         "related_objects": normalized_related,
@@ -3272,7 +3273,7 @@ def submit_attention_thread(
     row = {
         "record_type": "attention_thread",
         "attention_id": normalized_id,
-        "tenant_id": "youyi_tuoguan",
+        "tenant_id": current_tenant_id(),
         "focus_key": str(focus_key or "").strip(),
         "related_goal_id": str(related_goal_id or "").strip(),
         "related_work_item_id": str(related_work_item_id or "").strip(),
@@ -3411,7 +3412,7 @@ def submit_action_execution(
         return {"ok": False, "error": "action_execution_requires_content", "message": "动作账本必须包含动作类型和摘要。"}
     row = {
         "action_execution_id": _new_id("action_exec"),
-        "tenant_id": "youyi_tuoguan",
+        "tenant_id": current_tenant_id(),
         "action_type": str(action_type or "").strip(),
         "action_summary": _limit_text(action_summary),
         "status": normalized_status,
@@ -3676,7 +3677,7 @@ def generate_autonomous_recovery_report(
     return {
         "ok": True,
         "report_type": "autonomous_recovery_report_v1",
-        "tenant_id": "youyi_tuoguan",
+        "tenant_id": current_tenant_id(),
         "read_only": True,
         "actions_taken": [],
         "forbidden_actions_confirmed_absent": [
@@ -3792,7 +3793,7 @@ def generate_due_wakeup_candidates(
     return {
         "ok": True,
         "report_type": "due_wakeup_candidates_v1",
-        "tenant_id": "youyi_tuoguan",
+        "tenant_id": current_tenant_id(),
         "read_only": True,
         "generated_at": now_value.isoformat(timespec="seconds"),
         "candidate_count": len(candidates),
@@ -4057,7 +4058,7 @@ def generate_autonomous_log_review(
     return {
         "ok": True,
         "report_type": "autonomous_log_review_v1",
-        "tenant_id": "youyi_tuoguan",
+        "tenant_id": current_tenant_id(),
         "read_only": True,
         "ledger_scanned_count": len(recent_rows),
         "related_turn_count": len([c for c in candidates if c.get("source_type") == "reply_ledger"]),
@@ -4129,7 +4130,6 @@ def _profile_corrections_by_candidate(store: TuoguanStore) -> dict[str, list[dic
     for rows in result.values():
         rows.sort(key=lambda item: str(item.get("created_at") or ""))
     return result
-
 
 def _fold_information_requests(store: TuoguanStore) -> dict[str, dict[str, Any]]:
     result: dict[str, dict[str, Any]] = {}
