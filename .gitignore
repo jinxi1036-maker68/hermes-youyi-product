@@ -104,3 +104,4 @@ work/data_samples/
 
 # Commercialization generated demo tenant output
 work/commercialization/demo_output/
+work/commercialization/deliverables/rendered_*/
