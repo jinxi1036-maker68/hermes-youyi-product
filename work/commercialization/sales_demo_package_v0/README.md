@@ -2,12 +2,15 @@
 
 目标：让第二家托管机构老板在一次 20 分钟沟通里，看懂小优是什么、能解决什么、边界在哪里，以及试点如何开始。
 
+如果你还不清楚整个项目现在到哪一步，先回到上一层看 `START_HERE_小优第二家机构演示入口.md`。
+
 ## 使用顺序
 
 1. 先用 `value_proposition_onepager.md` 对齐价值。
 2. 再按 `owner_demo_script_20min.md` 做现场演示。
 3. 老板问风险、边界、价格时，用 `pilot_offer_and_boundaries_v0.md` 和 `faq_for_boss.md` 回答。
-4. 对方愿意试点后，转入 `../standard_install_package_v0/tenant_intake_form_v0.md` 收集资料。
+4. 演示当天用 `demo_day_checklist.md` 做准备和复盘。
+5. 对方愿意试点后，转入 `../standard_install_package_v0/tenant_intake_form_v0.md` 收集资料。
 
 ## 本包只回答四个问题
 
