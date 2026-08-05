@@ -236,8 +236,13 @@ def _render_morning_report(
     brief: dict[str, Any],
     source_counts: dict[str, int],
 ) -> str:
+    scorecard = brief.get("employee_scorecard") if isinstance(brief.get("employee_scorecard"), dict) else {}
+    latest_review = scorecard.get("latest_review") if isinstance(scorecard.get("latest_review"), dict) else {}
     lines = [
         f"金总，早上好。我是小优，给你报一下今天的自主工作安排。时间：{timestamp.strftime('%Y-%m-%d %H:%M')}",
+        "",
+        "老板今天先看这句话：",
+        *_numbered(_owner_digest_lines(brief, latest_review, source_counts, purpose="morning"), empty="1. 目标进展：当前没有新的目标证据；我会先做事实巡检，有缺口再说明需要谁确认。"),
         "",
         "今天我会重点盯这几件事：",
         *_numbered(_work_item_lines(items, purpose="morning"), empty="1. 暂无新的活跃工作事项；我会继续做只读巡检和事实缺口检查。"),
@@ -248,7 +253,7 @@ def _render_morning_report(
         "今天的推进边界：我不会自动联系老师或家长，不会批量派任务，不会改工资、绩效、权限、责任绑定或删除数据；需要现实动作时会先说明卡点和需要你确认的内容。",
         _source_line(source_counts),
     ]
-    return _limit_message("\n".join(lines), 1800)
+    return _limit_message("\n".join(lines), 2000)
 
 
 def _render_evening_report(
@@ -266,6 +271,9 @@ def _render_evening_report(
     lines = [
         f"金总，今晚给你交一下今天的工作日报。时间：{timestamp.strftime('%Y-%m-%d %H:%M')}",
         "",
+        "老板先看结论：",
+        *_numbered(_owner_digest_lines(brief, latest_review, source_counts, purpose="evening"), empty="1. 目标进展：今天没有新的可确认目标结果；我不会把等待状态写成完成。"),
+        "",
         "今天我确认看到的工作状态：",
         *_numbered(_work_item_lines(items, purpose="evening"), empty="1. 今天没有新的可确认业务推进记录；我没有把等待状态写成完成。"),
         "",
@@ -281,7 +289,35 @@ def _render_evening_report(
         "边界确认：今晚不主动打扰老师、家长或店长；不派任务、不改业务数据。日报只是让我把今天做过和没做成的事向你交代清楚。",
         _source_line(source_counts),
     ]
-    return _limit_message("\n".join(lines), 2000)
+    return _limit_message("\n".join(lines), 2200)
+
+
+def _owner_digest_lines(
+    brief: dict[str, Any],
+    latest_review: dict[str, Any],
+    source_counts: dict[str, int],
+    *,
+    purpose: str,
+) -> list[str]:
+    lines: list[str] = []
+    goal_progress = _pick_text(latest_review, "goal_progress")
+    blocked_by = _pick_text(latest_review, "blocked_by")
+    tomorrow_focus = _pick_text(latest_review, "tomorrow_focus")
+    if goal_progress:
+        lines.append(f"目标进展：{goal_progress}")
+    elif source_counts.get("work_item_count", 0) or source_counts.get("waiting_count", 0):
+        lines.append(
+            "目标进展："
+            f"当前有 {source_counts.get('work_item_count', 0)} 个活跃事项、{source_counts.get('waiting_count', 0)} 个等待确认；"
+            "我会先把等待和证据拆清楚，不把建议当结果。"
+        )
+    if blocked_by:
+        lines.append(f"当前卡点：{blocked_by}")
+    if purpose == "morning" and tomorrow_focus:
+        lines.append(f"今天先盯：{tomorrow_focus}")
+    if purpose == "evening" and source_counts.get("result_unknown_action_count", 0):
+        lines.append(f"结果未知：还有 {source_counts.get('result_unknown_action_count', 0)} 个动作需要继续核验，暂不写成完成。")
+    return lines[:3]
 
 
 def _work_item_lines(items: list[dict[str, Any]], *, purpose: str) -> list[str]:

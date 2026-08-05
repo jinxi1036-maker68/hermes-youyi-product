@@ -68,6 +68,8 @@ def test_morning_report_queues_boss_only_outbox_item(tmp_path):
     assert item["action"] == "daily_morning_report"
     assert "早上好" in item["content"]
     assert "今天的自主工作安排" in item["content"]
+    assert "老板今天先看这句话" in item["content"]
+    assert "目标进展" in item["content"]
     assert item["auto_effects"]["sends_teacher_messages"] is False
     assert item["auto_effects"]["sends_parent_messages"] is False
     assert item["auto_effects"]["forces_next_action"] is False
@@ -111,6 +113,8 @@ def test_evening_report_does_not_claim_waiting_as_completion(tmp_path):
 
     assert result["ok"] is True
     assert "今晚给你交一下今天的工作日报" in result["content"]
+    assert "老板先看结论" in result["content"]
+    assert "目标进展" in result["content"]
     assert "等待老板确认" in result["content"]
     assert "没有把等待状态写成完成" in result["content"] or "等待" in result["content"]
     assert result["auto_effects"]["changes_salary"] is False
