@@ -22,6 +22,9 @@ V0 采用“单机构隔离复制 + 标准化配置”：
 - `first_boot_acceptance_checklist.md`：首次启动验收清单。
 - `backup_and_upgrade_strategy.md`：备份、升级和回滚策略。
 - `future_installer_script_spec.md`：未来初始化脚本规格。
+- `tenant_intake_form_v0.md`：新机构生成租户包前的资料采集表。
+- `second_tenant_delivery_steps.md`：第二家机构试点交付步骤。
+- `acceptance_record_template.md`：首次启动和试点验收记录模板。
 
 ## V0 干跑工具
 
