@@ -356,6 +356,17 @@ TUOGUAN_QUERY_OPERATIONAL_FACTS_SCHEMA = _schema(
     ["user_id"],
 )
 
+TUOGUAN_QUERY_STAFF_DIRECTORY_SCHEMA = _schema(
+    "只读查询托管机构人员目录、企业微信通讯录缓存、人员白名单、姓名映射和已确认人员事实。适合模型需要核验老师、店长、老板、企业微信昵称、表情昵称、user_id、在职/授权状态或人员变更候选时使用；不会修改任何人员配置，修复候选必须由老板确认后才可保存为运营事实。",
+    _identity_props({
+        "query": {"type": "string", "description": "可选，姓名、昵称、老师称呼、手机号片段或企业微信 user_id；留空返回当前可见人员目录。"},
+        "role": {"type": "string", "enum": ["", "boss", "manager", "teacher", "staff"], "default": "", "description": "可选角色筛选。"},
+        "include_inactive": {"type": "boolean", "default": False, "description": "是否包含历史映射、已授权但通讯录缺失或待确认人员。"},
+        "limit": {"type": "integer", "default": 30, "description": "最多返回人数。"},
+    }),
+    ["user_id"],
+)
+
 TUOGUAN_SUBMIT_OPERATIONAL_FACT_SCHEMA = _schema(
     "把用户明确说出的机构运营事实保存为候选或已确认事实，带来源和范围。适合模型在问清缺口后记录答案；不得保存模型推断为已确认事实。",
     _identity_props({
@@ -1046,6 +1057,7 @@ TOOLS = (
     ("tuoguan_resolve_student_responsibility", TUOGUAN_RESOLVE_STUDENT_RESPONSIBILITY_SCHEMA, _handler("resolve_student_responsibility")),
     ("tuoguan_query_institution_onboarding_gaps", TUOGUAN_QUERY_INSTITUTION_ONBOARDING_GAPS_SCHEMA, _handler("query_institution_onboarding_gaps")),
     ("tuoguan_query_operational_facts", TUOGUAN_QUERY_OPERATIONAL_FACTS_SCHEMA, _handler("query_operational_facts")),
+    ("tuoguan_query_staff_directory", TUOGUAN_QUERY_STAFF_DIRECTORY_SCHEMA, _handler("query_staff_directory")),
     ("tuoguan_submit_operational_fact", TUOGUAN_SUBMIT_OPERATIONAL_FACT_SCHEMA, _handler("submit_operational_fact")),
     ("tuoguan_confirm_operational_fact", TUOGUAN_CONFIRM_OPERATIONAL_FACT_SCHEMA, _handler("confirm_operational_fact")),
     ("tuoguan_query_student_service_relations", TUOGUAN_QUERY_STUDENT_SERVICE_RELATIONS_SCHEMA, _handler("query_student_service_relations")),

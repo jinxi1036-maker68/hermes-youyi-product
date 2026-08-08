@@ -349,6 +349,25 @@ def _proactivity_health(store: TuoguanStore, timestamp: datetime) -> list[str]:
     repeated = [key for key, count in reminder_keys.items() if count > 1]
     if repeated:
         issues.append(f"过去24小时发现 {len(repeated)} 组任务提醒重复候选，需要按幂等键核验。")
+    reply_rows = [
+        row for row in _read_jsonl(store, "reply_ledger.jsonl")
+        if _row_ts(row.get("completed_at") or row.get("created_at")) >= since
+    ]
+    unverified_claims = [
+        row for row in reply_rows
+        if not (row.get("tool_calls") or row.get("used_tool_registry_entry"))
+        and _looks_like_unverified_capability_claim(row)
+    ]
+    if unverified_claims:
+        issues.append(f"过去24小时有 {len(unverified_claims)} 条回复疑似未查工具却声称已查/已保存；需要按先查证再答复规则复盘。")
+    missed_staff_directory = [
+        row for row in reply_rows
+        if not (row.get("tool_calls") or row.get("used_tool_registry_entry"))
+        and _looks_like_staff_directory_need(row.get("raw_text"))
+        and _looks_like_staff_directory_deflection(row.get("final_reply"))
+    ]
+    if missed_staff_directory:
+        issues.append(f"过去24小时有 {len(missed_staff_directory)} 条人员/企业微信问题疑似未先查目录就转人工；需要优先使用人员目录工具。")
     return issues[:3]
 
 
@@ -363,6 +382,37 @@ def _row_ts(value: Any) -> float:
         return parsed.timestamp()
     except (TypeError, ValueError):
         return 0.0
+
+
+def _looks_like_unverified_capability_claim(row: dict[str, Any]) -> bool:
+    text = str(row.get("final_reply") or "")
+    return any(
+        term in text
+        for term in (
+            "我查了",
+            "小优查了",
+            "查到",
+            "系统里显示",
+            "系统显示",
+            "已保存",
+            "已经保存",
+            "确认并保存",
+            "已经记住",
+            "记住了",
+            "以后按这个来理解",
+            "以后就按这个来理解",
+        )
+    )
+
+
+def _looks_like_staff_directory_need(value: Any) -> bool:
+    text = str(value or "")
+    return any(term in text for term in ("企业微信", "通讯录", "老师名单", "店长", "老师都有谁", "乱码", "人员", "名字"))
+
+
+def _looks_like_staff_directory_deflection(value: Any) -> bool:
+    text = str(value or "")
+    return any(term in text for term in ("查不到", "需要您告诉", "需要你告诉", "技术", "处理一下", "没法", "无法从系统"))
 
 
 def _owner_digest_lines(

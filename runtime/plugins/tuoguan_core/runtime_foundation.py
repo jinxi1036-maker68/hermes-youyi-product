@@ -87,6 +87,7 @@ MODEL_SELECTED_READ_TOOLS = {
     "tuoguan_resolve_student_responsibility",
     "tuoguan_query_institution_onboarding_gaps",
     "tuoguan_query_operational_facts",
+    "tuoguan_query_staff_directory",
     "tuoguan_query_student_service_relations",
     "tuoguan_query_parent_communication_coverage",
     "tuoguan_query_weekly_record_coverage",
@@ -183,7 +184,7 @@ _INTERNAL_MECHANISM_MARKERS = (
 )
 
 
-def _sanitize_external_reply(text: str, *, verified_state_change: bool = False) -> str:
+def _sanitize_external_reply(text: str, *, verified_state_change: bool = False, used_trusted_tool: bool = False) -> str:
     value = str(text or "")
     lowered = value.lower()
     if any(marker in lowered for marker in _INTERNAL_ERROR_MARKERS):
@@ -191,13 +192,19 @@ def _sanitize_external_reply(text: str, *, verified_state_change: bool = False) 
     if any(marker in value for marker in _INTERNAL_MECHANISM_MARKERS):
         return "我刚才不该讲内部处理细节。你正常说要查谁、记录谁、处理哪件事就行，我会按你的身份权限去理解和处理。"
     state_commit_terms = (
+        "已经确认并保存",
+        "确认并保存",
         "已保存",
         "已经保存",
         "状态已保存",
         "已记下",
         "记下了",
+        "记住了",
+        "已经记住",
         "已记录",
         "已经记录",
+        "以后就按这个来理解",
+        "以后按这个来理解",
         "别忘了",
         "下次醒来",
         "明天上午我",
@@ -207,17 +214,43 @@ def _sanitize_external_reply(text: str, *, verified_state_change: bool = False) 
     if not verified_state_change and any(term in value for term in state_commit_terms):
         value = value.replace("已保存", "我已理解")
         value = value.replace("已经保存", "我已理解")
+        value = value.replace("已经确认并保存了", "我先按这条原话理解")
+        value = value.replace("已经确认并保存", "我先按这条原话理解")
+        value = value.replace("确认并保存了", "我先按这条原话理解")
+        value = value.replace("确认并保存", "我先按这条原话理解")
         value = value.replace("状态已保存", "状态我已理解")
         value = value.replace("已记下了", "我已理解")
         value = value.replace("已记下", "我已理解")
         value = value.replace("记下了", "我已理解")
+        value = value.replace("记住了", "先按你这句话理解")
+        value = value.replace("已经记住", "先按你这句话理解")
         value = value.replace("已记录", "我已理解")
         value = value.replace("已经记录", "我已理解")
+        value = value.replace("以后就按这个来理解", "后续需要结合已确认事实继续核验")
+        value = value.replace("以后按这个来理解", "后续需要结合已确认事实继续核验")
         value = value.replace("我醒来自己查", "我会优先核验")
         value = value.replace("我会自己查", "我会优先核验")
         value = value.replace("您放心。", "")
         if "下次醒来" in value or "明天上午" in value or "我会自己查" in value:
             value += "\n\n我会把这条作为当前目标的最新要求来处理；真正涉及工作状态、提醒或后续动作时，以后续醒来核验真实事实后的推进为准。"
+    if not used_trusted_tool:
+        read_claim_terms = (
+            "小优查了",
+            "我查了",
+            "查了一下",
+            "我看了一下",
+            "系统里显示",
+            "系统显示",
+            "查到",
+        )
+        if any(term in value for term in read_claim_terms):
+            value = value.replace("小优查了", "小优先按当前上下文看")
+            value = value.replace("我查了", "我先按当前上下文看")
+            value = value.replace("查了一下", "按当前上下文看")
+            value = value.replace("我看了一下", "我先按当前上下文看")
+            value = value.replace("系统里显示", "当前上下文里提到")
+            value = value.replace("系统显示", "当前上下文里提到")
+            value = value.replace("查到", "看到")
     return value
 
 
@@ -684,10 +717,13 @@ def inject_model_context(*, session_id: str, sender_id: str, user_message: str) 
             "对外回复不要解释内部实现细节，也不要说工具或系统在限制你；"
             "如果某件事不能可靠执行，只用人的话说明需要先确认对象、范围或查系统。"
             "用户问‘我是谁’、自己的负责范围、当前上下文或可见对象时，可以调用 tuoguan_context 读取可信身份和上下文。"
+            "涉及企业微信通讯录、老师/店长/老板名单、人员昵称、表情名、乱码、user_id、现任/离职或人员变更时，先调用 tuoguan_query_staff_directory；"
+            "如果工具给出修复候选，只能说是候选，必须由老板确认后才能用 tuoguan_submit_operational_fact 保存为人员运营事实。"
             "当回复要给出老师、学生、任务、经营、积分、安全、看板等机构实时事实时，需要先调用对应 tuoguan_ 可信工具或自然追问查询范围；"
             "可以自由分析用户问题，但不能凭聊天记忆、上下文印象或系统提示直接把老师名单、学生资料、电话、数量、排名、任务状态、经营结论说成真实数据。"
             "只有用户明确要求查询实时业务事实或修改业务数据时，才选择对应可信工具；没有可信结果时不得声称数据已改变。"
             "需要执行时，模型可以从可用的 tuoguan_ 可信工具中自主选择合适功能，系统只校验身份、权限和执行结果。"
+            "说做不了、查不到或需要技术前，先完成自救顺序：当前上下文、可信业务读工具、人员目录、历史事实/候选、必要时只读联网；仍失败时只问一个最关键问题。"
             "用户明确询问‘能做什么’时，可以自然说明你能理解、分析、提醒和协助推进机构工作；"
             "但如果要声明真实数据、写入、通知或状态变更已经发生，需要先取得可信工具结果并通过权限和反查。"
             f"当前已封版强执行能力包括：{confirmed_menu or '暂无'}；"
@@ -821,6 +857,15 @@ def _semantic_tool_match(item: dict[str, Any], tool_name: str, args: Any = None)
         if teacher and teacher in raw and any(term in raw for term in ("查", "看", "了解", "最近", "怎么样")):
             return True
         return any(term in raw for term in ("经营", "日报", "周报", "老师记录", "试听线索", "跟进统计"))
+    if tool_name == "tuoguan_query_staff_directory":
+        return any(
+            term in raw
+            for term in (
+                "企业微信", "通讯录", "人员", "员工", "老师名单", "店长", "老师都有谁",
+                "都有谁", "谁还在", "谁不在", "乱码", "名字", "昵称", "user_id", "userid",
+                "踢出", "踢了", "离职", "现任", "配置人员", "白名单",
+            )
+        )
     if tool_name == "tuoguan_create_task":
         return any(term in raw for term in ("安排", "任务", "提醒", "回访", "跟进"))
     if tool_name == "tuoguan_dashboard_link":
@@ -875,6 +920,7 @@ def _allow_model_selected_read_tool(item: dict[str, Any], tool_name: str, args: 
         "tuoguan_query_tasks": "query_my_tasks",
         "tuoguan_query_students": "query_student_performance",
         "tuoguan_dashboard_link": "query_dashboard_link",
+        "tuoguan_query_staff_directory": "query_staff_directory",
     }
     item["model_intent"] = intent_by_tool.get(tool_name, item.get("model_intent") or "unclassified_message")
     item["capability_resolved_by"] = "model_selected_safe_read_tool"
@@ -1103,10 +1149,17 @@ def mark_outbound_reply_delivered(
 
 def transform_final_response(*, store: TuoguanStore, session_id: str, response_text: str) -> str | None:
     verified_state_change = False
+    used_trusted_tool = False
     with _LOCK:
         item = _TURN_BY_SESSION.get(str(session_id or "")) or {}
         for tool_name in (call.get("tool") for call in (item.get("tool_calls") or []) if isinstance(call, dict)):
+            if str(tool_name or "").startswith("tuoguan_"):
+                used_trusted_tool = True
             if str(tool_name or "") in WRITE_TOOLS:
                 verified_state_change = True
                 break
-    return _sanitize_external_reply(response_text, verified_state_change=verified_state_change)
+    return _sanitize_external_reply(
+        response_text,
+        verified_state_change=verified_state_change,
+        used_trusted_tool=used_trusted_tool,
+    )

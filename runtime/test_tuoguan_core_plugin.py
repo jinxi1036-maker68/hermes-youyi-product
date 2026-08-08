@@ -174,15 +174,14 @@ def test_register_keeps_model_mainline_hooks_only():
     plugin.register(ctx)
 
     assert hooks == [
-        ("post_gateway_start", plugin._on_post_gateway_start),
         ("pre_llm_call", plugin._on_pre_llm_call),
         ("post_tool_call", plugin._on_post_tool_call),
+        ("post_gateway_response", plugin._on_post_gateway_response),
     ]
     forbidden = {
         "pre_gateway_dispatch",
         "pre_tool_call",
         "transform_llm_output",
-        "post_gateway_response",
     }
     assert not (forbidden & {name for name, _fn in hooks})
     names = {item["name"] for item in tools}

@@ -55,6 +55,7 @@ from .operational_facts import (
     query_operational_facts,
     submit_operational_fact_candidate,
 )
+from .staff_directory import query_staff_directory as build_staff_directory_report
 from .digital_employee_state import (
     update_wakeup_request,
     submit_due_wakeup_candidate,
@@ -2085,6 +2086,28 @@ class TuoguanToolService:
             return self._error("permission_denied", "当前账号不能查询运营事实。")
         result = query_operational_facts(self.store, fact_type=fact_type, subject=subject, scope=scope, include_pending=include_pending)
         return self._ok("query_operational_facts", data=result, message=result.get("rendered_text", ""))
+
+    def query_staff_directory(
+        self,
+        *,
+        query: str = "",
+        role: str = "",
+        include_inactive: bool = False,
+        limit: int = 30,
+    ) -> dict[str, Any]:
+        denied = self._approved()
+        if denied:
+            return denied
+        if self.identity.role not in {"teacher", "manager", "boss"}:
+            return self._error("permission_denied", "当前账号不能查询人员目录。")
+        result = build_staff_directory_report(
+            self.store,
+            query=query,
+            role=role,
+            include_inactive=include_inactive,
+            limit=limit,
+        )
+        return self._ok("query_staff_directory", data=result, message=result.get("rendered_text", ""))
 
     def submit_operational_fact(
         self,
