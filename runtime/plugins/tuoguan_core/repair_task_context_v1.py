@@ -54,6 +54,9 @@ def repair_missing_task_contexts(
         task_id = str(task.get("id") or "").strip()
         if not assignee or not task_id:
             continue
+        assignee_role = _assignee_role(actual_store, assignee)
+        if assignee_role not in {"teacher", "manager"}:
+            continue
         existing = next_active.get(assignee) if isinstance(next_active.get(assignee), dict) else {}
         if str(existing.get("task_id") or "") == task_id:
             continue
@@ -71,6 +74,7 @@ def repair_missing_task_contexts(
             "task_id": task_id,
             "assignee_userid": assignee,
             "task_title": str(task.get("title") or ""),
+            "assignee_role": assignee_role,
             "latest_outbox_id": str(latest_outbox.get("id") or "") if latest_outbox else "",
         })
 
@@ -152,6 +156,26 @@ def _latest_task_outbox(outbox: list[Any], task_id: str) -> dict[str, Any] | Non
         return None
     matches.sort(key=lambda item: str(item.get("last_attempt_at") or item.get("sent_at") or item.get("created_at") or ""))
     return matches[-1]
+
+
+def _assignee_role(store: TuoguanStore, user_id: str) -> str:
+    whitelist = store.read_json("wecom_whitelist.json", {})
+    if isinstance(whitelist, dict):
+        roles = whitelist.get("user_roles") if isinstance(whitelist.get("user_roles"), dict) else {}
+        role = str(roles.get(user_id) or "")
+        if role:
+            return {"super_admin": "boss", "owner": "boss"}.get(role, role)
+        if user_id in {str(item) for item in whitelist.get("super_users") or []}:
+            return "boss"
+        if user_id in {str(item) for item in whitelist.get("summer_manager_ids") or []}:
+            return "manager"
+    staff = store.read_json("staff.json", {})
+    if isinstance(staff, dict):
+        item = staff.get(user_id)
+        if isinstance(item, dict):
+            role = str(item.get("role") or "")
+            return {"super_admin": "boss", "owner": "boss"}.get(role, role)
+    return ""
 
 
 def _verify_contexts(store: TuoguanStore, repaired: list[dict[str, Any]]) -> bool:

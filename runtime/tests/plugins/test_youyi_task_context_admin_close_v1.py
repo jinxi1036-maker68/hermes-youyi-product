@@ -175,6 +175,37 @@ def test_repair_task_context_rebuilds_missing_manual_assignment_context(tmp_path
     assert pending["teacher1"]["original_owner_text"] == "请李老师明天10点汇报沟通结果"
 
 
+def test_repair_task_context_skips_boss_assigned_legacy_tasks(tmp_path):
+    from plugins.tuoguan_core.repair_task_context_v1 import repair_missing_task_contexts
+
+    store = _seed_store(tmp_path)
+    _write_json(
+        tmp_path,
+        "tasks.json",
+        [
+            {
+                "id": "task_boss_legacy",
+                "type": "manual_assignment",
+                "status": "pending",
+                "title": "老板自己的历史测试任务",
+                "assignee_userid": "boss1",
+                "created_by": "boss1",
+            }
+        ],
+    )
+    _write_json(tmp_path, "active_task_context.json", {})
+    _write_json(tmp_path, "pending_next_task_context.json", {})
+
+    result = repair_missing_task_contexts(
+        store,
+        now=datetime(2026, 8, 8, 10, 0, tzinfo=timezone(timedelta(hours=8))),
+    )
+
+    assert result["ok"] is True
+    assert result["repaired_count"] == 0
+    assert json.loads((tmp_path / "active_task_context.json").read_text(encoding="utf-8")) == {}
+
+
 def test_outbox_naive_deliver_at_is_compared_in_local_timezone():
     from plugins.tuoguan_core.__init__ import _parse_outbox_datetime
 
