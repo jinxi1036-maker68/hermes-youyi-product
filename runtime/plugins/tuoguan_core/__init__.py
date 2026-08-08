@@ -520,6 +520,38 @@ def _append_notification_failure(item: dict[str, Any], error: str) -> None:
         logger.exception("tuoguan_core failed to append notification failure log")
 
 
+def _parse_outbox_datetime(value: str, *, now: datetime) -> datetime:
+    parsed = datetime.fromisoformat(str(value or ""))
+    if parsed.tzinfo is None:
+        return parsed.replace(tzinfo=now.tzinfo)
+    return parsed.astimezone(now.tzinfo)
+
+
+def _outbox_item_age_seconds(item: dict[str, Any], *, now: datetime) -> float | None:
+    created_at = str(item.get("created_at") or "").strip()
+    if not created_at:
+        return None
+    try:
+        return (now - _parse_outbox_datetime(created_at, now=now)).total_seconds()
+    except (TypeError, ValueError):
+        return None
+
+
+def _stale_outbox_suppression_reason(item: dict[str, Any], *, now: datetime) -> str:
+    age = _outbox_item_age_seconds(item, now=now)
+    if age is None:
+        return ""
+    notification_type = str(item.get("notification_type") or "")
+    action = str(item.get("action") or "")
+    if notification_type == "autonomous_owner_attention" and age > 2 * 3600:
+        return "stale_owner_attention_after_outbox_block"
+    if notification_type == "autonomous_daily_report" and age > 4 * 3600:
+        return "stale_daily_report_after_outbox_block"
+    if action in {"task_created", "task_due", "manual_assignment"} and age > 24 * 3600:
+        return "stale_task_notification_after_outbox_block"
+    return ""
+
+
 async def _daily_push_loop(adapter: Any, wake_event: asyncio.Event) -> None:
     while True:
         try:
@@ -562,7 +594,7 @@ async def _drain_notification_outbox(adapter: Any) -> None:
         retry_at = str(item.get("retry_at") or "").strip()
         if retry_at:
             try:
-                if datetime.fromisoformat(retry_at) > now:
+                if _parse_outbox_datetime(retry_at, now=now) > now:
                     continue
             except ValueError:
                 item.update({"status": "failed", "last_error": "invalid_retry_at", "last_attempt_at": now.isoformat(timespec="seconds")})
@@ -583,10 +615,20 @@ async def _drain_notification_outbox(adapter: Any) -> None:
             continue
         if item.get("delivery_mode") != "direct_wecom":
             continue  # Preserve unrelated legacy failed evidence until explicitly cleaned.
+        stale_reason = _stale_outbox_suppression_reason(item, now=now)
+        if stale_reason:
+            item.update({
+                "status": "suppressed",
+                "suppressed_reason": stale_reason,
+                "suppressed_at": now.isoformat(timespec="seconds"),
+            })
+            _append_notification_audit(store, item, "notification_suppressed", stale_reason)
+            changed = True
+            continue
         deliver_at = str(item.get("deliver_at") or "").strip()
         if deliver_at:
             try:
-                if datetime.fromisoformat(deliver_at) > datetime.now().astimezone():
+                if _parse_outbox_datetime(deliver_at, now=now) > now:
                     continue
             except ValueError:
                 item.update({"status": "failed", "last_error": "invalid_deliver_at", "last_attempt_at": datetime.now().isoformat(timespec="seconds")})
@@ -1121,6 +1163,12 @@ def _on_post_gateway_response(**kwargs: Any) -> None:
     source = getattr(event, "source", None)
     if source is None or _platform_name(source) != "wecom_callback":
         return
+    try:
+        gateway = kwargs.get("gateway")
+        if gateway is not None:
+            _ensure_daily_push_loop(gateway, event)
+    except Exception:
+        logger.exception("tuoguan_core failed to ensure notification worker after gateway response")
     identity = _router().identities.resolve(
         "wecom_callback",
         _sender_id(source),
@@ -1176,7 +1224,6 @@ def register(ctx) -> None:
     _log_runtime_module_manifest()
     # Model-led restore: old business routers and runtime prompt/response hooks are
     # not registered on the main message path. Keep tools plus passive audit only.
-    ctx.register_hook("post_gateway_start", _on_post_gateway_start)
     ctx.register_hook("pre_llm_call", _on_pre_llm_call)
     ctx.register_hook("post_tool_call", _on_post_tool_call)
     ctx.register_hook("post_gateway_response", _on_post_gateway_response)

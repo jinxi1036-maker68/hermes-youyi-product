@@ -10,7 +10,9 @@ from __future__ import annotations
 from copy import deepcopy
 from datetime import datetime
 import argparse
+import asyncio
 import json
+import os
 from typing import Any
 
 from .digital_employee_state import (
@@ -565,14 +567,83 @@ def _normalize_kind(kind: str) -> str:
     return normalized
 
 
+def _wecom_callback_extra_from_env() -> dict[str, Any]:
+    return {
+        "name": os.getenv("WECOM_CALLBACK_APP_NAME") or "default",
+        "corp_id": os.getenv("WECOM_CALLBACK_CORP_ID") or "",
+        "corp_secret": os.getenv("WECOM_CALLBACK_CORP_SECRET") or "",
+        "agent_id": os.getenv("WECOM_CALLBACK_AGENT_ID") or "",
+        "token": os.getenv("WECOM_CALLBACK_TOKEN") or "",
+        "encoding_aes_key": os.getenv("WECOM_CALLBACK_ENCODING_AES_KEY") or "",
+        "host": os.getenv("WECOM_CALLBACK_HOST") or "0.0.0.0",
+        "port": os.getenv("WECOM_CALLBACK_PORT") or "8645",
+        "path": os.getenv("WECOM_CALLBACK_PATH") or "/wecom/callback",
+    }
+
+
+def _wecom_config_from_env() -> Any:
+    from gateway.config import Platform, PlatformConfig
+
+    extra = _wecom_callback_extra_from_env()
+    missing = [key for key in ("corp_id", "corp_secret", "agent_id") if not str(extra.get(key) or "").strip()]
+    if missing:
+        raise RuntimeError("wecom_callback_config_missing:" + ",".join(missing))
+    try:
+        return PlatformConfig(enabled=True, extra=extra)
+    except TypeError:
+        config = PlatformConfig(platform=Platform.WECOM_CALLBACK, enabled=True, options=extra)
+        setattr(config, "extra", extra)
+        return config
+
+
+async def drain_notification_outbox_once() -> dict[str, Any]:
+    """Best-effort oneshot drain for systemd timers in Hermes versions without startup hooks."""
+
+    from plugins.platforms.wecom.callback_adapter import WecomCallbackAdapter
+    from . import _drain_notification_outbox
+
+    try:
+        import httpx
+    except ImportError as exc:  # pragma: no cover - production dependency check
+        raise RuntimeError("httpx_missing_for_wecom_outbox_drain") from exc
+
+    adapter = WecomCallbackAdapter(_wecom_config_from_env())
+    try:
+        try:
+            from gateway.platforms._http_client_limits import platform_httpx_limits
+
+            adapter._http_client = httpx.AsyncClient(timeout=20.0, limits=platform_httpx_limits())
+        except Exception:
+            adapter._http_client = httpx.AsyncClient(timeout=20.0)
+        await _drain_notification_outbox(adapter)
+    finally:
+        cleanup = getattr(adapter, "_cleanup", None)
+        if callable(cleanup):
+            await cleanup()
+        elif getattr(adapter, "_http_client", None) is not None:
+            await adapter._http_client.aclose()
+    return {"ok": True, "drained": True}
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Queue Hermes boss daily report.")
     parser.add_argument("kind", choices=sorted(VALID_REPORT_KINDS))
     parser.add_argument("--dry-run", action="store_true")
+    parser.add_argument("--drain-outbox", action="store_true", help="After queueing, safely drain direct WeCom outbox once.")
     args = parser.parse_args(argv)
     result = queue_daily_boss_report(args.kind, dry_run=bool(args.dry_run))
+    if args.drain_outbox and not args.dry_run and result.get("ok"):
+        try:
+            result["outbox_drain"] = asyncio.run(drain_notification_outbox_once())
+        except Exception as exc:
+            result["outbox_drain"] = {"ok": False, "error": f"{type(exc).__name__}:{exc}"}
     print(json.dumps(result, ensure_ascii=False, indent=2, default=str))
-    return 0 if result.get("ok") else 1
+    if not result.get("ok"):
+        return 1
+    drain = result.get("outbox_drain")
+    if isinstance(drain, dict) and drain.get("ok") is False:
+        return 2
+    return 0
 
 
 if __name__ == "__main__":

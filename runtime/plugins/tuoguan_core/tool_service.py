@@ -388,6 +388,46 @@ class TuoguanToolService:
         data[key] = item
         self.store.write_json("model_focus.json", data)
 
+    def _remember_user_task_context(self, user_id: str, task: dict[str, Any], *, ttl_hours: int = 36) -> None:
+        user_id = str(user_id or "").strip()
+        task_id = str(task.get("id") or "")
+        if not user_id or not task_id:
+            return
+        now = datetime.now()
+        active = self.store.read_json("active_task_context.json", {})
+        if not isinstance(active, dict):
+            active = {}
+        active[user_id] = {
+            "user_id": user_id,
+            "task_id": task_id,
+            "student_id": str(task.get("student_id") or task.get("student_name") or ""),
+            "student_name": str(task.get("student_name") or ""),
+            "task_type": str(task.get("type") or "manual_assignment"),
+            "status": "selected",
+            "started_at": now.isoformat(timespec="seconds"),
+            "expires_at": (now + timedelta(hours=ttl_hours)).isoformat(timespec="seconds"),
+            "candidate_task_ids": [],
+            "source": "assigned_task_created",
+        }
+        self.store.write_json("active_task_context.json", active)
+        pending = self.store.read_json("pending_next_task_context.json", {})
+        if not isinstance(pending, dict):
+            pending = {}
+        pending[user_id] = {
+            "user_id": user_id,
+            "task_id": task_id,
+            "task_title": str(task.get("title") or ""),
+            "task_level": str(task.get("level") or "C"),
+            "task_type": str(task.get("type") or "manual_assignment"),
+            "student_id": str(task.get("student_id") or task.get("student_name") or ""),
+            "student_name": str(task.get("student_name") or ""),
+            "source": "new_task_notification",
+            "trigger_words": ["继续", "开始", "处理", "1", "开始下一个", "处理下一个"],
+            "created_at": now.isoformat(timespec="seconds"),
+            "expires_at": (now + timedelta(hours=ttl_hours)).isoformat(timespec="seconds"),
+        }
+        self.store.write_json("pending_next_task_context.json", pending)
+
     @staticmethod
     def _looks_like_goal_workspace_task_misuse(*, raw_text: str, title: str, operation_id: str, assignee_user_id: str, student_name: str) -> bool:
         """Protect single-task creation from long-running goal workspace misuse.
@@ -995,6 +1035,7 @@ class TuoguanToolService:
                     for item in notifications
                 )
                 self._write_user_focus(assignee_user_id, task_id=task_id, student_name=str(task.get("student_name") or student_name or ""), task_type=str(task.get("type") or "manual_assignment"))
+                self._remember_user_task_context(assignee_user_id, task, ttl_hours=36)
             return result
 
         return self._operation(operation_id, "create_task", execute)

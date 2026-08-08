@@ -196,6 +196,27 @@ def test_owner_attention_is_deduplicated_per_focus_per_day(tmp_path):
     assert any(row["kind"] == "owner_attention_deduplicated" and row["ok"] for row in second["writes"])
 
 
+def test_similar_owner_attention_is_deduplicated_across_focus_keys(tmp_path):
+    from plugins.tuoguan_core.autonomous_employee_loop import run_autonomous_employee_loop
+
+    store = _seed_store(tmp_path)
+    cn_tz = timezone(timedelta(hours=8))
+    first = run_autonomous_employee_loop(store, now=datetime(2026, 8, 7, 9, 0, tzinfo=cn_tz), decision_provider=_decision)
+
+    def same_question_new_focus(materials: dict) -> dict:
+        decision = _decision(materials)
+        decision["boss_attention_candidates"][0]["focus_key"] = "report:sept_renewal_owner_confirmation"
+        return decision
+
+    second = run_autonomous_employee_loop(store, now=datetime(2026, 8, 7, 12, 0, tzinfo=cn_tz), decision_provider=same_question_new_focus)
+
+    assert first["ok"] is True
+    assert second["ok"] is True
+    outbox = json.loads((tmp_path / "notification_outbox.json").read_text(encoding="utf-8"))
+    assert len(outbox) == 1
+    assert any(row["kind"] == "owner_attention_deduplicated" and row["ok"] for row in second["writes"])
+
+
 def test_owner_question_is_bridged_to_attention_candidate(tmp_path):
     from plugins.tuoguan_core.autonomous_employee_loop import run_autonomous_employee_loop
 

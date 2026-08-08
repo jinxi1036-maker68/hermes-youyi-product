@@ -488,24 +488,26 @@ def normalize_employee_decision_for_materials(decision: dict[str, Any], material
             _apply_deferred_service_relation_boundary(update)
         if latest_owner_contact_at and _work_update_mentions_owner(update):
             update["last_human_contact_at"] = latest_owner_contact_at
+    raw_owner_attention_candidates = normalized.get("boss_attention_candidates") or []
     normalized["boss_attention_candidates"] = _filter_owner_attention_candidates(
-        normalized.get("boss_attention_candidates") or [],
+        raw_owner_attention_candidates,
         service_relations_deferred=service_relations_deferred,
     )
     normalized["questions_to_humans"] = _filter_human_questions(
         normalized.get("questions_to_humans") or [],
         service_relations_deferred=service_relations_deferred,
     )
-    normalized["boss_attention_candidates"] = _bridge_owner_questions_to_attention_candidates(
-        normalized,
-        materials,
-        service_relations_deferred=service_relations_deferred,
-    )
-    normalized["boss_attention_candidates"] = _bridge_owner_confirmation_text_to_attention_candidates(
-        normalized,
-        materials,
-        service_relations_deferred=service_relations_deferred,
-    )
+    if not raw_owner_attention_candidates:
+        normalized["boss_attention_candidates"] = _bridge_owner_questions_to_attention_candidates(
+            normalized,
+            materials,
+            service_relations_deferred=service_relations_deferred,
+        )
+        normalized["boss_attention_candidates"] = _bridge_owner_confirmation_text_to_attention_candidates(
+            normalized,
+            materials,
+            service_relations_deferred=service_relations_deferred,
+        )
     if not normalized.get("boss_attention_candidates"):
         for field in ("employee_summary", "institution_understanding", "goal_progress_view"):
             if isinstance(normalized.get(field), str):
@@ -1275,7 +1277,20 @@ def _materialize_owner_attention_candidates(
             continue
         notification_id = f"autonomous_owner_attention:{day}:{focus_key}"
         attention_id = f"attention:{day}:{focus_key}"
-        if notification_id in existing_ids:
+        duplicate_reason = _owner_attention_duplicate_reason(
+            outbox,
+            owner_id=owner_id,
+            focus_key=focus_key,
+            message=message,
+            reason=reason,
+            now=timestamp,
+        )
+        if notification_id in existing_ids or duplicate_reason:
+            writes.append(_write_result("owner_attention_deduplicated", {
+                "ok": True,
+                "state_changed": True,
+                "message": duplicate_reason or "same focus already queued today",
+            }))
             continue
         row = {
             "id": notification_id,
@@ -1341,6 +1356,78 @@ def _materialize_owner_attention_candidates(
     if queued_count:
         store.write_json(_NOTIFICATION_OUTBOX_FILE, outbox[-2000:])
     return writes
+
+
+def _owner_attention_duplicate_reason(
+    outbox: list[Any],
+    *,
+    owner_id: str,
+    focus_key: str,
+    message: str,
+    reason: str,
+    now: datetime,
+) -> str:
+    """Suppress repeated owner nudges while the prior unresolved nudge is live."""
+
+    candidate_terms = _owner_attention_terms(" ".join([focus_key, reason, message]))
+    for item in outbox:
+        if not isinstance(item, dict):
+            continue
+        if str(item.get("notification_type") or "") != "autonomous_owner_attention":
+            continue
+        if str(item.get("touser") or item.get("target_user_id") or "") != owner_id:
+            continue
+        if str(item.get("status") or "") not in {"pending", "retry_pending", "sent"}:
+            continue
+        created_at = _parse_attention_time(item.get("created_at"))
+        if created_at is not None:
+            try:
+                if (now - created_at).total_seconds() > 48 * 3600:
+                    continue
+            except TypeError:
+                pass
+        if str(item.get("focus_key") or "") == focus_key:
+            return "same focus already has an unresolved owner attention"
+        existing_terms = _owner_attention_terms(
+            " ".join([
+                str(item.get("focus_key") or ""),
+                str(item.get("summary") or ""),
+                str(item.get("content") or ""),
+            ])
+        )
+        if len(candidate_terms & existing_terms) >= 2 and (
+            "确认" in candidate_terms or "确认" in existing_terms
+        ):
+            return "similar unresolved owner attention already exists"
+    return ""
+
+
+def _parse_attention_time(value: Any) -> datetime | None:
+    try:
+        return datetime.fromisoformat(str(value or ""))
+    except ValueError:
+        return None
+
+
+def _owner_attention_terms(text: str) -> set[str]:
+    compact = re.sub(r"\s+", "", str(text or ""))
+    terms = {
+        "一直发",
+        "明天早上",
+        "李老师",
+        "沟通结果",
+        "小金",
+        "家长",
+        "续费",
+        "安全任务",
+        "不能干",
+        "删除",
+        "确认",
+        "授权",
+        "日报",
+        "汇报",
+    }
+    return {term for term in terms if term in compact}
 
 
 def _materialize_relationship_touch_candidates(
@@ -1520,7 +1607,19 @@ def _safe_owner_attention_text(value: Any) -> str:
 
 def _owner_attention_candidate_is_safe(focus_key: str, reason: str, message: str) -> bool:
     text = f"{focus_key} {reason} {message}"
-    lowered = text.lower()
+    boundary_text = text
+    for allowed_boundary in (
+        "不会直接安排老师",
+        "不会安排老师",
+        "不会通知老师",
+        "不直接安排老师",
+        "不安排老师",
+        "不通知老师",
+        "不会擅自联系老师",
+        "不擅自联系老师",
+    ):
+        boundary_text = boundary_text.replace(allowed_boundary, "")
+    lowered = boundary_text.lower()
     if len(str(message or "").strip()) < 20:
         return False
     forbidden = (
@@ -1530,7 +1629,7 @@ def _owner_attention_candidate_is_safe(focus_key: str, reason: str, message: str
         "已删除", "删除数据", "责任绑定", "主责老师改为",
         "已完成", "已汇报", "已回复老板", "已外发", "已经发送",
     )
-    if any(item in lowered or item in text for item in forbidden):
+    if any(item in lowered or item in boundary_text for item in forbidden):
         return False
     has_block = any(term in text for term in ("卡点", "卡在", "缺", "需要", "无法继续", "待确认", "不确定"))
     has_question = any(mark in text for mark in ("？", "?", "请确认", "确认一下", "你确认", "需要你确认", "能否"))

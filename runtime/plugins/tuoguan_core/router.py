@@ -1063,6 +1063,7 @@ class TuoguanRouter:
         task: dict[str, Any],
         *,
         candidates: list[dict[str, Any]] | None = None,
+        ttl_minutes: int = 30,
     ) -> None:
         now = datetime.now()
         contexts = self._task_contexts()
@@ -1074,7 +1075,7 @@ class TuoguanRouter:
             "task_type": str(task.get("type") or ""),
             "status": "processing" if str(task.get("status") or "") == "active" else "selected",
             "started_at": now.isoformat(timespec="seconds"),
-            "expires_at": (now + timedelta(minutes=30)).isoformat(timespec="seconds"),
+            "expires_at": (now + timedelta(minutes=ttl_minutes)).isoformat(timespec="seconds"),
             "candidate_task_ids": [str(item.get("id") or "") for item in (candidates or []) if item.get("id")],
         }
         self.store.write_json(_ACTIVE_TASK_CONTEXT_FILE, contexts)
@@ -1120,6 +1121,7 @@ class TuoguanRouter:
         task: dict[str, Any],
         *,
         source: str,
+        ttl_minutes: int = 30,
     ) -> None:
         now = datetime.now()
         contexts = self.store.read_json(_PENDING_NEXT_TASK_FILE, {})
@@ -1136,7 +1138,7 @@ class TuoguanRouter:
             "source": source,
             "trigger_words": ["继续", "开始", "处理", "1", "开始下一个", "处理下一个"],
             "created_at": now.isoformat(timespec="seconds"),
-            "expires_at": (now + timedelta(minutes=30)).isoformat(timespec="seconds"),
+            "expires_at": (now + timedelta(minutes=ttl_minutes)).isoformat(timespec="seconds"),
         }
         self.store.write_json(_PENDING_NEXT_TASK_FILE, contexts)
         remember_conversation_state_for_user(
@@ -1154,7 +1156,7 @@ class TuoguanRouter:
                 "source": source,
             },
             source_handler="tasks",
-            ttl_minutes=30,
+            ttl_minutes=ttl_minutes,
         )
 
     def _clear_pending_next_task_context(self, identity: UserIdentity) -> None:
@@ -1199,7 +1201,7 @@ class TuoguanRouter:
         if not task_id:
             return None
         task = next((task for task in open_tasks if str(task.get("id") or "") == task_id), None)
-        if task is None or str(task.get("status") or "") not in {"active", "waiting_confirmation"}:
+        if task is None or str(task.get("status") or "") in _CLOSED_STATUSES:
             contexts.pop(identity.canonical_user_id, None)
             self.store.write_json(_ACTIVE_TASK_CONTEXT_FILE, contexts)
             return None
@@ -1306,7 +1308,7 @@ class TuoguanRouter:
         text: str,
     ) -> RouteResult | None:
         compact = str(text or "").replace(" ", "")
-        if not any(word in compact for word in ("关闭", "强制关闭", "完成", "强制完成")):
+        if not any(word in compact for word in ("关闭", "强制关闭", "完成", "强制完成", "闭关", "关了", "关掉", "取消")):
             return None
         if not any(word in compact for word in ("任务", "S级", "A级", "安全", "闭环")):
             return None
@@ -1397,6 +1399,10 @@ class TuoguanRouter:
         )
         task["closure_events"] = events
         self.store.save_tasks(tasks)
+        self._suppress_pending_notifications_for_task(
+            str(task.get("id") or ""),
+            reason="task_closed_by_supervisor",
+        )
         self._append_admin_task_close_event(task, identity, text, reason)
         self._append_task_closure_ledger(tasks, str(task.get("id") or ""))
         notification = {
@@ -1426,7 +1432,7 @@ class TuoguanRouter:
             if marker in raw:
                 return raw.split(marker, 1)[1].strip(" ，,。")
         match = re.search(r"(本次.*|本回.*|这次.*|此次.*|因为.*|孩子.*|家长.*|后续.*)", raw)
-        if match and any(word in raw for word in ("关闭", "关掉", "强制关闭", "任务")):
+        if match and any(word in raw for word in ("关闭", "关掉", "关了", "闭关", "强制关闭", "任务")):
             return match.group(1).strip(" ，,。")
         return ""
 
@@ -1490,8 +1496,11 @@ class TuoguanRouter:
             student = ""
         visible = self._visible_supervisor_tasks(identity, tasks)
         candidates = []
+        assignee_userid, _assignee_name = self._resolve_assignee(text)
         for task in visible:
             if student and str(task.get("student_name") or "") != student:
+                continue
+            if assignee_userid and str(task.get("assignee_userid") or "") != assignee_userid:
                 continue
             level = str(task.get("level") or "")
             if "S级" in compact and level != "S":
@@ -1501,7 +1510,45 @@ class TuoguanRouter:
             task_text = f"{task.get('title') or ''}{task.get('source_text') or ''}{task.get('student_name') or ''}"
             if student or level in {"S", "A"} or any(token and token in task_text for token in re.split(r"[，。,.；;：:\\s]+", str(text or ""))):
                 candidates.append(task)
-        return sorted(candidates, key=self._supervisor_task_key)
+        if candidates:
+            return sorted(candidates, key=self._supervisor_task_key)
+        focus_candidate = self._focused_supervisor_task(identity, visible)
+        if focus_candidate is not None:
+            return [focus_candidate]
+        if assignee_userid:
+            assigned = [task for task in visible if str(task.get("assignee_userid") or "") == assignee_userid]
+            if len(assigned) == 1:
+                return assigned
+            if assigned and any(word in compact for word in ("这个任务", "刚才", "刚安排", "上个任务", "闭关", "关了", "关掉")):
+                return [sorted(assigned, key=lambda item: str(item.get("updated_at") or item.get("created_at") or ""), reverse=True)[0]]
+        if any(word in compact for word in ("这个任务", "刚才", "刚安排", "上个任务")):
+            own = [
+                task for task in visible
+                if str(task.get("assigned_by") or task.get("created_by") or "") == identity.canonical_user_id
+            ]
+            if own:
+                return [sorted(own, key=lambda item: str(item.get("updated_at") or item.get("created_at") or ""), reverse=True)[0]]
+        return []
+
+    def _focused_supervisor_task(
+        self,
+        identity: UserIdentity,
+        visible: list[dict[str, Any]],
+    ) -> dict[str, Any] | None:
+        focus = self.store.read_json("model_focus.json", {})
+        if not isinstance(focus, dict):
+            return None
+        visible_by_id = {str(task.get("id") or ""): task for task in visible}
+        candidates: list[tuple[str, dict[str, Any]]] = []
+        for key, item in focus.items():
+            if not isinstance(item, dict) or identity.canonical_user_id not in str(key):
+                continue
+            task_id = str(item.get("task_id") or "")
+            if task_id in visible_by_id:
+                candidates.append((str(item.get("updated_at") or ""), visible_by_id[task_id]))
+        if not candidates:
+            return None
+        return sorted(candidates, key=lambda row: row[0], reverse=True)[0][1]
 
     def _append_admin_task_close_event(
         self,
@@ -1715,6 +1762,26 @@ class TuoguanRouter:
         tasks = self.store.load_tasks()
         tasks.append(task)
         self.store.save_tasks(tasks)
+        assignee_identity = UserIdentity(
+            platform=identity.platform,
+            platform_user_id=assignee_userid,
+            canonical_user_id=assignee_userid,
+            person_name=assignee_name,
+            role=assignee_role,
+            approval_state="approved",
+        )
+        self._remember_active_task_context(
+            assignee_identity,
+            task,
+            candidates=[],
+            ttl_minutes=36 * 60,
+        )
+        self._remember_pending_next_task_for_user(
+            assignee_userid,
+            task,
+            source="new_task_notification",
+            ttl_minutes=36 * 60,
+        )
         self._refresh_dashboard_cache_best_effort()
         notification = {
             "task_id": task["id"],
@@ -2492,6 +2559,9 @@ class TuoguanRouter:
                 and (
                     task.get("level") == "S"
                     or str(task.get("type") or "") in _KEY_TASK_TYPES
+                    or str(task.get("source_type") or "") == "manual_assignment"
+                    or str(task.get("type") or "") == "manual_assignment"
+                    or str(task.get("assigned_by") or task.get("created_by") or "") == identity.canonical_user_id
                 )
             ]
         if identity.role != "manager":
@@ -2532,6 +2602,33 @@ class TuoguanRouter:
             due,
             str(task.get("created_at") or ""),
         )
+
+    def _suppress_pending_notifications_for_task(
+        self,
+        task_id: str,
+        *,
+        reason: str,
+    ) -> None:
+        if not task_id:
+            return
+        outbox = self.store.read_json("notification_outbox.json", [])
+        if not isinstance(outbox, list):
+            return
+        now = datetime.now().isoformat(timespec="seconds")
+        changed = False
+        for item in outbox:
+            if not isinstance(item, dict):
+                continue
+            if str(item.get("task_id") or "") != task_id:
+                continue
+            if str(item.get("status") or "") not in {"pending", "retry_pending"}:
+                continue
+            item["status"] = "suppressed"
+            item["suppressed_at"] = now
+            item["suppressed_reason"] = reason
+            changed = True
+        if changed:
+            self.store.write_json("notification_outbox.json", outbox[-2000:])
 
     def _remember_supervisor_task(
         self,
