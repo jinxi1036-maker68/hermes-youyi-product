@@ -80,6 +80,7 @@ from .digital_employee_state import (
     query_external_research_runs,
     query_industry_learning_candidates,
     query_market_research_candidates,
+    query_proactive_work_radar,
     query_student_service_relations,
     query_value_ledger,
     query_value_progress_ledger,
@@ -2744,6 +2745,15 @@ class TuoguanToolService:
             return denied
         result = query_autonomous_work_brief(self.store, identity=self.identity, limit=limit)
         return self._ok("query_autonomous_work_brief", data=result, message=str(result.get("rendered_text") or ""))
+
+    def query_proactive_work_radar(self, *, limit: int = 12) -> dict[str, Any]:
+        denied = self._approved()
+        if denied:
+            return denied
+        if self.identity.role not in {"manager", "boss"}:
+            return self._error("permission_denied", "只有店长或老板可以查看小优主动工作雷达。")
+        result = query_proactive_work_radar(self.store, identity=self.identity, limit=limit)
+        return self._ok("query_proactive_work_radar", data=result, message=str(result.get("rendered_text") or ""))
 
     def query_industry_learning_candidates(self, *, status: str = "", limit: int = 30) -> dict[str, Any]:
         denied = self._approved()

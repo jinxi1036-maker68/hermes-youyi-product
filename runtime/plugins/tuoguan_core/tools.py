@@ -957,6 +957,12 @@ TUOGUAN_QUERY_AUTONOMOUS_WORK_BRIEF_SCHEMA = _schema(
     ["user_id"],
 )
 
+TUOGUAN_QUERY_PROACTIVE_WORK_RADAR_SCHEMA = _schema(
+    "只读查询小优主动工作雷达：按员工手册汇总机构地图、组织权限、学生服务关系、运营制度、老师工作习惯、目标工作项、服务证据、风险和复盘缺口。它是材料，不是 Router，不规定模型下一步。",
+    _identity_props({"limit": {"type": "integer", "description": "最多返回优先缺口和问题候选数量。"}}),
+    ["user_id"],
+)
+
 TUOGUAN_QUERY_INDUSTRY_LEARNING_CANDIDATES_SCHEMA = _schema(
     "只读查询 Hermes 收集的托管/教培行业学习候选。公开资料只作为经营建议材料，老板审核前不进入正式手册或机构事实。",
     _identity_props({
@@ -1089,6 +1095,7 @@ TOOLS = (
     ("tuoguan_query_action_executions", TUOGUAN_QUERY_ACTION_EXECUTIONS_SCHEMA, _handler("query_action_executions")),
     ("tuoguan_submit_action_execution", TUOGUAN_SUBMIT_ACTION_EXECUTION_SCHEMA, _handler("submit_action_execution")),
     ("tuoguan_query_autonomous_work_brief", TUOGUAN_QUERY_AUTONOMOUS_WORK_BRIEF_SCHEMA, _handler("query_autonomous_work_brief")),
+    ("tuoguan_query_proactive_work_radar", TUOGUAN_QUERY_PROACTIVE_WORK_RADAR_SCHEMA, _handler("query_proactive_work_radar")),
     ("tuoguan_query_industry_learning_candidates", TUOGUAN_QUERY_INDUSTRY_LEARNING_CANDIDATES_SCHEMA, _handler("query_industry_learning_candidates")),
     ("tuoguan_query_external_research_runs", TUOGUAN_QUERY_EXTERNAL_RESEARCH_RUNS_SCHEMA, _handler("query_external_research_runs")),
     ("tuoguan_query_market_research_candidates", TUOGUAN_QUERY_MARKET_RESEARCH_CANDIDATES_SCHEMA, _handler("query_market_research_candidates")),

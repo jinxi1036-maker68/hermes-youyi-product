@@ -1361,6 +1361,682 @@ def query_institution_understanding(store: TuoguanStore, *, identity: UserIdenti
     }
 
 
+def query_proactive_work_radar(
+    store: TuoguanStore,
+    *,
+    identity: UserIdentity,
+    limit: int = 12,
+) -> dict[str, Any]:
+    """Build a read-only handbook-based radar for Xiaoyou's proactive work."""
+
+    if identity.role not in {"boss", "manager"}:
+        return {"ok": False, "error": "permission_denied", "message": "只有老板或店长可以查看主动工作雷达。"}
+    limit = max(1, min(int(limit or 12), 30))
+    operating_model = read_institution_operating_model(store)
+    students = _students(store)
+    active_regular = _active_regular_students(store, identity)
+    staff_rows = _staff_rows_for_radar(store)
+    role_counts = _role_counts(staff_rows)
+    teacher_rows = [row for row in staff_rows if str(row.get("role") or "") == "teacher"]
+    manager_rows = [row for row in staff_rows if str(row.get("role") or "") == "manager"]
+    goals = _active_goal_rows(store)
+    work = query_hermes_work_items(store, identity=identity, include_closed=False, limit=20)
+    work_items = work.get("items") if isinstance(work.get("items"), list) else []
+    waiting_items = [item for item in work_items if str(item.get("status") or "") in {"waiting", "blocked"}]
+    service_relations = query_student_service_relations(store, identity=identity, program_id="regular_tuoguan")
+    weekly_coverage = query_weekly_record_coverage(store, identity=identity, days=14, program_id="regular_tuoguan")
+    parent_coverage = query_parent_communication_coverage(store, identity=identity, days=30, program_id="regular_tuoguan")
+    information_requests = query_information_requests(store, include_closed=False, limit=20)
+    action_executions = query_action_executions(store, identity=identity, limit=20)
+    records = _records(store)
+    tasks = _safe_tasks(store)
+    open_tasks = [task for task in tasks if str(task.get("status") or "open").lower() not in _CLOSED_TASK_STATUSES]
+    open_safety_tasks = [task for task in open_tasks if str(task.get("level") or task.get("priority") or "").upper() == "S"]
+    scorecard = query_hermes_employee_scorecard(store, identity=identity, limit=5)
+    value_progress = query_value_progress_ledger(store, identity=identity, limit=5)
+    external_learning = query_external_learning_brief(store, identity=identity, limit=5)
+    recent_report_runs = _read_jsonl(store, "daily_report_runs.jsonl")[-14:]
+
+    domains: list[dict[str, Any]] = []
+    priority_gaps: list[dict[str, Any]] = []
+    question_candidates: list[dict[str, Any]] = []
+
+    def add_question(
+        *,
+        ask_role: str,
+        question: str,
+        reason: str,
+        domain_key: str,
+        urgency: str = "normal",
+        target_user_id: str = "",
+        target_name: str = "",
+    ) -> None:
+        if not question:
+            return
+        fingerprint = (
+            str(ask_role or ""),
+            str(target_user_id or ""),
+            re.sub(r"\s+", "", question),
+        )
+        existing = {
+            (
+                str(item.get("ask_role") or ""),
+                str(item.get("target_user_id") or ""),
+                re.sub(r"\s+", "", str(item.get("question") or "")),
+            )
+            for item in question_candidates
+        }
+        if fingerprint in existing:
+            return
+        question_candidates.append({
+            "ask_role": ask_role,
+            "target_user_id": target_user_id,
+            "target_name": target_name,
+            "question": _limit_text(question, 260),
+            "reason": _limit_text(reason, 360),
+            "domain_key": domain_key,
+            "urgency": urgency,
+            "model_decides_whether_to_ask": True,
+        })
+
+    def add_gap(domain_key: str, text: str, ask_role: str, urgency: str = "normal", evidence: dict[str, Any] | None = None) -> None:
+        priority_gaps.append({
+            "gap_key": f"{domain_key}:{len(priority_gaps) + 1}",
+            "domain_key": domain_key,
+            "gap_text": _limit_text(text, 420),
+            "ask_role": ask_role,
+            "urgency": urgency,
+            "evidence": evidence or {},
+        })
+
+    institution_name = _first_operating_model_value(
+        operating_model,
+        "institution_name", "tenant_name", "name", "brand_name", "brand",
+    )
+    business_lines = _first_operating_model_value(
+        operating_model,
+        "business_lines", "programs", "services", "program_names",
+    )
+    operating_hours = _first_operating_model_value(
+        operating_model,
+        "operating_hours", "daily_schedule", "schedule", "service_time", "work_time",
+    )
+    missing_identity = []
+    if not institution_name:
+        missing_identity.append("机构正式名称")
+        add_gap("institution_work_map", "缺少机构正式名称，小优无法稳定自称服务哪家机构。", "boss", "high")
+        add_question(
+            ask_role="boss",
+            question="请确认小优对外应称呼当前机构的正式名称是什么？",
+            reason="员工手册要求小优先建立机构基本信息，不能套用优益或历史样板。",
+            domain_key="institution_work_map",
+            urgency="high",
+        )
+    if not business_lines:
+        missing_identity.append("业务线/服务项目")
+    if not operating_hours:
+        missing_identity.append("运营时间/服务节奏")
+    domains.append(_radar_domain(
+        "institution_work_map",
+        "机构工作地图",
+        "第3章要求新员工边工作、边调查、边修正，逐步了解名称、校区、业务线、运营时间和当前重点。",
+        known=[
+            f"机构名称={institution_name or '未确认'}",
+            f"业务线={_brief_value(business_lines) or '未确认'}",
+            f"运营时间={_brief_value(operating_hours) or '未确认'}",
+        ],
+        missing=missing_identity,
+        ask_role="boss",
+    ))
+
+    org_missing = []
+    if role_counts.get("boss", 0) < 1:
+        org_missing.append("老板账号/角色")
+        add_gap("organization_permissions", "缺少老板角色事实或白名单映射。", "boss", "high")
+    if role_counts.get("manager", 0) < 1:
+        org_missing.append("店长/校区负责人")
+        add_gap("organization_permissions", "缺少店长或校区负责人，小优会更容易把运营事实都问到老板。", "boss", "normal")
+        add_question(
+            ask_role="boss",
+            question="请确认当前谁是店长或校区负责人，哪些运营事实可以由他/她确认？",
+            reason="员工手册第5章把店长定位为校区运行、人员和跨班事项的一手确认人。",
+            domain_key="organization_permissions",
+        )
+    if role_counts.get("teacher", 0) < 1:
+        org_missing.append("老师名单/企业微信身份")
+    domains.append(_radar_domain(
+        "organization_permissions",
+        "组织与权限",
+        "第5章按老板、店长、老师分层取数；第14章要求权限只守执行边界，不替模型决策。",
+        known=[
+            f"老板={role_counts.get('boss', 0)} 人",
+            f"店长={role_counts.get('manager', 0)} 人",
+            f"老师={role_counts.get('teacher', 0)} 人",
+            f"人员目录={len(staff_rows)} 条",
+        ],
+        missing=org_missing,
+        ask_role="boss",
+    ))
+
+    relation_missing_count = int(service_relations.get("missing_count") or 0)
+    student_missing = []
+    if not active_regular and not students:
+        student_missing.append("试点学生/正式托管学生主档")
+        add_gap("student_service_relations", "当前没有学生主档，小优无法主动分析服务证据、续费风险或老师工作负荷。", "boss", "normal")
+        add_question(
+            ask_role="boss",
+            question="请先给小优一份试点学生名单，或者确认第一阶段暂不接入学生数据？",
+            reason="员工手册第4章要求学生主档和服务关系分开理解。",
+            domain_key="student_service_relations",
+        )
+    if relation_missing_count:
+        student_missing.append(f"{relation_missing_count} 个学生缺服务类型或主责老师")
+        add_gap(
+            "student_service_relations",
+            "正式托管服务类型或主责老师缺失，会影响问谁、记录谁、续费沟通责任归属。",
+            "manager" if manager_rows else "boss",
+            "high",
+            {"missing_count": relation_missing_count},
+        )
+        add_question(
+            ask_role="manager" if manager_rows else "boss",
+            target_user_id=str((manager_rows[0] if manager_rows else {}).get("user_id") or ""),
+            target_name=str((manager_rows[0] if manager_rows else {}).get("name") or ""),
+            question="请确认当前试点学生里哪些是午托、晚托或全托，以及各自的主责老师是谁？",
+            reason="小优需要服务关系来判断该问哪位老师和怎样推进家校沟通。",
+            domain_key="student_service_relations",
+            urgency="high",
+        )
+    domains.append(_radar_domain(
+        "student_service_relations",
+        "学生服务关系",
+        "第4章要求一个学生主档可对应午托、晚托、全托等多个服务关系，不能简单等同一个学生一个老师。",
+        known=[
+            f"学生主档={len(students)} 个",
+            f"当前可见正式托管学生={len(active_regular)} 个",
+            f"服务关系={service_relations.get('relation_count', 0)} 条",
+        ],
+        missing=student_missing,
+        ask_role="manager" if manager_rows else "boss",
+    ))
+
+    rules_missing = []
+    rule_checks = {
+        "安全制度": ("safety", "safety_rules", "risk_rules", "incident_rules"),
+        "家校沟通制度": ("parent_communication", "communication_rules", "home_school_rules"),
+        "学生记录制度": ("record_rules", "weekly_record_rules", "student_record_rules"),
+        "任务授权边界": ("task_rules", "authorization_rules", "permissions"),
+        "绩效/工资边界": ("performance_rules", "payroll_rules", "salary_rules"),
+    }
+    for label, keys in rule_checks.items():
+        if not any(_operating_model_has_key(operating_model, key) for key in keys):
+            rules_missing.append(label)
+    if rules_missing:
+        add_gap("operating_rules", f"运营制度缺口：{', '.join(rules_missing[:5])}。", "boss", "normal")
+        add_question(
+            ask_role="boss",
+            question=f"请确认这些制度里第一阶段最需要小优知道哪一项：{', '.join(rules_missing[:5])}？",
+            reason="员工手册要求高风险制度和长期规则必须由老板确认，不能从临时处理推断。",
+            domain_key="operating_rules",
+        )
+    domains.append(_radar_domain(
+        "operating_rules",
+        "运营制度",
+        "第6章和第14章要求事实、制度、推断分开；安全、权限、绩效、外部沟通是硬边界。",
+        known=[f"已识别制度线索={len(rule_checks) - len(rules_missing)}/{len(rule_checks)}"],
+        missing=rules_missing,
+        ask_role="boss",
+    ))
+
+    teacher_record_user_ids = _teacher_record_user_ids(records)
+    habit_missing = []
+    if teacher_rows and not teacher_record_user_ids:
+        habit_missing.append("老师记录/反馈习惯样本")
+        add_gap("teacher_work_habits", "有老师名单但近期没有可归属的老师记录样本，小优无法判断谁需要记录支持。", "manager", "normal")
+    if teacher_rows and len(teacher_record_user_ids) < len(teacher_rows):
+        habit_missing.append("部分老师缺少近期记录样本")
+    if habit_missing:
+        target = manager_rows[0] if manager_rows else {}
+        add_question(
+            ask_role="manager" if manager_rows else "boss",
+            target_user_id=str(target.get("user_id") or ""),
+            target_name=str(target.get("name") or ""),
+            question="请确认哪些老师平时记录比较少、什么时候最方便补充学生事实？",
+            reason="员工手册第3章要求小优了解谁掌握什么信息、什么时候忙、怎样提问更有效。",
+            domain_key="teacher_work_habits",
+        )
+    domains.append(_radar_domain(
+        "teacher_work_habits",
+        "老师工作习惯与支持",
+        "第8章要求小优不只要信息，还要帮助老师把记录、沟通和执行做成。",
+        known=[
+            f"老师={len(teacher_rows)} 人",
+            f"近期记录样本={len(records)} 条",
+            f"可归属老师记录={len(teacher_record_user_ids)} 人",
+        ],
+        missing=habit_missing,
+        ask_role="manager" if manager_rows else "boss",
+    ))
+
+    goal_missing = []
+    if not goals:
+        goal_missing.append("老板当前目标")
+        add_gap("goals_and_work_items", "缺少老板确认的当前目标，小优只能做零散观察，难以组织长期主动工作。", "boss", "high")
+        add_question(
+            ask_role="boss",
+            question="请确认小优当前第一优先目标是续费、招生、服务稳定、老师执行，还是其他事项？",
+            reason="员工手册第7章要求老板给结果和边界，小优在目标授权内自主拆解推进。",
+            domain_key="goals_and_work_items",
+            urgency="high",
+        )
+    if waiting_items:
+        goal_missing.append(f"{len(waiting_items)} 个工作项在等待或阻塞")
+    domains.append(_radar_domain(
+        "goals_and_work_items",
+        "目标与自主工作项",
+        "第7章要求目标理解、真实数据调查、计划支持、过程记录、动态调整和闭环汇报。",
+        known=[
+            f"活跃目标={len(goals)} 个",
+            f"自主工作项={len(work_items)} 个",
+            f"等待/阻塞={len(waiting_items)} 个",
+        ],
+        missing=goal_missing,
+        ask_role="boss",
+    ))
+
+    weekly_missing = int(weekly_coverage.get("missing_count") or 0)
+    parent_missing = int(parent_coverage.get("missing_count") or 0)
+    evidence_missing = []
+    if weekly_missing:
+        evidence_missing.append(f"近14天表现记录缺口 {weekly_missing}")
+        add_gap("service_evidence_and_risk", "学生表现记录覆盖不足，会削弱服务证据、续费材料和学生问题发现。", "manager", "normal", {"missing_count": weekly_missing})
+    if parent_missing:
+        evidence_missing.append(f"近30天家校沟通证据缺口 {parent_missing}")
+        add_gap("service_evidence_and_risk", "家校沟通覆盖不足，会影响家长信任和续费风险判断。", "manager", "normal", {"missing_count": parent_missing})
+    if open_safety_tasks:
+        evidence_missing.append(f"S级安全任务未闭环 {len(open_safety_tasks)}")
+        add_gap("service_evidence_and_risk", "存在 S 级安全任务未闭环，小优必须优先核实真实状态，不能自动关闭。", "boss", "high", {"open_safety_task_count": len(open_safety_tasks)})
+    domains.append(_radar_domain(
+        "service_evidence_and_risk",
+        "服务证据与风险",
+        "第9章要求每周真实表现记录和每月真实家校沟通；第14章要求安全与事实真实性优先。",
+        known=[
+            weekly_coverage.get("rendered_text") or "",
+            parent_coverage.get("rendered_text") or "",
+            f"开放任务={len(open_tasks)} 个；S级={len(open_safety_tasks)} 个",
+        ],
+        missing=evidence_missing,
+        ask_role="manager",
+    ))
+
+    learning_missing = []
+    if not (scorecard.get("review_count") if isinstance(scorecard, dict) else 0):
+        learning_missing.append("自我胜任度/复盘记录")
+    if not recent_report_runs:
+        learning_missing.append("日报运行回执")
+    if int(((external_learning.get("external_research_runs") or {}).get("run_count") or 0)) and not int(((external_learning.get("source_health") or {}).get("candidate_with_sources") or 0)):
+        learning_missing.append("外部学习来源有效性")
+    domains.append(_radar_domain(
+        "reflection_and_growth",
+        "复盘与长期成长",
+        "第12章要求夜间复盘整理事实、目标进度、信息缺口、未闭环事项、错误和次日重点。",
+        known=[
+            f"自评记录={(scorecard.get('review_count') if isinstance(scorecard, dict) else 0)} 条",
+            f"日报运行回执={len(recent_report_runs)} 条",
+            f"价值账本={(value_progress.get('entry_count') if isinstance(value_progress, dict) else 0)} 条",
+        ],
+        missing=learning_missing,
+        ask_role="boss",
+    ))
+
+    root_cause_hypotheses = _radar_root_cause_hypotheses(
+        domains=domains,
+        waiting_items=waiting_items,
+        teacher_rows=teacher_rows,
+        manager_rows=manager_rows,
+        weekly_missing=weekly_missing,
+        parent_missing=parent_missing,
+        action_executions=action_executions,
+    )
+    lines = [
+        "# 小优主动工作雷达 V1",
+        "",
+        "状态：只读员工盘点材料。未发送消息，未派任务，未修改数据，未写入长期事实。",
+        "",
+        f"- 雷达域：{len(domains)} 个。",
+        f"- 优先缺口：{len(priority_gaps)} 个。",
+        f"- 问题候选：{min(len(question_candidates), limit)} 个。",
+        "",
+        "## 最高优先缺口",
+        "",
+    ]
+    if priority_gaps:
+        for gap in priority_gaps[:6]:
+            lines.append(f"- [{gap.get('urgency')}] {gap.get('gap_text')} 建议事实归属人：{gap.get('ask_role')}。")
+    else:
+        lines.append("- 当前没有明显阻塞缺口；小优仍应结合目标和当天事实自主判断是否继续观察。")
+    lines.extend(["", "## 边界", ""])
+    lines.extend([
+        "- 雷达来自项目书和员工手册，是材料，不是 Router。",
+        "- 是否追问、问谁、何时问、是否等待或停止，仍由模型结合真实上下文决定。",
+        "- 老师/店长外发必须受白名单、角色、频率和不触达家长边界限制。",
+    ])
+    return {
+        "ok": True,
+        "report_type": "proactive_work_radar_v1",
+        "tenant_id": current_tenant_id(),
+        "read_only": True,
+        "model_decides_next_action": True,
+        "handbook_anchors": [
+            {"chapter": "第1章", "point": "小优是进入托管机构长期工作的数字员工，不等待老板逐句指挥。"},
+            {"chapter": "第3章", "point": "边工作、边调查、边修正，逐步建立机构工作地图。"},
+            {"chapter": "第5章", "point": "主动获取信息是长期核心职责，按老板、店长、老师事实归属分层。"},
+            {"chapter": "第6章", "point": "原始反馈、确认事实、阶段画像和洞察必须分开。"},
+            {"chapter": "第7章", "point": "老板给目标和边界，小优在授权范围内自主拆解、支持、追踪和汇报。"},
+            {"chapter": "第8章", "point": "小优不只要信息，还要帮助老师、店长和老板把事情做成。"},
+            {"chapter": "第12章", "point": "复盘看结果，不看提问或提醒数量。"},
+        ],
+        "domains": domains,
+        "priority_gaps": priority_gaps[:limit],
+        "question_candidates": question_candidates[:limit],
+        "root_cause_hypotheses": root_cause_hypotheses[:limit],
+        "source_counts": {
+            "student_profile_count": len(students),
+            "active_regular_student_count": len(active_regular),
+            "staff_count": len(staff_rows),
+            "teacher_count": len(teacher_rows),
+            "manager_count": len(manager_rows),
+            "active_goal_count": len(goals),
+            "work_item_count": len(work_items),
+            "waiting_or_blocked_work_item_count": len(waiting_items),
+            "record_count": len(records),
+            "open_task_count": len(open_tasks),
+            "open_safety_task_count": len(open_safety_tasks),
+            "information_request_count": int(information_requests.get("request_count") or 0),
+            "result_unknown_action_count": int(action_executions.get("result_unknown_count") or 0),
+        },
+        "actions_taken": [],
+        "forbidden_actions_confirmed_absent": [
+            "no_parent_messages_sent",
+            "no_teacher_messages_sent",
+            "no_manager_messages_sent",
+            "no_owner_messages_sent",
+            "no_tasks_created",
+            "no_salary_or_payroll_changed",
+            "no_permissions_changed",
+            "no_business_data_written",
+            "no_router_changed",
+            "no_model_next_step_stored",
+        ],
+        "rendered_text": "\n".join(lines).rstrip() + "\n",
+        "render_verified": True,
+    }
+
+
+def _radar_domain(
+    domain_key: str,
+    label: str,
+    handbook_basis: str,
+    *,
+    known: list[Any],
+    missing: list[Any],
+    ask_role: str,
+) -> dict[str, Any]:
+    clean_missing = [_limit_text(item, 180) for item in missing if str(item or "").strip()]
+    return {
+        "domain_key": domain_key,
+        "label": label,
+        "handbook_basis": handbook_basis,
+        "status": "needs_facts" if clean_missing else "usable",
+        "known_signals": [_limit_text(item, 220) for item in known if str(item or "").strip()],
+        "missing": clean_missing,
+        "suggested_fact_owner_role": ask_role,
+        "does_not_route_model": True,
+    }
+
+
+def _radar_json_rows(value: Any) -> list[dict[str, Any]]:
+    if isinstance(value, list):
+        return [deepcopy(item) for item in value if isinstance(item, dict)]
+    if not isinstance(value, dict):
+        return []
+    collected: list[dict[str, Any]] = []
+    for key in ("staff", "teachers", "managers", "users", "items", "rows", "people"):
+        rows = value.get(key)
+        if isinstance(rows, list):
+            collected.extend(deepcopy(item) for item in rows if isinstance(item, dict))
+    if collected:
+        return collected
+    rows: list[dict[str, Any]] = []
+    for key, item in value.items():
+        if isinstance(item, dict):
+            row = deepcopy(item)
+            row.setdefault("user_id", str(key))
+            rows.append(row)
+    return rows
+
+
+def _staff_rows_for_radar(store: TuoguanStore) -> list[dict[str, Any]]:
+    rows = _radar_json_rows(store.read_json("staff.json", {}))
+    by_user: dict[str, dict[str, Any]] = {}
+    for row in rows:
+        user_id = str(row.get("user_id") or row.get("userid") or row.get("id") or "").strip()
+        if not user_id:
+            user_id = str(row.get("_key") or row.get("name") or row.get("display_name") or "").strip()
+        if not user_id:
+            continue
+        normalized = deepcopy(row)
+        normalized["user_id"] = user_id
+        normalized["name"] = str(
+            row.get("name")
+            or row.get("staff_name")
+            or row.get("display_name")
+            or row.get("alias")
+            or user_id
+        )
+        normalized["role"] = _normalize_role(row.get("role") or row.get("operating_role") or row.get("type"))
+        by_user[user_id] = normalized
+
+    whitelist = store.read_json("wecom_whitelist.json", {})
+    if isinstance(whitelist, dict):
+        role_map = whitelist.get("user_roles") if isinstance(whitelist.get("user_roles"), dict) else {}
+        for user_id, role in role_map.items():
+            user_id = str(user_id or "").strip()
+            if not user_id:
+                continue
+            row = by_user.setdefault(user_id, {"user_id": user_id, "name": user_id})
+            row["role"] = _normalize_role(row.get("role") or role)
+        for key, role in (("super_users", "boss"), ("manager_ids", "manager"), ("allowed_users", "teacher")):
+            values = whitelist.get(key)
+            if isinstance(values, str):
+                values = [values]
+            if not isinstance(values, list):
+                continue
+            for value in values:
+                user_id = str(value or "").strip()
+                if not user_id:
+                    continue
+                row = by_user.setdefault(user_id, {"user_id": user_id, "name": user_id})
+                if not row.get("role"):
+                    row["role"] = role
+
+    name_map = store.read_json("teacher_wecom_map.json", {})
+    if isinstance(name_map, dict):
+        for name, user_id in name_map.items():
+            user_id = str(user_id or "").strip()
+            if not user_id:
+                continue
+            row = by_user.setdefault(user_id, {"user_id": user_id})
+            row.setdefault("name", str(name or user_id))
+            if not row.get("role"):
+                compact = str(name or "")
+                row["role"] = "boss" if any(term in compact for term in ("老板", "金总")) else "teacher"
+
+    return sorted(by_user.values(), key=lambda item: (str(item.get("role") or ""), str(item.get("name") or "")))
+
+
+def _normalize_role(value: Any) -> str:
+    text = str(value or "").strip().lower()
+    if text in {"boss", "owner", "super_user", "admin"} or any(term in text for term in ("老板", "负责人")):
+        return "boss"
+    if text in {"manager", "director", "campus_manager"} or any(term in text for term in ("店长", "校长", "主管")):
+        return "manager"
+    if text in {"teacher", "staff", "tutor"} or "老师" in text:
+        return "teacher"
+    return text
+
+
+def _role_counts(rows: list[dict[str, Any]]) -> dict[str, int]:
+    counts = {"boss": 0, "manager": 0, "teacher": 0}
+    for row in rows:
+        role = str(row.get("role") or "")
+        if role in counts:
+            counts[role] += 1
+    return counts
+
+
+def _active_goal_rows(store: TuoguanStore) -> list[dict[str, Any]]:
+    doc = store.read_json("goal_operator_goals.json", {})
+    if isinstance(doc, dict):
+        rows = doc.get("goals") or doc.get("items") or []
+    elif isinstance(doc, list):
+        rows = doc
+    else:
+        rows = []
+    return [
+        deepcopy(row)
+        for row in rows
+        if isinstance(row, dict)
+        and str(row.get("status") or "active").lower() not in {"completed", "cancelled", "closed", "done", "withdrawn"}
+    ]
+
+
+def _safe_tasks(store: TuoguanStore) -> list[dict[str, Any]]:
+    try:
+        return store.load_tasks()
+    except Exception:
+        return []
+
+
+def _first_operating_model_value(model: dict[str, Any], *keys: str) -> Any:
+    if not isinstance(model, dict):
+        return ""
+    for key in keys:
+        value = model.get(key)
+        if _has_value(value):
+            return value
+    for value in model.values():
+        if isinstance(value, dict):
+            found = _first_operating_model_value(value, *keys)
+            if _has_value(found):
+                return found
+    return ""
+
+
+def _operating_model_has_key(model: Any, key: str) -> bool:
+    if isinstance(model, dict):
+        for current_key, value in model.items():
+            if str(current_key) == key and _has_value(value):
+                return True
+            if _operating_model_has_key(value, key):
+                return True
+    elif isinstance(model, list):
+        return any(_operating_model_has_key(item, key) for item in model)
+    return False
+
+
+def _has_value(value: Any) -> bool:
+    if value is None:
+        return False
+    if isinstance(value, str):
+        return bool(value.strip())
+    if isinstance(value, (list, tuple, set, dict)):
+        return bool(value)
+    return True
+
+
+def _brief_value(value: Any) -> str:
+    if isinstance(value, dict):
+        keys = [str(key) for key in value.keys() if str(key).strip()]
+        return ", ".join(keys[:5])
+    if isinstance(value, list):
+        return ", ".join(_limit_text(item, 40) for item in value[:5] if str(item or "").strip())
+    return _limit_text(value, 160)
+
+
+def _teacher_record_user_ids(records: list[dict[str, Any]]) -> set[str]:
+    result: set[str] = set()
+    for row in records[-300:]:
+        for key in (
+            "teacher_user_id",
+            "staff_user_id",
+            "created_by_user_id",
+            "source_user_id",
+            "author_user_id",
+            "user_id",
+        ):
+            value = str(row.get(key) or "").strip()
+            if value:
+                result.add(value)
+                break
+    return result
+
+
+def _radar_root_cause_hypotheses(
+    *,
+    domains: list[dict[str, Any]],
+    waiting_items: list[dict[str, Any]],
+    teacher_rows: list[dict[str, Any]],
+    manager_rows: list[dict[str, Any]],
+    weekly_missing: int,
+    parent_missing: int,
+    action_executions: dict[str, Any],
+) -> list[dict[str, Any]]:
+    hypotheses: list[dict[str, Any]] = []
+    missing_domains = [item for item in domains if str(item.get("status") or "") == "needs_facts"]
+    if missing_domains:
+        hypotheses.append({
+            "hypothesis_key": "institution_map_incomplete",
+            "hypothesis_text": "小优主动性弱，可能不是模型不想做，而是机构地图缺口让它不知道该问谁、何时问、问什么。",
+            "not_confirmed_fact": True,
+            "evidence": [item.get("domain_key") for item in missing_domains[:6]],
+            "next_safe_check": "先让模型基于雷达选择一个最高价值缺口，并向对应事实归属人问一个问题。",
+        })
+    if teacher_rows and (weekly_missing or parent_missing):
+        hypotheses.append({
+            "hypothesis_key": "service_evidence_pipeline_gap",
+            "hypothesis_text": "服务证据缺口可能来自老师忙、记录习惯弱、提问时间不合适或责任关系不清。",
+            "not_confirmed_fact": True,
+            "evidence": {"weekly_missing": weekly_missing, "parent_missing": parent_missing, "teacher_count": len(teacher_rows)},
+            "next_safe_check": "优先问店长确认老师记录习惯和合适补事实时间，再由模型决定是否低频问具体老师。",
+        })
+    if waiting_items:
+        hypotheses.append({
+            "hypothesis_key": "work_items_waiting_for_human_facts",
+            "hypothesis_text": "部分自主工作没有推进，可能卡在事实确认、授权边界或等待人回复。",
+            "not_confirmed_fact": True,
+            "evidence": [{"focus_key": item.get("focus_key"), "status": item.get("status")} for item in waiting_items[:5]],
+            "next_safe_check": "恢复等待项时先核验是否已有新事实，再决定继续、等待、追问或停止。",
+        })
+    if not manager_rows:
+        hypotheses.append({
+            "hypothesis_key": "missing_manager_fact_owner",
+            "hypothesis_text": "缺少店长事实归属人会让小优把运营问题过度抛给老板。",
+            "not_confirmed_fact": True,
+            "evidence": {"manager_count": 0},
+            "next_safe_check": "向老板确认店长/校区负责人和可确认的运营事实范围。",
+        })
+    if int(action_executions.get("result_unknown_count") or 0):
+        hypotheses.append({
+            "hypothesis_key": "execution_feedback_gap",
+            "hypothesis_text": "存在结果未知动作时，小优可能因为缺少回执而不敢继续推进。",
+            "not_confirmed_fact": True,
+            "evidence": {"result_unknown_action_count": int(action_executions.get("result_unknown_count") or 0)},
+            "next_safe_check": "先核验回执、幂等键和最新业务事实，不把结果未知说成成功。",
+        })
+    return hypotheses
+
+
 def update_institution_understanding(
     store: TuoguanStore,
     *,
@@ -3832,6 +4508,7 @@ _AUTONOMOUS_LOG_TOOL_NAMES = {
     "tuoguan_query_business_events",
     "tuoguan_query_action_executions",
     "tuoguan_query_autonomous_work_brief",
+    "tuoguan_query_proactive_work_radar",
     "tuoguan_query_institution_understanding",
     "tuoguan_query_hermes_employee_scorecard",
     "tuoguan_query_industry_learning_candidates",

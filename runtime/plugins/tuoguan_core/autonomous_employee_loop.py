@@ -43,6 +43,7 @@ from .digital_employee_state import (
     query_industry_learning_candidates,
     query_institution_understanding,
     query_multi_agent_brief,
+    query_proactive_work_radar,
     query_relationship_touch_candidates,
     relationship_touch_policy,
     query_value_progress_ledger,
@@ -172,6 +173,7 @@ def build_employee_loop_materials(store: TuoguanStore, *, identity: UserIdentity
     events = query_business_events(store, identity=identity, limit=20)
     executions = query_action_executions(store, identity=identity, limit=20)
     institution_understanding = query_institution_understanding(store, identity=identity)
+    proactive_radar = query_proactive_work_radar(store, identity=identity, limit=12)
     employee_scorecard = query_hermes_employee_scorecard(store, identity=identity, limit=10)
     industry_learning = query_industry_learning_candidates(store, identity=identity, limit=10)
     external_learning = query_external_learning_brief(store, identity=identity, limit=5)
@@ -213,6 +215,7 @@ def build_employee_loop_materials(store: TuoguanStore, *, identity: UserIdentity
             "When proactive staff questions are allowed by policy, ask the right whitelisted manager or teacher for one concrete work fact instead of routing every missing fact through the owner. Never contact parents.",
             "Do not say Hermes cannot proactively ask for missing information. Distinguish safe owner attention, in-chat clarification, and blocked external outreach.",
             "Hermes has its own employee goals: institutional understanding, owner goal progress, teacher support, student service evidence, risk detection, business opportunity, and learning growth.",
+            "At every wakeup, inspect proactive_work_radar as the handbook-based employee map: institution, organization, student service relations, operating rules, teacher work habits, goals, service evidence, risk, and reflection. It is material, not a Router.",
             "Public industry learning is advice material with sources; never treat it as confirmed institution fact before owner review.",
             "External learning and market research are evidence candidates. Use them to improve advice, but do not copy them into institution facts or long-term memory until the owner reviews them.",
             "When a daytime due attention arrives and historical evidence is available, derive a concrete internal finding for the active goal instead of only restating deferred gaps.",
@@ -240,6 +243,7 @@ def build_employee_loop_materials(store: TuoguanStore, *, identity: UserIdentity
         "business_events": _compact_for_model(events),
         "action_executions": _compact_for_model(executions),
         "institution_understanding_state": _compact_for_model(institution_understanding),
+        "proactive_work_radar": _compact_for_model(proactive_radar, max_chars=9000),
         "employee_scorecard": _compact_for_model(employee_scorecard),
         "industry_learning_candidates": _compact_for_model(industry_learning),
         "external_learning_brief": _compact_for_model(external_learning),
@@ -267,6 +271,8 @@ def build_employee_loop_materials(store: TuoguanStore, *, identity: UserIdentity
         "business_event_count": int(events.get("event_count") or 0),
         "result_unknown_action_count": int(executions.get("result_unknown_count") or 0),
         "institution_gap_count": int(((institution_understanding.get("audit") or {}).get("gap_count") or 0)) if isinstance(institution_understanding, dict) else 0,
+        "proactive_radar_gap_count": int(proactive_radar.get("priority_gaps") and len(proactive_radar.get("priority_gaps") or []) or 0) if isinstance(proactive_radar, dict) else 0,
+        "proactive_radar_question_candidate_count": int(proactive_radar.get("question_candidates") and len(proactive_radar.get("question_candidates") or []) or 0) if isinstance(proactive_radar, dict) else 0,
         "employee_self_review_count": int(employee_scorecard.get("review_count") or 0) if isinstance(employee_scorecard, dict) else 0,
         "industry_learning_candidate_count": int(industry_learning.get("candidate_count") or 0) if isinstance(industry_learning, dict) else 0,
         "external_research_run_count": int(((external_learning.get("external_research_runs") or {}).get("run_count") or 0)) if isinstance(external_learning, dict) else 0,
@@ -1031,6 +1037,7 @@ When writing owner/manager/teacher-facing messages, self-identify as 小优. Use
 Think like an employee: understand the institution, inspect goals, notice missing facts, decide whether to continue, wait, ask a human, or stop.
 The handbook is guidance, not a fixed workflow. Do not claim an external action happened.
 You cannot contact parents, assign new teacher tasks, change salary, delete data, close safety events, or change permissions in this wakeup.
+proactive_work_radar is the handbook-based employee map. Use it before deciding that there is nothing to do: it tells you what Xiaoyou should understand about the institution, organization, student service relations, operating rules, teacher work habits, goals, service evidence, risk, business opportunity, and reflection. It is read-only material, not a Router, and does not force you to ask every listed question.
 If owner_attention_policy.allowed_now is true and a real goal is blocked by missing owner facts, propose one boss_attention_candidate. If you write that the next stage is waiting for owner confirmation, boss confirmation, or next-step instruction, you must also put one concrete boss_attention_candidate. This is only a candidate for the owner/boss, not teachers or parents. If you put an owner/boss question in questions_to_humans, also put the same concrete question in boss_attention_candidates unless it is unsafe or deferred by term policy.
 Do not answer or record that Hermes "cannot proactively ask" as a general rule. Correct boundary: Hermes may ask the current conversation participant for clarification; the autonomous scheduler may queue daytime low-frequency owner attention; and it may queue manager/teacher questions when the missing fact belongs to that staff member, the person is whitelisted, and the message is work-related. Parents remain out of scope.
 Hermes also has employee responsibilities: complete institution understanding, push owner goals, support teachers, protect student service evidence, detect risks, find business opportunities, and keep learning.
@@ -1193,6 +1200,7 @@ def _model_payload(materials: dict[str, Any]) -> dict[str, Any]:
             "brief": _compact_for_model(brief, max_chars=3000),
         },
         "institution_understanding_state": _compact_for_model(materials.get("institution_understanding_state"), max_chars=5000),
+        "proactive_work_radar": _compact_for_model(materials.get("proactive_work_radar"), max_chars=9000),
         "employee_scorecard": _compact_for_model(materials.get("employee_scorecard"), max_chars=3000),
         "industry_learning_candidates": _compact_for_model(materials.get("industry_learning_candidates"), max_chars=3000),
         "external_learning_brief": _compact_for_model(materials.get("external_learning_brief"), max_chars=3000),

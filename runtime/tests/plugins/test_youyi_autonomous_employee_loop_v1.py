@@ -180,6 +180,61 @@ def test_autonomous_materials_use_confirmed_public_employee_name(tmp_path):
     assert "public-facing digital employee" in _SYSTEM_PROMPT
 
 
+def test_proactive_work_radar_uses_handbook_employee_map(tmp_path):
+    from plugins.tuoguan_core.digital_employee_state import query_proactive_work_radar
+    from plugins.tuoguan_core.models import UserIdentity
+
+    store = _seed_store(tmp_path)
+    _write_json(
+        tmp_path,
+        "institution_operating_model.json",
+        {
+            "schema_version": 1,
+            "institution_name": "优益托管",
+            "programs": {"regular_tuoguan": {"label": "正式托管"}},
+        },
+    )
+    identity = UserIdentity(platform="system", platform_user_id="boss1", canonical_user_id="boss1", person_name="金总", role="boss", approval_state="approved")
+
+    radar = query_proactive_work_radar(store, identity=identity, limit=10)
+
+    assert radar["ok"] is True
+    assert radar["read_only"] is True
+    assert radar["model_decides_next_action"] is True
+    assert radar["actions_taken"] == []
+    domain_keys = {item["domain_key"] for item in radar["domains"]}
+    assert "institution_work_map" in domain_keys
+    assert "organization_permissions" in domain_keys
+    assert "teacher_work_habits" in domain_keys
+    assert "goals_and_work_items" in domain_keys
+    assert any(anchor["chapter"] == "第3章" for anchor in radar["handbook_anchors"])
+    assert any("店长" in item["question"] for item in radar["question_candidates"])
+    assert any(item["domain_key"] == "organization_permissions" for item in radar["priority_gaps"])
+    assert "no_teacher_messages_sent" in radar["forbidden_actions_confirmed_absent"]
+
+
+def test_autonomous_materials_include_proactive_work_radar(tmp_path):
+    from plugins.tuoguan_core.autonomous_employee_loop import build_employee_loop_materials, _model_payload, _SYSTEM_PROMPT
+    from plugins.tuoguan_core.models import UserIdentity
+
+    store = _seed_store(tmp_path)
+    identity = UserIdentity(platform="system", platform_user_id="boss1", canonical_user_id="boss1", person_name="金总", role="boss", approval_state="approved")
+    materials = build_employee_loop_materials(store, identity=identity, timestamp=datetime(2026, 8, 8, 9, 0, tzinfo=timezone(timedelta(hours=8))))
+    payload = _model_payload(materials)
+
+    assert materials["proactive_work_radar"]["report_type"] == "proactive_work_radar_v1"
+    assert materials["materials_summary"]["proactive_radar_question_candidate_count"] >= 1
+    assert payload["proactive_work_radar"]["model_decides_next_action"] is True
+    assert "teacher_work_habits" in json.dumps(payload["proactive_work_radar"], ensure_ascii=False)
+    assert "proactive_work_radar is the handbook-based employee map" in _SYSTEM_PROMPT
+
+
+def test_proactive_work_radar_tool_is_registered():
+    from plugins.tuoguan_core.tools import TOOLS
+
+    assert "tuoguan_query_proactive_work_radar" in {name for name, _schema, _handler in TOOLS}
+
+
 def test_owner_attention_is_deduplicated_per_focus_per_day(tmp_path):
     from plugins.tuoguan_core.autonomous_employee_loop import run_autonomous_employee_loop
 
