@@ -171,6 +171,44 @@ def test_daily_report_drain_bypasses_active_conversation_quiet_period(tmp_path, 
     assert outbox[0]["message_id"] == "msg_daily_1"
 
 
+def test_non_daily_drain_tolerates_naive_active_conversation_timestamp(tmp_path, monkeypatch):
+    from plugins.tuoguan_core import _ACTIVE_WECom_USERS, _drain_notification_outbox
+
+    monkeypatch.setenv("HERMES_TUOGUAN_DATA_DIR", str(tmp_path))
+    _write_json(tmp_path, "write_guard_config.json", {"enabled": True})
+    _write_json(
+        tmp_path,
+        "notification_outbox.json",
+        [
+            {
+                "id": "task_reminder_1",
+                "status": "pending",
+                "delivery_mode": "direct_wecom",
+                "notification_type": "task_notification",
+                "action": "task_due",
+                "target_user_id": "teacher1",
+                "touser": "teacher1",
+                "content": "李老师，这条任务需要回执。",
+                "created_at": datetime.now().astimezone().isoformat(timespec="seconds"),
+                "attempt_count": 0,
+            }
+        ],
+    )
+    _ACTIVE_WECom_USERS["teacher1"] = datetime.now()
+
+    class Adapter:
+        async def send(self, target, content, metadata=None):
+            raise AssertionError("active teacher conversation should keep non-daily reminder pending")
+
+    try:
+        asyncio.run(_drain_notification_outbox(Adapter()))
+    finally:
+        _ACTIVE_WECom_USERS.pop("teacher1", None)
+
+    outbox = json.loads((tmp_path / "notification_outbox.json").read_text(encoding="utf-8"))
+    assert outbox[0]["status"] == "pending"
+
+
 def test_stale_daily_report_becomes_visible_failure_not_suppressed(tmp_path, monkeypatch):
     from plugins.tuoguan_core import _drain_notification_outbox
 

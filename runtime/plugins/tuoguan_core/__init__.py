@@ -527,6 +527,21 @@ def _parse_outbox_datetime(value: str, *, now: datetime) -> datetime:
     return parsed.astimezone(now.tzinfo)
 
 
+def _coerce_runtime_datetime(value: Any, *, now: datetime) -> datetime | None:
+    if value is None:
+        return None
+    if isinstance(value, datetime):
+        parsed = value
+    else:
+        try:
+            parsed = datetime.fromisoformat(str(value or ""))
+        except ValueError:
+            return None
+    if parsed.tzinfo is None:
+        return parsed.replace(tzinfo=now.tzinfo)
+    return parsed.astimezone(now.tzinfo)
+
+
 def _outbox_item_age_seconds(item: dict[str, Any], *, now: datetime) -> float | None:
     created_at = str(item.get("created_at") or "").strip()
     if not created_at:
@@ -660,7 +675,7 @@ async def _drain_notification_outbox(adapter: Any) -> None:
             _append_notification_failure(item, "missing_target_or_content")
             changed = True
             continue
-        last_inbound = _ACTIVE_WECom_USERS.get(target)
+        last_inbound = _coerce_runtime_datetime(_ACTIVE_WECom_USERS.get(target), now=now)
         if (
             str(item.get("notification_type") or "") != "autonomous_daily_report"
             and last_inbound is not None
@@ -928,7 +943,8 @@ def _schedule_reply(
     message_id = str(getattr(event, "message_id", "") or "")
     now = datetime.now().astimezone()
     for claimed_id, claimed_at in list(_CLAIMED_REPLY_MESSAGE_IDS.items()):
-        if now - claimed_at > _REPLY_CLAIM_TTL:
+        normalized_claimed_at = _coerce_runtime_datetime(claimed_at, now=now)
+        if normalized_claimed_at is None or now - normalized_claimed_at > _REPLY_CLAIM_TTL:
             _CLAIMED_REPLY_MESSAGE_IDS.pop(claimed_id, None)
     if message_id and message_id in _CLAIMED_REPLY_MESSAGE_IDS:
         logger.critical("duplicate business reply blocked source_message_id=%s", message_id)
