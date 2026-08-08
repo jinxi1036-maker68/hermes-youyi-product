@@ -74,14 +74,14 @@ DEFAULT_RELATIONSHIP_TOUCH_POLICY: dict[str, Any] = {
         "allowed_types": ["owner_business", "owner_progress", "presence_report"],
     },
     "manager": {
-        "mode": "candidate",
+        "mode": "direct",
         "allowed_start": "10:00",
         "allowed_end": "18:30",
         "daily_limit": 1,
         "allowed_types": ["manager_assist", "encouragement", "record_relief"],
     },
     "teacher": {
-        "mode": "candidate",
+        "mode": "direct",
         "allowed_start": "10:30",
         "allowed_end": "18:30",
         "daily_limit": 1,
@@ -2226,7 +2226,7 @@ def submit_relationship_touch_candidate(
         return {"ok": False, "error": "relationship_touch_requires_message", "message": "关系经营候选必须有自然内容和原因。"}
     policy = relationship_touch_policy(store)
     role_policy = policy.get(role) if isinstance(policy.get(role), dict) else {}
-    if role != "boss":
+    if role != "boss" and str(role_policy.get("mode") or "candidate") != "direct":
         external_send_allowed = False
         requires_authorization = True
     elif str(role_policy.get("mode") or "candidate") != "direct":
@@ -2271,8 +2271,8 @@ def submit_relationship_touch_candidate(
         "updated_at": now_iso(),
         "auto_effects": {
             "sends_parent_messages": False,
-            "sends_teacher_messages": False,
-            "sends_manager_messages": False,
+            "sends_teacher_messages": bool(external_send_allowed and role == "teacher"),
+            "sends_manager_messages": bool(external_send_allowed and role == "manager"),
             "changes_salary": False,
             "changes_performance_conclusion": False,
             "reports_private_chat_to_boss": False,

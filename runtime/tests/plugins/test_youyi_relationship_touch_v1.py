@@ -120,3 +120,137 @@ def test_autonomous_loop_can_queue_boss_presence_but_not_teacher(tmp_path):
     assert len(candidates) == 2
     teacher_candidate = next(row for row in candidates if row["target_role"] == "teacher")
     assert teacher_candidate["external_send_allowed"] is False
+
+
+def test_autonomous_loop_can_queue_teacher_and_manager_fact_requests(tmp_path):
+    from plugins.tuoguan_core.autonomous_employee_loop import run_autonomous_employee_loop
+    from plugins.tuoguan_core.store import TuoguanStore
+
+    _write_json(tmp_path, "write_guard_config.json", {"enabled": True})
+    _write_json(
+        tmp_path,
+        "wecom_whitelist.json",
+        {
+            "super_users": ["boss1"],
+            "allowed_users": ["teacher1", "manager1"],
+            "user_roles": {"boss1": "boss", "teacher1": "teacher", "manager1": "manager"},
+        },
+    )
+    _write_json(tmp_path, "notification_outbox.json", [])
+    _write_json(tmp_path, "students.json", {})
+    _write_json(tmp_path, "tasks.json", [])
+    _write_json(tmp_path, "academic_term_state.json", {"service_relation_policy": "defer_until_new_term"})
+    store = TuoguanStore(tmp_path)
+    cn_tz = timezone(timedelta(hours=8))
+
+    def decision_provider(_materials):
+        return {
+            "employee_summary": "小优发现一个老师任务结果和一个店长运营事实需要直接问归属人。",
+            "institution_understanding": "",
+            "goal_progress_view": "",
+            "observations": [],
+            "work_item_updates": [],
+            "questions_to_humans": [],
+            "boss_attention_candidates": [],
+            "relationship_touch_candidates": [
+                {
+                    "target_role": "teacher",
+                    "target_user_id": "teacher1",
+                    "target_name": "李老师",
+                    "touch_type": "record_relief",
+                    "message": "李老师，老板安排给你的任务我来跟一下：请告诉我目前沟通结果是什么？如果还没开始，也请回我当前进展。",
+                    "reason": "已有任务缺老师执行结果，事实归属人是李老师。",
+                    "value": "让任务进展能回到上下文，不再反复打扰老板。",
+                    "work_related": True,
+                    "external_send_allowed": True,
+                },
+                {
+                    "target_role": "manager",
+                    "target_user_id": "manager1",
+                    "target_name": "申老师",
+                    "touch_type": "manager_assist",
+                    "message": "申老师，我在整理今天的运营事实，请帮我确认一下老师任务执行结果是否已经收齐？缺哪位老师的反馈直接回我就行。",
+                    "reason": "缺店长运营事实，事实归属人是店长。",
+                    "value": "让小优能自己追运营事实，不把所有卡点都交给老板。",
+                    "work_related": True,
+                    "external_send_allowed": True,
+                },
+            ],
+            "institution_fact_gaps": [],
+            "value_progress_entries": [],
+            "agent_delegation_decisions": [],
+            "self_review": {},
+            "external_actions": [],
+        }
+
+    result = run_autonomous_employee_loop(
+        store,
+        now=datetime(2026, 8, 1, 11, 0, tzinfo=cn_tz),
+        decision_provider=decision_provider,
+    )
+
+    assert result["ok"] is True
+    outbox = json.loads((tmp_path / "notification_outbox.json").read_text(encoding="utf-8"))
+    assert [item["role"] for item in outbox] == ["teacher", "manager"]
+    assert {item["touser"] for item in outbox} == {"teacher1", "manager1"}
+    assert all(item["auto_effects"]["sends_parent_messages"] is False for item in outbox)
+    assert outbox[0]["auto_effects"]["sends_teacher_messages"] is True
+    assert outbox[1]["auto_effects"]["sends_manager_messages"] is True
+
+
+def test_teacher_fact_request_cannot_be_parent_outreach_instruction(tmp_path):
+    from plugins.tuoguan_core.autonomous_employee_loop import run_autonomous_employee_loop
+    from plugins.tuoguan_core.store import TuoguanStore
+
+    _write_json(tmp_path, "write_guard_config.json", {"enabled": True})
+    _write_json(
+        tmp_path,
+        "wecom_whitelist.json",
+        {
+            "super_users": ["boss1"],
+            "allowed_users": ["teacher1"],
+            "user_roles": {"boss1": "boss", "teacher1": "teacher"},
+        },
+    )
+    _write_json(tmp_path, "notification_outbox.json", [])
+    _write_json(tmp_path, "students.json", {})
+    _write_json(tmp_path, "tasks.json", [])
+    store = TuoguanStore(tmp_path)
+    cn_tz = timezone(timedelta(hours=8))
+
+    def decision_provider(_materials):
+        return {
+            "employee_summary": "小优错误地准备让老师主动联系家长，应被边界挡住。",
+            "institution_understanding": "",
+            "goal_progress_view": "",
+            "observations": [],
+            "work_item_updates": [],
+            "questions_to_humans": [],
+            "boss_attention_candidates": [],
+            "relationship_touch_candidates": [
+                {
+                    "target_role": "teacher",
+                    "target_user_id": "teacher1",
+                    "touch_type": "record_relief",
+                    "message": "李老师，请你现在联系家长，把这段话发给家长后告诉我结果。",
+                    "reason": "这会变成对家长触达指令。",
+                    "value": "不应发送。",
+                    "work_related": True,
+                    "external_send_allowed": True,
+                }
+            ],
+            "institution_fact_gaps": [],
+            "value_progress_entries": [],
+            "agent_delegation_decisions": [],
+            "self_review": {},
+            "external_actions": [],
+        }
+
+    result = run_autonomous_employee_loop(
+        store,
+        now=datetime(2026, 8, 1, 11, 0, tzinfo=cn_tz),
+        decision_provider=decision_provider,
+    )
+
+    assert result["ok"] is True
+    assert json.loads((tmp_path / "notification_outbox.json").read_text(encoding="utf-8")) == []

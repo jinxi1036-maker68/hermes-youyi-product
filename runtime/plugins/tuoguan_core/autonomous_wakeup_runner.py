@@ -1,8 +1,10 @@
 """Production-safe autonomous wakeup runner for Hermes.
 
 This runner gives Hermes a real clock tick. It reads current autonomous work
-state and patrol data, writes only internal reports, and never sends messages,
-creates tasks, changes salary, closes events, or stores a fixed next step.
+state and patrol data, writes internal reports, and when the model-led employee
+loop is enabled may queue bounded proactive messages through the audited outbox.
+It never contacts parents, creates tasks, changes salary, closes events, or
+stores a fixed next step.
 """
 
 from __future__ import annotations
@@ -31,12 +33,7 @@ def run_autonomous_wakeup_once(
     now: datetime | None = None,
     write_report: bool = True,
 ) -> dict[str, Any]:
-    """Run one read-only autonomous wakeup pass.
-
-    The pass deliberately does not materialize wakeup requests or execute any
-    business action. It only proves that the production clock has brought
-    Hermes back to look at current facts.
-    """
+    """Run one autonomous wakeup pass with production boundaries."""
 
     actual_store = store or TuoguanStore()
     timestamp = now or datetime.now().astimezone()
@@ -61,10 +58,10 @@ def run_autonomous_wakeup_once(
         "tenant_id": current_tenant_id(),
         "report_type": "autonomous_wakeup_runner_v1",
         "generated_at": timestamp.isoformat(timespec="seconds"),
-        "read_only": True,
+        "read_only": not employee_loop_enabled,
         "actions_taken": [],
         "boundary": {
-            "clock_tick_only": True,
+            "clock_tick_only": not employee_loop_enabled,
             "limits_model": False,
             "routes_intent": False,
             "stores_model_next_step": False,
@@ -72,6 +69,8 @@ def run_autonomous_wakeup_once(
             "sends_parent_messages": False,
             "sends_teacher_messages": False,
             "sends_owner_messages": False,
+            "may_queue_owner_messages": employee_loop_enabled,
+            "may_queue_manager_teacher_fact_requests": employee_loop_enabled,
             "creates_tasks": False,
             "changes_salary": False,
             "changes_permissions": False,
@@ -145,7 +144,7 @@ def render_autonomous_wakeup_report(summary: dict[str, Any]) -> str:
     lines = [
         f"# Hermes 自主唤醒心跳｜{str(summary.get('generated_at') or '')[:19]}",
         "",
-        "状态：生产定时只读唤醒。Hermes 已醒来查看事实，但未发送任何消息，未派任务，未修改业务数据，未规定下一步。",
+        "状态：生产定时唤醒。Hermes 已醒来查看事实；如模型判断需要，可在边界内排队老板/店长/老师消息，但未联系家长，未派任务，未修改业务数据，未规定下一步。",
         "",
         "## 摘要",
         "",
@@ -182,7 +181,7 @@ def render_autonomous_wakeup_report(summary: dict[str, Any]) -> str:
         "",
         "- 这只是把 Hermes 按时间叫醒看材料，不是 Router，也不是固定流程。",
         "- 是否继续、追问、等待、写入状态、停止或请求人工确认，仍应由模型结合真实事实自主判断。",
-        "- 当前只允许白天给老板本人低频提醒候选入队；不自动发家长、不批量派老师任务、不改工资、不改权限。",
+        "- 当前允许白天给老板低频提醒，也允许向白名单店长/老师低频询问明确工作事实；不自动发家长、不批量派老师任务、不改工资、不改权限。",
     ])
     return "\n".join(lines).rstrip() + "\n"
 

@@ -545,10 +545,17 @@ def _stale_outbox_suppression_reason(item: dict[str, Any], *, now: datetime) -> 
     action = str(item.get("action") or "")
     if notification_type == "autonomous_owner_attention" and age > 2 * 3600:
         return "stale_owner_attention_after_outbox_block"
-    if notification_type == "autonomous_daily_report" and age > 4 * 3600:
-        return "stale_daily_report_after_outbox_block"
     if action in {"task_created", "task_due", "manual_assignment"} and age > 24 * 3600:
         return "stale_task_notification_after_outbox_block"
+    return ""
+
+
+def _stale_outbox_failure_reason(item: dict[str, Any], *, now: datetime) -> str:
+    age = _outbox_item_age_seconds(item, now=now)
+    if age is None:
+        return ""
+    if str(item.get("notification_type") or "") == "autonomous_daily_report" and age > 4 * 3600:
+        return "daily_report_delivery_window_missed_after_outbox_block"
     return ""
 
 
@@ -615,6 +622,18 @@ async def _drain_notification_outbox(adapter: Any) -> None:
             continue
         if item.get("delivery_mode") != "direct_wecom":
             continue  # Preserve unrelated legacy failed evidence until explicitly cleaned.
+        stale_failure = _stale_outbox_failure_reason(item, now=now)
+        if stale_failure:
+            item.update({
+                "status": "failed",
+                "last_error": stale_failure,
+                "failed_at": now.isoformat(timespec="seconds"),
+                "last_attempt_at": now.isoformat(timespec="seconds"),
+            })
+            item.pop("retry_at", None)
+            _append_notification_audit(store, item, "notification_failed", stale_failure)
+            changed = True
+            continue
         stale_reason = _stale_outbox_suppression_reason(item, now=now)
         if stale_reason:
             item.update({
@@ -642,7 +661,11 @@ async def _drain_notification_outbox(adapter: Any) -> None:
             changed = True
             continue
         last_inbound = _ACTIVE_WECom_USERS.get(target)
-        if last_inbound is not None and now - last_inbound < _ACTIVE_CONVERSATION_QUIET_PERIOD:
+        if (
+            str(item.get("notification_type") or "") != "autonomous_daily_report"
+            and last_inbound is not None
+            and now - last_inbound < _ACTIVE_CONVERSATION_QUIET_PERIOD
+        ):
             # Keep it pending. The next scheduler tick will deliver after the
             # teacher has been idle, instead of inserting a system prompt into
             # the middle of the model-guided task flow.

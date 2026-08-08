@@ -1,7 +1,8 @@
 ﻿"""Model-led autonomous employee loop for Hermes wakeups.
 
 This module lets the timer wakeup hand real operating material to the model and
-persist only low-risk internal work state. It does not send messages, create
+persist low-risk autonomous work state. It may queue bounded boss/manager/teacher
+messages through the audited outbox, but it does not contact parents, create
 teacher tasks, change salary, delete data, or store a fixed route/tool step.
 """
 
@@ -209,7 +210,7 @@ def build_employee_loop_materials(store: TuoguanStore, *, identity: UserIdentity
             "New-term student service relations remain deferred unless the owner asks earlier.",
             "Deferred new-term service relations are future confirmation material, not a current blocker for historical renewal analysis or preparation.",
             "During daytime, if work is blocked by missing owner facts, the model may ask for one low-frequency owner attention note.",
-            "Even when owner attention is allowed, do not contact teachers or parents and do not claim the owner has replied.",
+            "When proactive staff questions are allowed by policy, ask the right whitelisted manager or teacher for one concrete work fact instead of routing every missing fact through the owner. Never contact parents.",
             "Do not say Hermes cannot proactively ask for missing information. Distinguish safe owner attention, in-chat clarification, and blocked external outreach.",
             "Hermes has its own employee goals: institutional understanding, owner goal progress, teacher support, student service evidence, risk detection, business opportunity, and learning growth.",
             "Public industry learning is advice material with sources; never treat it as confirmed institution fact before owner review.",
@@ -218,18 +219,18 @@ def build_employee_loop_materials(store: TuoguanStore, *, identity: UserIdentity
             "If a daytime active goal is blocked by a fact only the owner can confirm, or if you write that owner confirmation is needed before the next stage, put one concrete owner question into boss_attention_candidates. Do not hide the question only in employee_summary, goal_progress_view, or questions_to_humans.",
             "If multi_agent_brief contains pending completed sub-agent results, decide on at most one result per wakeup: adopted, partially_adopted, rejected, needs_more_evidence, or deferred. The result is advisory material only and never executes business action by itself.",
             "Hermes should build trust like a real colleague. Relationship touches may be care, encouragement, thanks, light chat, relief, material support, manager assistance, owner business insight, progress update, or presence report.",
-            "Teacher and manager relationship touches are candidates only unless a policy explicitly allows sending. Private emotional support must not become boss performance material.",
+            "Teacher and manager relationship touches may be sent only when policy allows, the target is whitelisted, the message asks for a concrete work fact, and the daily frequency limit is not exceeded. Private emotional support remains candidate-only.",
         ],
         "work_cadence": cadence,
         "owner_attention_policy": {
             "enabled": True,
-            "allowed_target": "owner/boss only",
+            "allowed_target": "owner/boss for decisions; whitelisted managers/teachers for concrete work facts",
             "allowed_now": bool(cadence.get("owner_attention_allowed")),
             "daytime_window": "08:00-19:00 local time",
             "quiet_window": "19:00-08:00 no proactive owner interruption",
             "max_per_focus": "one pending/daily reminder per focus",
             "content_rule": "Say what is blocked, what fact is needed, and what Hermes will do after confirmation. Do not claim completion.",
-            "not_a_blanket_ban": "This policy does not forbid Hermes from asking missing facts; it only limits which channel may be proactively contacted by the scheduler.",
+            "not_a_blanket_ban": "This policy does not forbid Hermes from asking missing facts; it requires the model to choose the fact owner and the system to enforce permissions, frequency, and no-parent-contact boundaries.",
         },
         "onboarding_gaps": _compact_for_model(onboarding.get("data") or onboarding),
         "active_goal_state": _compact_for_model(active_goals),
@@ -418,7 +419,7 @@ def _normalize_relationship_touch_candidates(items: list[dict[str, Any]]) -> lis
             "work_related": bool(item.get("work_related")),
             "private_emotional_support": bool(item.get("private_emotional_support")),
             "requires_authorization": item.get("requires_authorization", role != "boss") is not False,
-            "external_send_allowed": bool(item.get("external_send_allowed")) and role == "boss",
+            "external_send_allowed": bool(item.get("external_send_allowed")),
             "suggested_send_at": _limit(item.get("suggested_send_at"), 80),
         })
     return normalized[:6]
@@ -1029,9 +1030,9 @@ _SYSTEM_PROMPT = """You are Xiaoyou (小优), the public-facing digital employee
 When writing owner/manager/teacher-facing messages, self-identify as 小优. Use Hermes only when discussing internal architecture, code, or technical implementation.
 Think like an employee: understand the institution, inspect goals, notice missing facts, decide whether to continue, wait, ask a human, or stop.
 The handbook is guidance, not a fixed workflow. Do not claim an external action happened.
-You cannot assign teacher tasks, contact parents, change salary, delete data, close safety events, or change permissions in this wakeup.
+You cannot contact parents, assign new teacher tasks, change salary, delete data, close safety events, or change permissions in this wakeup.
 If owner_attention_policy.allowed_now is true and a real goal is blocked by missing owner facts, propose one boss_attention_candidate. If you write that the next stage is waiting for owner confirmation, boss confirmation, or next-step instruction, you must also put one concrete boss_attention_candidate. This is only a candidate for the owner/boss, not teachers or parents. If you put an owner/boss question in questions_to_humans, also put the same concrete question in boss_attention_candidates unless it is unsafe or deferred by term policy.
-Do not answer or record that Hermes "cannot proactively ask" as a general rule. Correct boundary: Hermes may ask the current conversation participant for clarification; the autonomous scheduler may queue a daytime low-frequency owner attention note; teacher/manager outbound questions remain candidates until a separate channel policy is enabled.
+Do not answer or record that Hermes "cannot proactively ask" as a general rule. Correct boundary: Hermes may ask the current conversation participant for clarification; the autonomous scheduler may queue daytime low-frequency owner attention; and it may queue manager/teacher questions when the missing fact belongs to that staff member, the person is whitelisted, and the message is work-related. Parents remain out of scope.
 Hermes also has employee responsibilities: complete institution understanding, push owner goals, support teachers, protect student service evidence, detect risks, find business opportunities, and keep learning.
 Public internet learning is only advice material with sources. Never turn it into confirmed institution fact without owner review.
 term_state, deferred_items, roster confidence, recent_owner_messages, and attention_threads are current evidence materials. If service_relation_policy is defer_until_new_term, the historical roster is not a confirmed new-term roster. Treat service type, main teacher, and new-term roster as deferred future confirmation material, not as a current blocker for historical renewal analysis, communication coverage analysis, risk framing, or owner summary preparation. You may analyze and prepare questions, but do not propose another proactive roster/service-relation reminder before the confirmation window unless a recent owner message explicitly asks to handle it early.
@@ -1039,7 +1040,7 @@ Process the latest owner messages, not only the first few in the window. If the 
 operating_evidence contains compact read-only business evidence available at this wakeup. Use it to do concrete analysis when sufficient. Do not write "started analysis" or "will analyze" as progress evidence unless you actually derived a finding from supplied evidence. Missing source data is a fact gap, not completed work.
 An owner message is only a raw fact. Decide yourself whether it answers an attention thread, whether it is sufficient, or whether it is unrelated. Do not infer a reply merely because a message exists.
 multi_agent_brief contains only internal advisory materials. If it has pending completed results, decide on at most one delegation and explain whether you adopt, partially adopt, reject, need more evidence, or defer it. Do not let a sub-agent result become a business fact unless you, the main Hermes, adopt it with evidence.
-relationship_touch_policy controls proactive relationship presence. Boss messages may be sent only when policy allows and there is real evidence/value. Teacher and manager touches are candidates unless policy allows sending. For teachers, proactive presence may be care, encouragement, thanks, light chat, or relief; it does not have to be a work task. Be natural and warm, not oily, fake-intimate, intrusive, punitive, or surveillance-like. Private emotional chat does not become boss performance material.
+relationship_touch_policy controls proactive presence and staff fact requests. Boss messages may be sent only when policy allows and there is real evidence/value. Teacher and manager messages may be sent only when policy allows, target_user_id is known, work_related is true, private_emotional_support is false, and the message asks for one concrete task/record/operation fact. For teachers, warm presence can still be recorded as a candidate, but private emotional chat is not auto-sent and does not become boss performance material.
 No material change is a valid outcome. Do not create observations, gaps, work updates, self-reviews, or value entries just to prove the wakeup ran.
 If a waiting branch says not_a_goal_blocker=true and there is no other blocker, keep the parent work item active; do not mark the entire goal waiting.
 When materials conflict, the latest folded work item and term_state are authoritative for current status. Older goal reviews, counts, plans, and rosters remain historical evidence only. Never describe responsibility_confirmation as the current phase after the latest work item has moved to historical_analysis_and_preparation.
@@ -1049,7 +1050,7 @@ observations: array of objects with event_type and event_text.
 work_item_updates: array of objects with focus_key, title, focus_summary, status, update_text, current_phase, next_actions, confirmed_facts, pending_judgements, current_waiting, blocked_by, ask_candidates, last_human_contact_at, next_contact_after, owner_escalation_reason, value_progress_note, next_attention_at.
 questions_to_humans: array of objects with ask_role, reason, question, urgency.
 boss_attention_candidates: array of objects with focus_key, reason, message, urgency. The message must say what Hermes is blocked on, what the owner should confirm, and what Hermes will do after confirmation. It must be a question, not a status report.
-relationship_touch_candidates: array of objects with target_role, target_user_id, target_name, touch_type, message, reason, value, work_related, private_emotional_support, requires_authorization, external_send_allowed, suggested_send_at. touch_type may be care, encouragement, thanks, light_chat, record_relief, material_support, manager_assist, owner_business, owner_progress, or presence_report. Teacher/manager candidates do not send unless policy allows.
+relationship_touch_candidates: array of objects with target_role, target_user_id, target_name, touch_type, message, reason, value, work_related, private_emotional_support, requires_authorization, external_send_allowed, suggested_send_at. touch_type may be care, encouragement, thanks, light_chat, record_relief, material_support, manager_assist, owner_business, owner_progress, or presence_report. For manager/teacher proactive fact requests, set work_related=true and external_send_allowed=true only when you are asking that person for one concrete task/record/operation fact.
 institution_fact_gaps: array of objects with gap_key, gap_text, ask_role, target_time, urgency, related_objects.
 value_progress_entries: array of objects with subject, discovered, hermes_action, human_action, outcome, evidence, attribution.
 agent_delegation_decisions: array with at most one object per wakeup. Include delegation_id, main_hermes_decision, decision_note, adopted_points, rejected_points. Only decide on completed sub-agent results that are present in multi_agent_brief; never let the sub-agent decide for you.
@@ -1452,20 +1453,27 @@ def _materialize_relationship_touch_candidates(
     stamp = timestamp.isoformat(timespec="seconds")
     owner_sent_today = _relationship_owner_sent_count(outbox, day)
     owner_queued = 0
+    staff_queued_counts: dict[tuple[str, str], int] = {}
     for idx, candidate in enumerate(candidates[:6]):
         role = _limit(candidate.get("target_role"), 40)
         role_policy = policy.get(role) if isinstance(policy.get(role), dict) else {}
-        mode = str(role_policy.get("mode") or "candidate")
         target_user_id = _limit(candidate.get("target_user_id"), 120)
         if role == "boss" and not target_user_id:
             target_user_id = owner_id
-        external_allowed = (
-            role == "boss"
-            and mode == "direct"
-            and bool(target_user_id)
-            and _relationship_touch_time_allowed(timestamp, role_policy)
-            and owner_sent_today + owner_queued < int(role_policy.get("daily_limit") or 2)
-            and _relationship_owner_message_is_sendable(candidate)
+        if role in {"manager", "teacher"} and not target_user_id:
+            target_user_id = _resolve_staff_user_id(store, role=role, target_name=_limit(candidate.get("target_name"), 80))
+        queued_for_target = staff_queued_counts.get((role, target_user_id), 0)
+        external_allowed = _relationship_touch_external_allowed(
+            store,
+            outbox,
+            day=day,
+            role=role,
+            target_user_id=target_user_id,
+            candidate=candidate,
+            timestamp=timestamp,
+            role_policy=role_policy,
+            queued_count=owner_queued if role == "boss" else queued_for_target,
+            owner_sent_today=owner_sent_today,
         )
         res = submit_relationship_touch_candidate(
             store,
@@ -1479,7 +1487,7 @@ def _materialize_relationship_touch_candidates(
             value=_limit(candidate.get("value"), 500),
             work_related=bool(candidate.get("work_related")),
             private_emotional_support=bool(candidate.get("private_emotional_support")),
-            requires_authorization=role != "boss",
+            requires_authorization=not external_allowed,
             external_send_allowed=external_allowed,
             suggested_send_at=_limit(candidate.get("suggested_send_at") or stamp, 80),
             status="queued" if external_allowed else "candidate",
@@ -1501,7 +1509,7 @@ def _materialize_relationship_touch_candidates(
             "delivery_mode": "direct_wecom",
             "notification_type": "relationship_touch",
             "task_id": f"relationship_touch:{candidate_id}",
-            "role": "boss",
+            "role": role,
             "action": "relationship_touch",
             "target_user_id": target_user_id,
             "recipient_user_id": target_user_id,
@@ -1514,8 +1522,8 @@ def _materialize_relationship_touch_candidates(
             "attempt_count": 0,
             "auto_effects": {
                 "sends_parent_messages": False,
-                "sends_teacher_messages": False,
-                "sends_manager_messages": False,
+                "sends_teacher_messages": role == "teacher",
+                "sends_manager_messages": role == "manager",
                 "creates_teacher_tasks": False,
                 "changes_salary": False,
                 "changes_permissions": False,
@@ -1524,12 +1532,15 @@ def _materialize_relationship_touch_candidates(
             },
         })
         existing_ids.add(notification_id)
-        owner_queued += 1
+        if role == "boss":
+            owner_queued += 1
+        else:
+            staff_queued_counts[(role, target_user_id)] = queued_for_target + 1
         action_res = submit_action_execution(
             store,
             identity=identity,
             action_type="relationship_touch_queued",
-            action_summary="Hermes queued one boss-facing relationship/presence message with evidence and frequency limits.",
+            action_summary=f"Hermes queued one {role}-facing proactive message with permission, evidence, and frequency limits.",
             status="success",
             operation_id=f"{op_prefix}:relationship_touch_outbox:{idx}",
             related_work_item_id="",
@@ -1540,17 +1551,60 @@ def _materialize_relationship_touch_candidates(
             source_message_id=f"autonomous_employee_loop:{timestamp.strftime('%Y%m%d%H%M%S')}",
         )
         writes.append(_write_result("relationship_touch_queued", action_res))
-    if owner_queued:
+    if owner_queued or staff_queued_counts:
         store.write_json(_NOTIFICATION_OUTBOX_FILE, outbox[-2000:])
     return writes
 
 
+def _relationship_touch_external_allowed(
+    store: TuoguanStore,
+    outbox: list[Any],
+    *,
+    day: str,
+    role: str,
+    target_user_id: str,
+    candidate: dict[str, Any],
+    timestamp: datetime,
+    role_policy: dict[str, Any],
+    queued_count: int = 0,
+    owner_sent_today: int = 0,
+) -> bool:
+    if role not in {"boss", "manager", "teacher"}:
+        return False
+    if str(role_policy.get("mode") or "candidate") != "direct":
+        return False
+    if not target_user_id:
+        return False
+    if not _relationship_touch_time_allowed(timestamp, role_policy):
+        return False
+    allowed_types = {str(item) for item in role_policy.get("allowed_types") or []}
+    touch_type = str(candidate.get("touch_type") or "")
+    if allowed_types and touch_type and touch_type not in allowed_types:
+        return False
+    limit = int(role_policy.get("daily_limit") or (2 if role == "boss" else 1))
+    if role == "boss":
+        if owner_sent_today + queued_count >= limit:
+            return False
+        return _relationship_target_role_allowed(store, target_user_id, role) and _relationship_owner_message_is_sendable(candidate)
+    if _relationship_role_sent_count(outbox, day, role, target_user_id) + queued_count >= limit:
+        return False
+    return _relationship_target_role_allowed(store, target_user_id, role) and _relationship_staff_message_is_sendable(candidate, role=role)
+
+
 def _relationship_owner_sent_count(outbox: list[Any], day: str) -> int:
+    return _relationship_role_sent_count(outbox, day, "boss", "")
+
+
+def _relationship_role_sent_count(outbox: list[Any], day: str, role: str, target_user_id: str = "") -> int:
     count = 0
     for item in outbox:
         if not isinstance(item, dict):
             continue
         if str(item.get("notification_type") or "") != "relationship_touch":
+            continue
+        if role and str(item.get("role") or "") != role:
+            continue
+        if target_user_id and str(item.get("touser") or item.get("target_user_id") or "") != target_user_id:
             continue
         if not str(item.get("created_at") or "").replace("-", "").startswith(day):
             continue
@@ -1573,6 +1627,75 @@ def _relationship_owner_message_is_sendable(candidate: dict[str, Any]) -> bool:
     has_evidence = any(term in message for term in ("我看到", "我发现", "今天", "当前", "记录", "目标", "风险", "机会", "日报", "续费"))
     has_value = any(term in message for term in ("建议", "我会", "你可以", "需要你", "不用回复", "回我", "下一步"))
     return has_evidence and has_value
+
+
+def _relationship_staff_message_is_sendable(candidate: dict[str, Any], *, role: str) -> bool:
+    message = str(candidate.get("message") or "")
+    if len(message) < 8 or _relationship_touch_text_unsafe(message, role=role):
+        return False
+    if bool(candidate.get("private_emotional_support")):
+        return False
+    if not bool(candidate.get("work_related")):
+        return False
+    if _looks_like_parent_outreach_instruction(message):
+        return False
+    asks_for_fact = any(term in message for term in ("？", "?", "请", "麻烦", "帮我确认", "确认一下", "回我", "告诉我", "发我", "是否", "能不能"))
+    work_fact = any(term in message for term in ("任务", "进展", "结果", "记录", "沟通", "学生", "孩子", "家长", "截止", "安排", "反馈", "执行", "完成", "缺"))
+    return asks_for_fact and work_fact
+
+
+def _looks_like_parent_outreach_instruction(message: str) -> bool:
+    text = re.sub(r"\s+", "", str(message or ""))
+    forbidden = (
+        "联系家长", "通知家长", "给家长发", "发给家长", "发家长",
+        "转发家长", "群发家长", "家长群", "把这段发给",
+    )
+    return any(term in text for term in forbidden)
+
+
+def _relationship_target_role_allowed(store: TuoguanStore, user_id: str, role: str) -> bool:
+    user = str(user_id or "").strip()
+    if not user:
+        return False
+    whitelist = store.read_json("wecom_whitelist.json", {})
+    if not isinstance(whitelist, dict):
+        return False
+    if user in {str(item) for item in whitelist.get("rejected_users") or []}:
+        return False
+    super_users = {str(item) for item in whitelist.get("super_users") or []}
+    allowed_users = {str(item) for item in whitelist.get("allowed_users") or []}
+    if user not in super_users and user not in allowed_users:
+        return False
+    roles = whitelist.get("user_roles") if isinstance(whitelist.get("user_roles"), dict) else {}
+    actual = str(roles.get(user) or ("boss" if user in super_users else "teacher"))
+    actual = {"super_admin": "boss", "owner": "boss"}.get(actual, actual)
+    if user in {str(item) for item in whitelist.get("summer_manager_ids") or []} and actual != "boss":
+        actual = "manager"
+    return actual == role
+
+
+def _resolve_staff_user_id(store: TuoguanStore, *, role: str, target_name: str) -> str:
+    name = str(target_name or "").strip()
+    if not name:
+        return ""
+    mapping = store.read_json("teacher_wecom_map.json", {})
+    if isinstance(mapping, dict) and str(mapping.get(name) or "").strip():
+        candidate = str(mapping.get(name) or "").strip()
+        if _relationship_target_role_allowed(store, candidate, role):
+            return candidate
+    staff = store.read_json("staff.json", {})
+    if isinstance(staff, dict):
+        for user_id, item in staff.items():
+            if not isinstance(item, dict):
+                continue
+            if str(item.get("role") or "") != role:
+                continue
+            staff_name = str(item.get("name") or "").strip()
+            if staff_name and (staff_name == name or name in staff_name or staff_name in name):
+                candidate = str(user_id or "").strip()
+                if _relationship_target_role_allowed(store, candidate, role):
+                    return candidate
+    return ""
 
 
 def _owner_user_id(store: TuoguanStore) -> str:

@@ -41,7 +41,7 @@ def test_tuoguan_core_does_not_register_pre_model_business_decision_hooks():
     plugin.register(ctx)
 
     names = [name for name, _fn in hooks]
-    assert names == ["post_gateway_start", "pre_llm_call", "post_tool_call", "post_gateway_response"]
+    assert names == ["pre_llm_call", "post_tool_call", "post_gateway_response"]
     assert "pre_gateway_dispatch" not in names
     assert "pre_tool_call" not in names
     assert "transform_llm_output" not in names

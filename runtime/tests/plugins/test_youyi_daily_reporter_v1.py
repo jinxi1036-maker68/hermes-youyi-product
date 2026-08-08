@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from datetime import datetime, timedelta, timezone
 import json
 from pathlib import Path
@@ -118,3 +119,90 @@ def test_evening_report_does_not_claim_waiting_as_completion(tmp_path):
     assert "等待老板确认" in result["content"]
     assert "没有把等待状态写成完成" in result["content"] or "等待" in result["content"]
     assert result["auto_effects"]["changes_salary"] is False
+
+
+def test_daily_report_drain_bypasses_active_conversation_quiet_period(tmp_path, monkeypatch):
+    from plugins.tuoguan_core import _ACTIVE_WECom_USERS, _drain_notification_outbox
+
+    cn_tz = timezone(timedelta(hours=8))
+    now = datetime.now().astimezone()
+    monkeypatch.setenv("HERMES_TUOGUAN_DATA_DIR", str(tmp_path))
+    _write_json(tmp_path, "write_guard_config.json", {"enabled": True})
+    _write_json(
+        tmp_path,
+        "notification_outbox.json",
+        [
+            {
+                "id": "autonomous_daily_report:20260808:evening",
+                "status": "pending",
+                "delivery_mode": "direct_wecom",
+                "notification_type": "autonomous_daily_report",
+                "action": "daily_evening_report",
+                "role": "boss",
+                "target_user_id": "boss1",
+                "touser": "boss1",
+                "content": "金总，今晚给你交一下今天的工作日报。",
+                "summary": "小优每日晚间工作日报",
+                "created_at": datetime(2026, 8, 8, 21, 0, tzinfo=cn_tz).isoformat(timespec="seconds"),
+                "attempt_count": 0,
+            }
+        ],
+    )
+    _ACTIVE_WECom_USERS["boss1"] = now
+
+    class Result:
+        success = True
+        message_id = "msg_daily_1"
+        error = ""
+
+    class Adapter:
+        async def send(self, target, content, metadata=None):
+            assert target == "boss1"
+            assert metadata["idempotency_key"] == "autonomous_daily_report:20260808:evening"
+            return Result()
+
+    try:
+        asyncio.run(_drain_notification_outbox(Adapter()))
+    finally:
+        _ACTIVE_WECom_USERS.pop("boss1", None)
+
+    outbox = json.loads((tmp_path / "notification_outbox.json").read_text(encoding="utf-8"))
+    assert outbox[0]["status"] == "sent"
+    assert outbox[0]["message_id"] == "msg_daily_1"
+
+
+def test_stale_daily_report_becomes_visible_failure_not_suppressed(tmp_path, monkeypatch):
+    from plugins.tuoguan_core import _drain_notification_outbox
+
+    monkeypatch.setenv("HERMES_TUOGUAN_DATA_DIR", str(tmp_path))
+    _write_json(tmp_path, "write_guard_config.json", {"enabled": True})
+    _write_json(
+        tmp_path,
+        "notification_outbox.json",
+        [
+            {
+                "id": "autonomous_daily_report:20260808:morning",
+                "status": "pending",
+                "delivery_mode": "direct_wecom",
+                "notification_type": "autonomous_daily_report",
+                "action": "daily_morning_report",
+                "role": "boss",
+                "target_user_id": "boss1",
+                "touser": "boss1",
+                "content": "金总，早上好，这是今天的自主工作安排。",
+                "summary": "小优每日早间工作安排",
+                "created_at": "2026-08-08T08:30:00+08:00",
+                "attempt_count": 0,
+            }
+        ],
+    )
+
+    class Adapter:
+        async def send(self, target, content, metadata=None):
+            raise AssertionError("stale daily reports should not be backfilled")
+
+    asyncio.run(_drain_notification_outbox(Adapter()))
+
+    outbox = json.loads((tmp_path / "notification_outbox.json").read_text(encoding="utf-8"))
+    assert outbox[0]["status"] == "failed"
+    assert outbox[0]["last_error"] == "daily_report_delivery_window_missed_after_outbox_block"

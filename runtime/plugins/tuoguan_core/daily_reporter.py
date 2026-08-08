@@ -210,11 +210,13 @@ def build_daily_boss_report(kind: str, *, store: TuoguanStore | None = None, now
         "recent_action_execution_count": int(brief.get("recent_action_execution_count") or 0),
         "result_unknown_action_count": int(brief.get("result_unknown_action_count") or 0),
     }
+    proactivity_health = _proactivity_health(actual_store, timestamp)
+    source_counts["proactivity_issue_count"] = len(proactivity_health)
     if report_kind == "morning":
-        content = _render_morning_report(timestamp, items, waiting_items, open_attention, brief, source_counts)
+        content = _render_morning_report(timestamp, items, waiting_items, open_attention, brief, source_counts, proactivity_health)
         summary = "小优每日早间工作安排"
     else:
-        content = _render_evening_report(timestamp, items, waiting_items, open_attention, brief, source_counts)
+        content = _render_evening_report(timestamp, items, waiting_items, open_attention, brief, source_counts, proactivity_health)
         summary = "小优每日晚间工作日报"
     return {
         "ok": True,
@@ -237,6 +239,7 @@ def _render_morning_report(
     open_attention: list[dict[str, Any]],
     brief: dict[str, Any],
     source_counts: dict[str, int],
+    proactivity_health: list[str],
 ) -> str:
     scorecard = brief.get("employee_scorecard") if isinstance(brief.get("employee_scorecard"), dict) else {}
     latest_review = scorecard.get("latest_review") if isinstance(scorecard.get("latest_review"), dict) else {}
@@ -252,7 +255,10 @@ def _render_morning_report(
         "现在仍在等待或需要留意的地方：",
         *_numbered(_waiting_lines(waiting_items, open_attention), empty="1. 当前没有未解决提醒；如果发现需要你确认的关键事实，我会按白天低频规则单独问你。"),
         "",
-        "今天的推进边界：我不会自动联系老师或家长，不会批量派任务，不会改工资、绩效、权限、责任绑定或删除数据；需要现实动作时会先说明卡点和需要你确认的内容。",
+        "主动性健康：",
+        *_numbered(proactivity_health, empty="1. 过去24小时暂未发现主动汇报或主动外发异常；今天继续按日报和事实归属人提问规则推进。"),
+        "",
+        "今天的推进边界：我不会主动联系家长、不会批量派任务、不会改工资绩效权限；需要老师或店长补事实时，只问明确任务、记录、执行结果或运营事实。",
         _source_line(source_counts),
     ]
     return _limit_message("\n".join(lines), 2000)
@@ -265,6 +271,7 @@ def _render_evening_report(
     open_attention: list[dict[str, Any]],
     brief: dict[str, Any],
     source_counts: dict[str, int],
+    proactivity_health: list[str],
 ) -> str:
     scorecard = brief.get("employee_scorecard") if isinstance(brief.get("employee_scorecard"), dict) else {}
     latest_review = scorecard.get("latest_review") if isinstance(scorecard.get("latest_review"), dict) else {}
@@ -288,10 +295,74 @@ def _render_evening_report(
         "明天优先安排：",
         *_numbered(_tomorrow_lines(items, latest_review), empty="1. 继续巡检活跃目标、机构认知缺口、记录覆盖和老板待确认事项。"),
         "",
-        "边界确认：今晚不主动打扰老师、家长或店长；不派任务、不改业务数据。日报只是让我把今天做过和没做成的事向你交代清楚。",
+        "主动性健康：",
+        *_numbered(proactivity_health, empty="1. 过去24小时暂未发现主动汇报或主动外发异常；如果外发失败，我会留下失败状态而不是沉默。"),
+        "",
+        "边界确认：今晚不主动联系家长、不派任务、不改业务数据；老师/店长只在工作事实归属明确且频率允许时被低频询问。",
         _source_line(source_counts),
     ]
     return _limit_message("\n".join(lines), 2200)
+
+
+def _proactivity_health(store: TuoguanStore, timestamp: datetime) -> list[str]:
+    issues: list[str] = []
+    outbox = store.read_json(NOTIFICATION_OUTBOX_FILE, [])
+    if not isinstance(outbox, list):
+        outbox = []
+    since = timestamp.timestamp() - 24 * 3600
+    delivery_rows = [
+        row for row in _read_jsonl(store, DAILY_REPORT_RUNS_FILE)
+        if str(row.get("record_type") or "") == "daily_report_delivery_status"
+        and str(row.get("status") or row.get("delivery_status") or "") == "sent"
+        and _row_ts(row.get("observed_at") or row.get("sent_at")) >= since
+    ]
+    if not delivery_rows:
+        issues.append("过去24小时没有可验证的老板日报送达记录；本次日报会立即外发并写回投递状态。")
+    failed_daily = [
+        item for item in outbox
+        if isinstance(item, dict)
+        and str(item.get("notification_type") or "") == "autonomous_daily_report"
+        and str(item.get("status") or "") in {"failed", "result_unknown"}
+        and _row_ts(item.get("failed_at") or item.get("last_attempt_at") or item.get("created_at")) >= since
+    ]
+    if failed_daily:
+        issues.append(f"过去24小时有 {len(failed_daily)} 条日报投递异常，已保留失败证据，不再静默压掉。")
+    failed_proactive = [
+        item for item in outbox
+        if isinstance(item, dict)
+        and str(item.get("notification_type") or "") in {"autonomous_owner_attention", "relationship_touch"}
+        and str(item.get("status") or "") in {"failed", "result_unknown"}
+        and _row_ts(item.get("failed_at") or item.get("last_attempt_at") or item.get("created_at")) >= since
+    ]
+    if failed_proactive:
+        issues.append(f"过去24小时有 {len(failed_proactive)} 条主动提问/关系触达异常，需要继续核验发送链路。")
+    reminder_keys: dict[str, int] = {}
+    for item in outbox:
+        if not isinstance(item, dict):
+            continue
+        if str(item.get("action") or "") not in {"task_created", "task_due", "manual_assignment"}:
+            continue
+        if _row_ts(item.get("created_at")) < since:
+            continue
+        key = "|".join(str(item.get(part) or "") for part in ("task_id", "action", "touser"))
+        reminder_keys[key] = reminder_keys.get(key, 0) + 1
+    repeated = [key for key, count in reminder_keys.items() if count > 1]
+    if repeated:
+        issues.append(f"过去24小时发现 {len(repeated)} 组任务提醒重复候选，需要按幂等键核验。")
+    return issues[:3]
+
+
+def _row_ts(value: Any) -> float:
+    text = str(value or "").strip()
+    if not text:
+        return 0.0
+    try:
+        parsed = datetime.fromisoformat(text.replace("Z", "+00:00"))
+        if parsed.tzinfo is None:
+            parsed = parsed.astimezone()
+        return parsed.timestamp()
+    except (TypeError, ValueError):
+        return 0.0
 
 
 def _owner_digest_lines(
@@ -596,7 +667,7 @@ def _wecom_config_from_env() -> Any:
         return config
 
 
-async def drain_notification_outbox_once() -> dict[str, Any]:
+async def drain_notification_outbox_once(notification_id: str = "") -> dict[str, Any]:
     """Best-effort oneshot drain for systemd timers in Hermes versions without startup hooks."""
 
     from plugins.platforms.wecom.callback_adapter import WecomCallbackAdapter
@@ -622,7 +693,27 @@ async def drain_notification_outbox_once() -> dict[str, Any]:
             await cleanup()
         elif getattr(adapter, "_http_client", None) is not None:
             await adapter._http_client.aclose()
-    return {"ok": True, "drained": True}
+    normalized_id = str(notification_id or "").strip()
+    if not normalized_id:
+        return {"ok": True, "drained": True}
+    store = TuoguanStore()
+    outbox = store.read_json(NOTIFICATION_OUTBOX_FILE, [])
+    matched = _find_outbox_item(outbox if isinstance(outbox, list) else [], normalized_id)
+    if not matched:
+        return {"ok": False, "drained": True, "error": "notification_missing_after_drain", "notification_id": normalized_id}
+    status = str(matched.get("status") or "")
+    payload = {
+        "ok": status == "sent",
+        "drained": True,
+        "notification_id": normalized_id,
+        "delivery_status": status,
+        "sent_at": str(matched.get("sent_at") or ""),
+        "message_id": str(matched.get("message_id") or ""),
+        "last_error": str(matched.get("last_error") or ""),
+    }
+    if status != "sent":
+        payload["error"] = "daily_report_not_sent_after_drain"
+    return payload
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -634,7 +725,7 @@ def main(argv: list[str] | None = None) -> int:
     result = queue_daily_boss_report(args.kind, dry_run=bool(args.dry_run))
     if args.drain_outbox and not args.dry_run and result.get("ok"):
         try:
-            result["outbox_drain"] = asyncio.run(drain_notification_outbox_once())
+            result["outbox_drain"] = asyncio.run(drain_notification_outbox_once(str(result.get("notification_id") or "")))
         except Exception as exc:
             result["outbox_drain"] = {"ok": False, "error": f"{type(exc).__name__}:{exc}"}
     print(json.dumps(result, ensure_ascii=False, indent=2, default=str))
