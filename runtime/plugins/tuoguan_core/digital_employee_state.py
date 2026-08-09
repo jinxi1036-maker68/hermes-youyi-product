@@ -4509,6 +4509,7 @@ _AUTONOMOUS_LOG_TOOL_NAMES = {
     "tuoguan_query_action_executions",
     "tuoguan_query_autonomous_work_brief",
     "tuoguan_query_proactive_work_radar",
+    "tuoguan_query_self_evolution_ledger",
     "tuoguan_query_institution_understanding",
     "tuoguan_query_hermes_employee_scorecard",
     "tuoguan_query_industry_learning_candidates",

@@ -110,6 +110,7 @@ MODEL_SELECTED_READ_TOOLS = {
     "tuoguan_query_business_events",
     "tuoguan_query_action_executions",
     "tuoguan_query_autonomous_work_brief",
+    "tuoguan_query_self_evolution_ledger",
     "tuoguan_query_institution_understanding",
     "tuoguan_query_hermes_employee_scorecard",
     "tuoguan_query_industry_learning_candidates",
@@ -451,6 +452,7 @@ def begin_inbound(*, store: TuoguanStore, message_id: str, conversation_id: str,
         "message_id": str(message_id or ""),
         "source_message_id": str(message_id or ""),
         "conversation_id": str(conversation_id or user_id),
+        "data_dir": str(store.data_dir.resolve()),
         "tenant_id": TENANT_ID,
         "channel": "wecom_callback",
         "user_id": user_id,
@@ -565,6 +567,7 @@ def write_authorization_for(user_id: str, operation: str) -> dict[str, str] | No
         return {
             "ledger_id": str(item.get("ledger_id") or ""),
             "intent": str(item.get("model_intent") or "model_selected_tool"),
+            "data_dir": str(item.get("data_dir") or ""),
         }
 
 

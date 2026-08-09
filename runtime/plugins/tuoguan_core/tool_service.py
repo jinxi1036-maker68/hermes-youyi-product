@@ -56,6 +56,7 @@ from .operational_facts import (
     submit_operational_fact_candidate,
 )
 from .staff_directory import query_staff_directory as build_staff_directory_report
+from .self_evolution import query_self_evolution_ledger as build_self_evolution_ledger
 from .workstyle_profiles import (
     query_person_workstyle_profile as build_person_workstyle_profile,
     submit_person_workstyle_preference as save_person_workstyle_preference,
@@ -479,9 +480,14 @@ class TuoguanToolService:
         from .runtime_foundation import write_authorization_for
         from .write_guard import authorized_business_write, guard_enabled, record_unauthorized_tool_attempt
 
+        runtime_auth = write_authorization_for(self.identity.canonical_user_id, operation)
+        if runtime_auth is not None:
+            current_data_dir = str(self.store.data_dir.resolve())
+            if str(runtime_auth.get("data_dir") or "") and str(runtime_auth.get("data_dir") or "") != current_data_dir:
+                runtime_auth = None
         try:
             from .runtime_foundation import current_raw_text
-            raw_text = current_raw_text(self.identity.canonical_user_id)
+            raw_text = current_raw_text(self.identity.canonical_user_id) if runtime_auth is not None else ""
         except Exception:
             raw_text = ""
         compact_raw = "".join(str(raw_text or "").split())
@@ -566,7 +572,6 @@ class TuoguanToolService:
                 "这是能力检查问题，不能通过真实写入来测试。请改用只读查询、工具目录或测试环境检查。",
             )
 
-        runtime_auth = write_authorization_for(self.identity.canonical_user_id, operation)
         if guard_enabled(self.store.data_dir) and runtime_auth is None:
             try:
                 from .runtime_foundation import current_ledger_id
@@ -2824,6 +2829,23 @@ class TuoguanToolService:
             return self._error("permission_denied", "只有店长或老板可以查看小优主动工作雷达。")
         result = query_proactive_work_radar(self.store, identity=self.identity, limit=limit)
         return self._ok("query_proactive_work_radar", data=result, message=str(result.get("rendered_text") or ""))
+
+    def query_self_evolution_ledger(self, *, candidate_type: str = "", status: str = "", limit: int = 30) -> dict[str, Any]:
+        denied = self._approved()
+        if denied:
+            return denied
+        if self.identity.role not in {"manager", "boss"}:
+            return self._error("permission_denied", "只有店长或老板可以查看小优自我进化账本。")
+        result = build_self_evolution_ledger(
+            self.store,
+            identity=self.identity,
+            candidate_type=candidate_type,
+            status=status,
+            limit=limit,
+        )
+        if not result.get("ok"):
+            return self._error(str(result.get("error") or "self_evolution_unavailable"), str(result.get("message") or "小优自我进化账本查询失败。"))
+        return self._ok("query_self_evolution_ledger", data=result, message=str(result.get("rendered_text") or ""))
 
     def query_industry_learning_candidates(self, *, status: str = "", limit: int = 30) -> dict[str, Any]:
         denied = self._approved()

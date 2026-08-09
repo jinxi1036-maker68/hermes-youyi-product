@@ -60,6 +60,12 @@ from .digital_employee_state import (
     update_hermes_work_item,
 )
 from .models import UserIdentity
+from .self_evolution import (
+    SELF_EVOLUTION_EVENTS_FILE,
+    build_self_evolution_brief,
+    normalize_evolution_candidate,
+    submit_self_evolution_event,
+)
 from .store import TuoguanStore
 from .tool_service import TuoguanToolService
 from .write_guard import authorized_system_write
@@ -102,6 +108,7 @@ _ALLOWED_FILES = {
     _NOTIFICATION_OUTBOX_FILE,
     ATTENTION_THREADS_FILE,
     RELATIONSHIP_TOUCH_CANDIDATES_FILE,
+    SELF_EVOLUTION_EVENTS_FILE,
 }
 
 
@@ -182,6 +189,7 @@ def build_employee_loop_materials(store: TuoguanStore, *, identity: UserIdentity
     multi_agent = query_multi_agent_brief(store, identity=identity, limit=10)
     relationship_policy = relationship_touch_policy(store)
     relationship_touches = query_relationship_touch_candidates(store, identity=identity, include_closed=False, limit=10)
+    self_evolution = build_self_evolution_brief(store, identity=identity, limit=12)
     owner_messages = query_business_events(store, identity=identity, event_type="owner_inbound_message", limit=10)
     if isinstance(owner_messages.get("events"), list):
         owner_messages["events"] = [
@@ -218,6 +226,9 @@ def build_employee_loop_materials(store: TuoguanStore, *, identity: UserIdentity
             "At every wakeup, inspect proactive_work_radar as the handbook-based employee map: institution, organization, student service relations, operating rules, teacher work habits, goals, service evidence, risk, and reflection. It is material, not a Router.",
             "Public industry learning is advice material with sources; never treat it as confirmed institution fact before owner review.",
             "External learning and market research are evidence candidates. Use them to improve advice, but do not copy them into institution facts or long-term memory until the owner reviews them.",
+            "Self-evolution is Xiaoyou's employee growth loop: daytime work, evening review, night learning, next-day application. It is internal candidate material, not a Router.",
+            "Low-risk personal service preferences and self-corrections may inform future context only after writeback evidence. Medium/high-risk policy, salary, permissions, parent outreach, handbook, or institution-rule changes remain pending review.",
+            "If this wakeup is evening or night, inspect self_evolution_brief, employee_scorecard, business_events, action_executions, workstyle preferences, proactive_work_radar, and multi_agent_brief. Save concise evolution_candidates for what Xiaoyou learned, what it must not repeat, and what should guide tomorrow.",
             "When a daytime due attention arrives and historical evidence is available, derive a concrete internal finding for the active goal instead of only restating deferred gaps.",
             "If a daytime active goal is blocked by a fact only the owner can confirm, or if you write that owner confirmation is needed before the next stage, put one concrete owner question into boss_attention_candidates. Do not hide the question only in employee_summary, goal_progress_view, or questions_to_humans.",
             "If multi_agent_brief contains pending completed sub-agent results, decide on at most one result per wakeup: adopted, partially_adopted, rejected, needs_more_evidence, or deferred. The result is advisory material only and never executes business action by itself.",
@@ -252,13 +263,14 @@ def build_employee_loop_materials(store: TuoguanStore, *, identity: UserIdentity
         "multi_agent_brief": _compact_for_model(multi_agent),
         "relationship_touch_policy": _compact_for_model(relationship_policy),
         "relationship_touch_candidates": _compact_for_model(relationship_touches),
+        "self_evolution_brief": _compact_for_model(self_evolution, max_chars=5000),
         "recent_owner_messages": _compact_for_model(owner_messages),
         "operating_evidence": _compact_for_model(operating_evidence, max_chars=8000),
         "term_state": _compact_for_model(term_state),
         "deferred_items": _compact_for_model(deferred_items),
         "new_term_readiness": _compact_for_model(new_term_readiness),
         "patrol_counts": _compact_for_model(patrol_counts),
-        "allowed_internal_outputs": ["observations", "work_item_updates", "questions_to_humans", "boss_attention_candidates", "relationship_touch_candidates", "institution_fact_gaps", "value_progress_entries", "agent_delegation_decisions", "self_review", "stop_or_wait_reason"],
+        "allowed_internal_outputs": ["observations", "work_item_updates", "questions_to_humans", "boss_attention_candidates", "relationship_touch_candidates", "institution_fact_gaps", "value_progress_entries", "agent_delegation_decisions", "evolution_candidates", "self_review", "stop_or_wait_reason"],
         "forbidden_external_outputs": sorted(_FORBIDDEN_EFFECT_KEYS),
     }
     base_onboarding = onboarding.get("data") or onboarding if isinstance(onboarding, dict) else {}
@@ -282,6 +294,8 @@ def build_employee_loop_materials(store: TuoguanStore, *, identity: UserIdentity
         "open_attention_count": int(attention_threads.get("attention_count") or 0),
         "pending_agent_decision_count": int(multi_agent.get("pending_decision_count") or 0) if isinstance(multi_agent, dict) else 0,
         "relationship_touch_candidate_count": int(relationship_touches.get("candidate_count") or 0) if isinstance(relationship_touches, dict) else 0,
+        "self_evolution_event_count": int(self_evolution.get("event_count") or 0) if isinstance(self_evolution, dict) else 0,
+        "self_evolution_review_queue_count": int(self_evolution.get("review_queue_count") or 0) if isinstance(self_evolution, dict) else 0,
         "recent_owner_message_count": int(owner_messages.get("event_count") or 0),
         "operating_evidence_available": bool(operating_evidence.get("ok")),
         "service_relation_policy": str(term_state.get("service_relation_policy") or ""),
@@ -338,6 +352,7 @@ def validate_employee_decision(raw: dict[str, Any]) -> dict[str, Any]:
         "institution_fact_gaps": _list_of_dicts(cleaned.get("institution_fact_gaps"), 8),
         "value_progress_entries": _list_of_dicts(cleaned.get("value_progress_entries"), 6),
         "agent_delegation_decisions": _list_of_dicts(cleaned.get("agent_delegation_decisions"), 2),
+        "evolution_candidates": _list_of_dicts(cleaned.get("evolution_candidates"), 8),
         "self_review": _dict(cleaned.get("self_review")),
         "external_actions": [],
     }
@@ -388,6 +403,7 @@ def validate_employee_decision(raw: dict[str, Any]) -> dict[str, Any]:
             cleaned_candidates.append(candidate)
     decision["boss_attention_candidates"] = cleaned_candidates
     decision["relationship_touch_candidates"] = _normalize_relationship_touch_candidates(decision.get("relationship_touch_candidates") or [])
+    decision["evolution_candidates"] = _normalize_evolution_candidates(decision.get("evolution_candidates") or [])
     forbidden_text = json.dumps(cleaned, ensure_ascii=False).lower()
     if any(key.lower() in forbidden_text for key in _FORBIDDEN_EFFECT_KEYS):
         decision["rejected_external_action_attempt"] = True
@@ -464,6 +480,20 @@ def _normalize_agent_delegation_decisions(items: list[dict[str, Any]]) -> list[d
             "rejected_points": _list_any(item.get("rejected_points"), 8),
         })
         break
+    return normalized
+
+
+def _normalize_evolution_candidates(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    normalized: list[dict[str, Any]] = []
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+        candidate = normalize_evolution_candidate(item)
+        if not candidate.get("summary"):
+            continue
+        normalized.append(candidate)
+        if len(normalized) >= 6:
+            break
     return normalized
 
 
@@ -749,6 +779,30 @@ def materialize_employee_decision(
             and str(term_state.get("service_relation_policy") or "") == "defer_until_new_term"
         )
         latest_owner_contact_at = _latest_owner_contact_at(materials)
+        cadence_mode = str(((materials or {}).get("work_cadence") or {}).get("mode") or "")
+        for idx, candidate in enumerate(decision.get("evolution_candidates") or []):
+            if not isinstance(candidate, dict):
+                continue
+            res = submit_self_evolution_event(
+                store,
+                identity=identity,
+                operation_id=f"{op_prefix}:evolution:{idx}",
+                candidate_type=_limit(candidate.get("candidate_type"), 80),
+                summary=_limit(candidate.get("summary"), 700),
+                evidence=_list_any(candidate.get("evidence"), 8),
+                risk_level=_limit(candidate.get("risk_level"), 40),
+                status=_limit(candidate.get("status"), 40),
+                target_store=_limit(candidate.get("target_store"), 120),
+                proposed_effect=_limit(candidate.get("proposed_effect"), 700),
+                next_effect=_limit(candidate.get("next_effect"), 700),
+                applies_to_user_id=_limit(candidate.get("applies_to_user_id"), 120),
+                applies_to_role=_limit(candidate.get("applies_to_role"), 40),
+                review_required_by=_limit(candidate.get("review_required_by"), 80),
+                source_text=_limit(candidate.get("source_text") or decision.get("employee_summary") or "", 1000),
+                source_message_id=f"autonomous_employee_loop:{timestamp.strftime('%Y%m%d%H%M%S')}",
+                cadence_mode=cadence_mode,
+            )
+            writes.append(_write_result("self_evolution_event", res))
         for idx, obs in enumerate(decision.get("observations") or []):
             event_type = _limit(obs.get("event_type") or "autonomous_employee_observation", 80)
             if event_type in _NON_MATERIAL_OBSERVATION_TYPES or event_type.startswith("owner_"):
@@ -964,6 +1018,13 @@ def render_employee_loop_report(result: dict[str, Any]) -> str:
             lines.append(f"- {item.get('focus_key')}: {item.get('message')}")
     else:
         lines.append("- No owner reminder proposed by the model.")
+    evolution = decision.get("evolution_candidates") or []
+    lines.extend(["", "## Self-evolution candidates", ""])
+    if evolution:
+        for item in evolution[:6]:
+            lines.append(f"- {item.get('candidate_type')}: {item.get('summary')} ({item.get('risk_level')}/{item.get('status')})")
+    else:
+        lines.append("- No new learning candidate proposed by the model.")
     lines.extend(["", "## Boundary", "", "- This is not a Router or fixed workflow; model judgment is saved as material.", "- External action still requires a real user channel, permission, audit, idempotency, and writeback verification."])
     return "\n".join(lines).rstrip() + "\n"
 
@@ -1048,11 +1109,12 @@ operating_evidence contains compact read-only business evidence available at thi
 An owner message is only a raw fact. Decide yourself whether it answers an attention thread, whether it is sufficient, or whether it is unrelated. Do not infer a reply merely because a message exists.
 multi_agent_brief contains only internal advisory materials. If it has pending completed results, decide on at most one delegation and explain whether you adopt, partially adopt, reject, need more evidence, or defer it. Do not let a sub-agent result become a business fact unless you, the main Hermes, adopt it with evidence.
 relationship_touch_policy controls proactive presence and staff fact requests. Boss messages may be sent only when policy allows and there is real evidence/value. Teacher and manager messages may be sent only when policy allows, target_user_id is known, work_related is true, private_emotional_support is false, and the message asks for one concrete task/record/operation fact. For teachers, warm presence can still be recorded as a candidate, but private emotional chat is not auto-sent and does not become boss performance material.
+Use self_evolution_brief as Xiaoyou's experience memory for the next day. In evening_review and night_read_only_review, output concise evolution_candidates when the materials show a real lesson: a low-risk workstyle preference already verified by a tool, a self-correction to avoid repeating, a tool failure to review, a handbook method candidate, a fact gap owner, tomorrow focus, or a multi-agent suggestion you adopted/rejected. Do not create candidates just to prove the wakeup ran.
 No material change is a valid outcome. Do not create observations, gaps, work updates, self-reviews, or value entries just to prove the wakeup ran.
 If a waiting branch says not_a_goal_blocker=true and there is no other blocker, keep the parent work item active; do not mark the entire goal waiting.
 When materials conflict, the latest folded work item and term_state are authoritative for current status. Older goal reviews, counts, plans, and rosters remain historical evidence only. Never describe responsibility_confirmation as the current phase after the latest work item has moved to historical_analysis_and_preparation.
 Keep the JSON under 2200 Chinese characters. Use empty arrays for unchanged sections. Include at most one work_item_update, two gaps, one owner candidate, and never copy student lists or long historical prose into the output.
-Return only one JSON object with keys: employee_summary, institution_understanding, goal_progress_view, observations, work_item_updates, questions_to_humans, boss_attention_candidates, relationship_touch_candidates, institution_fact_gaps, value_progress_entries, agent_delegation_decisions, self_review, external_actions.
+Return only one JSON object with keys: employee_summary, institution_understanding, goal_progress_view, observations, work_item_updates, questions_to_humans, boss_attention_candidates, relationship_touch_candidates, institution_fact_gaps, value_progress_entries, agent_delegation_decisions, evolution_candidates, self_review, external_actions.
 observations: array of objects with event_type and event_text.
 work_item_updates: array of objects with focus_key, title, focus_summary, status, update_text, current_phase, next_actions, confirmed_facts, pending_judgements, current_waiting, blocked_by, ask_candidates, last_human_contact_at, next_contact_after, owner_escalation_reason, value_progress_note, next_attention_at.
 questions_to_humans: array of objects with ask_role, reason, question, urgency.
@@ -1061,6 +1123,7 @@ relationship_touch_candidates: array of objects with target_role, target_user_id
 institution_fact_gaps: array of objects with gap_key, gap_text, ask_role, target_time, urgency, related_objects.
 value_progress_entries: array of objects with subject, discovered, hermes_action, human_action, outcome, evidence, attribution.
 agent_delegation_decisions: array with at most one object per wakeup. Include delegation_id, main_hermes_decision, decision_note, adopted_points, rejected_points. Only decide on completed sub-agent results that are present in multi_agent_brief; never let the sub-agent decide for you.
+evolution_candidates: array of objects with candidate_type, summary, evidence, risk_level, status, target_store, proposed_effect, next_effect, applies_to_user_id, applies_to_role, review_required_by, source_text. candidate_type must be one of person_preference_candidate, institution_fact_gap, self_correction, tool_failure_or_bug, handbook_method_candidate, tomorrow_focus, multi_agent_adoption. Low-risk candidates may guide future context; medium/high-risk candidates remain review material and must not change policy, salary, permissions, parent outreach, handbook, or institution rules.
 self_review: object with what_i_checked, what_i_learned, what_is_missing, tomorrow_focus, quality_score, teacher_support, student_service_evidence, risk_detection, business_opportunity.
 external_actions must always be an empty array. Do not include routing or tool-step fields. Do not invent numbers. If facts are missing, say what is missing and who should confirm it."""
 
@@ -1209,6 +1272,7 @@ def _model_payload(materials: dict[str, Any]) -> dict[str, Any]:
         "multi_agent_brief": _compact_for_model(materials.get("multi_agent_brief"), max_chars=3500),
         "relationship_touch_policy": _compact_for_model(materials.get("relationship_touch_policy"), max_chars=2500),
         "relationship_touch_candidates": _compact_for_model(materials.get("relationship_touch_candidates"), max_chars=3500),
+        "self_evolution_brief": _compact_for_model(materials.get("self_evolution_brief"), max_chars=5000),
         "recent_owner_messages": _compact_for_model(materials.get("recent_owner_messages"), max_chars=3500),
         "operating_evidence": _compact_for_model(materials.get("operating_evidence"), max_chars=8000),
         "term_state": _compact_for_model(materials.get("term_state"), max_chars=2500),

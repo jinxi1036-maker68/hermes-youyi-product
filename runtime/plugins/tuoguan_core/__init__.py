@@ -335,6 +335,20 @@ def _workstyle_context(store: TuoguanStore, *, identity: Any, raw_text: str) -> 
         return ""
 
 
+def _self_evolution_context(store: TuoguanStore, *, identity: Any) -> str:
+    try:
+        from .self_evolution import conversation_evolution_context_for_user
+
+        return conversation_evolution_context_for_user(
+            store,
+            identity=identity,
+            limit=5,
+        )
+    except Exception:
+        logger.exception("tuoguan_core failed to recall self-evolution context")
+        return ""
+
+
 def _record_owner_inbound_fact(
     store: TuoguanStore,
     *,
@@ -1148,6 +1162,16 @@ def _on_pre_llm_call(**kwargs: Any) -> dict[str, str] | None:
             context_parts.insert(0, identity_context)
     except Exception:
         logger.exception("tuoguan_core failed to recall public identity context")
+    try:
+        if "identity" in locals():
+            self_evolution_context = _self_evolution_context(
+                _router().store,
+                identity=identity,
+            )
+            if self_evolution_context:
+                context_parts.append(self_evolution_context)
+    except Exception:
+        logger.exception("tuoguan_core failed to append self-evolution context")
     try:
         if "identity" in locals():
             workstyle_context = _workstyle_context(

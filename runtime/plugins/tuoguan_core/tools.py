@@ -990,6 +990,16 @@ TUOGUAN_QUERY_PROACTIVE_WORK_RADAR_SCHEMA = _schema(
     ["user_id"],
 )
 
+TUOGUAN_QUERY_SELF_EVOLUTION_LEDGER_SCHEMA = _schema(
+    "只读查询小优自我进化账本：最近学到的工作方式、错误修正、工具失败、机构事实缺口、手册候选、明日重点和 multi-agent 建议采纳记录。它只提供经验和审核材料，不自动改变制度、权限、手册、家长外发或模型下一步。",
+    _identity_props({
+        "candidate_type": {"type": "string", "enum": ["", "person_preference_candidate", "institution_fact_gap", "self_correction", "tool_failure_or_bug", "handbook_method_candidate", "tomorrow_focus", "multi_agent_adoption"], "default": "", "description": "可选，筛选候选类型。"},
+        "status": {"type": "string", "enum": ["", "candidate", "ready_for_application", "applied", "pending_review", "needs_confirmation", "rejected", "superseded"], "default": "", "description": "可选，筛选处理状态。"},
+        "limit": {"type": "integer", "default": 30, "description": "最多返回记录数。"},
+    }),
+    ["user_id"],
+)
+
 TUOGUAN_QUERY_INDUSTRY_LEARNING_CANDIDATES_SCHEMA = _schema(
     "只读查询 Hermes 收集的托管/教培行业学习候选。公开资料只作为经营建议材料，老板审核前不进入正式手册或机构事实。",
     _identity_props({
@@ -1125,6 +1135,7 @@ TOOLS = (
     ("tuoguan_submit_action_execution", TUOGUAN_SUBMIT_ACTION_EXECUTION_SCHEMA, _handler("submit_action_execution")),
     ("tuoguan_query_autonomous_work_brief", TUOGUAN_QUERY_AUTONOMOUS_WORK_BRIEF_SCHEMA, _handler("query_autonomous_work_brief")),
     ("tuoguan_query_proactive_work_radar", TUOGUAN_QUERY_PROACTIVE_WORK_RADAR_SCHEMA, _handler("query_proactive_work_radar")),
+    ("tuoguan_query_self_evolution_ledger", TUOGUAN_QUERY_SELF_EVOLUTION_LEDGER_SCHEMA, _handler("query_self_evolution_ledger")),
     ("tuoguan_query_industry_learning_candidates", TUOGUAN_QUERY_INDUSTRY_LEARNING_CANDIDATES_SCHEMA, _handler("query_industry_learning_candidates")),
     ("tuoguan_query_external_research_runs", TUOGUAN_QUERY_EXTERNAL_RESEARCH_RUNS_SCHEMA, _handler("query_external_research_runs")),
     ("tuoguan_query_market_research_candidates", TUOGUAN_QUERY_MARKET_RESEARCH_CANDIDATES_SCHEMA, _handler("query_market_research_candidates")),
