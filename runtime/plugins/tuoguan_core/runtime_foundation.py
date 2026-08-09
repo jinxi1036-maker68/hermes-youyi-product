@@ -66,6 +66,7 @@ WRITE_TOOLS = {
     "tuoguan_submit_business_event",
     "tuoguan_submit_action_execution",
     "tuoguan_submit_institution_fact_gap",
+    "tuoguan_submit_fact_gap_candidate",
     "tuoguan_update_institution_understanding",
     "tuoguan_submit_employee_self_review",
     "tuoguan_submit_industry_learning_candidate",
@@ -299,7 +300,120 @@ def _record_learning_safely(store: TuoguanStore, item: dict[str, Any]) -> None:
         record_learning_from_ledger(store, item)
     except Exception:
         # Learning must never block model replies, clarification, or write guards.
+        pass
+    try:
+        _record_tool_failure_evolution_safely(store, item)
+    except Exception:
         return
+
+
+def _record_tool_failure_evolution_safely(store: TuoguanStore, item: dict[str, Any]) -> None:
+    summary = _tool_failure_evolution_summary(item)
+    if not summary:
+        return
+    from .models import UserIdentity
+    from .self_evolution import SELF_EVOLUTION_EVENTS_FILE, submit_self_evolution_event
+    from .write_guard import authorized_system_write
+
+    ledger_id = str(item.get("ledger_id") or uuid.uuid4().hex)
+    identity = UserIdentity(
+        platform="system",
+        platform_user_id="xiaoyou_runtime",
+        canonical_user_id="xiaoyou_runtime",
+        person_name="小优运行时",
+        role="system",
+        approval_state="approved",
+    )
+    evidence = [
+        {
+            "source": "reply_ledger",
+            "ledger_id": ledger_id,
+            "message_id": str(item.get("message_id") or ""),
+            "raw_text": str(item.get("raw_text") or "")[:300],
+            "final_reply": str(item.get("final_reply") or "")[:300],
+            "raw_model_final_reply_before_sanitize": str(item.get("raw_model_final_reply_before_sanitize") or "")[:300],
+            "tool_calls": deepcopy(item.get("tool_calls") or []),
+            "tool_results": deepcopy(item.get("tool_results") or []),
+        }
+    ]
+    with authorized_system_write(
+        store.data_dir,
+        job_name="runtime_tool_failure_evolution",
+        allowed_files={SELF_EVOLUTION_EVENTS_FILE},
+    ):
+        submit_self_evolution_event(
+            store,
+            identity=identity,
+            operation_id=f"{ledger_id}:tool_failure_or_bug",
+            candidate_type="tool_failure_or_bug",
+            summary=summary,
+            evidence=evidence,
+            source_text=str(item.get("raw_text") or ""),
+            source_message_id=str(item.get("message_id") or ""),
+            cadence_mode="runtime_reply",
+        )
+
+
+def _tool_failure_evolution_summary(item: dict[str, Any]) -> str:
+    raw_text = str(item.get("raw_text") or "")
+    final_reply = str(item.get("final_reply") or "")
+    original_reply = str(item.get("raw_model_final_reply_before_sanitize") or final_reply)
+    trusted_tool_used = bool(item.get("tool_calls") or item.get("used_tool_registry_entry"))
+    if _tool_results_have_error(item.get("tool_results") or []):
+        tool_names = [
+            str(call.get("tool") or "")
+            for call in item.get("tool_calls") or []
+            if isinstance(call, dict) and str(call.get("tool") or "")
+        ]
+        tools_text = "、".join(tool_names[:3]) or "可信工具"
+        return f"工具调用失败或结果未知：{tools_text}；下次要记录已尝试路径、替代路径和一个最小人工确认问题。"
+    if not trusted_tool_used and _looks_like_unverified_claim_text(original_reply):
+        return "未调用可信工具却声称查过、系统显示或已经保存；下次必须先用业务读工具/写后反查，失败时只能说明已尝试路径。"
+    if not trusted_tool_used and _looks_like_self_rescue_deflection(raw_text, final_reply):
+        return "人员/企业微信/业务事实问题未先自救就转人工或技术；下次先查当前上下文、业务读工具、人员目录和历史账本，再只问一个关键问题。"
+    return ""
+
+
+def _tool_results_have_error(results: Any) -> bool:
+    values = results if isinstance(results, list) else [results]
+    for item in values:
+        if not isinstance(item, dict):
+            continue
+        if item.get("ok") is False or item.get("success") is False or item.get("error"):
+            return True
+        status = str(item.get("status") or "").lower()
+        if status in {"failed", "error", "result_unknown", "blocked", "permission_denied"}:
+            return True
+    return False
+
+
+def _looks_like_unverified_claim_text(text: str) -> bool:
+    return any(
+        term in str(text or "")
+        for term in (
+            "小优查了",
+            "我查了",
+            "查了一下",
+            "系统里显示",
+            "系统显示",
+            "已保存",
+            "已经保存",
+            "确认并保存",
+            "记住了",
+            "已经记住",
+            "以后就按这个来理解",
+            "以后按这个来理解",
+        )
+    )
+
+
+def _looks_like_self_rescue_deflection(raw_text: str, final_reply: str) -> bool:
+    raw = str(raw_text or "")
+    reply = str(final_reply or "")
+    needs_tool = any(term in raw for term in ("企业微信", "通讯录", "老师名单", "店长", "老师都有谁", "乱码", "人员", "名字", "学生", "任务", "记录", "看板"))
+    deflects = any(term in reply for term in ("查不到", "需要技术", "技术处理", "做不了", "没法", "无法从系统", "无法查看", "不能处理"))
+    asks_without_attempt = any(term in reply for term in ("需要您告诉", "需要你告诉", "请你提供")) and any(term in raw for term in ("企业微信", "通讯录", "人员", "乱码", "老师"))
+    return needs_tool and (deflects or asks_without_attempt)
 
 
 def _non_business_dialogue_plan(
@@ -1060,6 +1174,7 @@ def ensure_outbound_reply_recorded(
                         return
                 except ValueError:
                     continue
+    raw_model_final_reply = str(final_reply or "")
     if session_id:
         transformed = transform_final_response(
             store=store,
@@ -1093,6 +1208,7 @@ def ensure_outbound_reply_recorded(
         "legacy_handler_intercepted": (route_decision or ("model_first" if entered_model else "deterministic_system_reply")) == "legacy_router",
         "guard_result": "allowed",
         "final_reply": str(final_reply or ""),
+        "raw_model_final_reply_before_sanitize": raw_model_final_reply if raw_model_final_reply != str(final_reply or "") else "",
         "created_at": _now(),
         "completed_at": _now(),
         "audit_event_ids": [],

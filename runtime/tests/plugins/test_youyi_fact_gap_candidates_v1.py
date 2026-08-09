@@ -46,12 +46,14 @@ def _boss_identity():
 
 def test_fact_gap_candidate_tool_is_registered_and_permission_scoped(tmp_path):
     from plugins.tuoguan_core.tool_service import TuoguanToolService
+    from plugins.tuoguan_core.runtime_foundation import WRITE_TOOLS
     from plugins.tuoguan_core.tools import TOOLS
 
     store = _seed_store(tmp_path)
     names = {name for name, _schema, _handler in TOOLS}
     assert "tuoguan_query_fact_gap_candidates" in names
     assert "tuoguan_submit_fact_gap_candidate" in names
+    assert "tuoguan_submit_fact_gap_candidate" in WRITE_TOOLS
 
     boss = TuoguanToolService(store, platform="wecom_callback", user_id="boss1", user_name="金总")
     assert boss.query_fact_gap_candidates()["ok"] is True

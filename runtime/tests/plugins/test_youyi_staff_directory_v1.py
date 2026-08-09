@@ -201,3 +201,38 @@ def test_daily_report_health_flags_unverified_staff_directory_deflection(tmp_pat
 
     assert any("未查工具却声称已查/已保存" in item for item in issues)
     assert any("人员/企业微信问题疑似未先查目录" in item for item in issues)
+
+
+def test_runtime_records_tool_failure_evolution_for_unrescued_staff_deflection(tmp_path):
+    from plugins.tuoguan_core.runtime_foundation import ensure_outbound_reply_recorded
+    from plugins.tuoguan_core.store import TuoguanStore
+
+    _write_json(tmp_path, "write_guard_config.json", {"enabled": True})
+    store = TuoguanStore(tmp_path)
+
+    ensure_outbound_reply_recorded(
+        store=store,
+        message_id="msg-staff-deflection-1",
+        conversation_id="conv-boss",
+        user_id="boss1",
+        role="boss",
+        raw_text="企业微信乱码能不能解决？还有哪两位老师你自己不会查吗？",
+        final_reply="这个小优查不到，需要技术处理一下。",
+        entered_model=True,
+        route_decision="model_first",
+        reply_owner="model",
+    )
+
+    rows = [
+        json.loads(line)
+        for line in (tmp_path / "self_evolution_events.jsonl").read_text(encoding="utf-8").splitlines()
+        if line.strip()
+    ]
+    assert len(rows) == 1
+    row = rows[0]
+    assert row["candidate_type"] == "tool_failure_or_bug"
+    assert row["status"] == "pending_review"
+    assert "人员/企业微信/业务事实问题未先自救" in row["summary"]
+    assert row["auto_effects"]["may_inform_next_context"] is False
+    assert row["auto_effects"]["changes_router"] is False
+    assert row["evidence"][0]["source"] == "reply_ledger"
