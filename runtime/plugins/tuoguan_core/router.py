@@ -116,7 +116,7 @@ from .records import (
 from .reports import build_role_report
 from .runtime import build_status
 from .semantic_router import SemanticRouteResult, route_message_semantically
-from .store import TuoguanStore, TuoguanStoreError
+from .store import JSON_NO_CHANGE, TuoguanStore, TuoguanStoreError
 from .summer_enrollment import (
     guess_unknown_student_name,
     remember_unknown_summer_record,
@@ -1066,8 +1066,7 @@ class TuoguanRouter:
         ttl_minutes: int = 30,
     ) -> None:
         now = datetime.now()
-        contexts = self._task_contexts()
-        contexts[identity.canonical_user_id] = {
+        row = {
             "user_id": identity.canonical_user_id,
             "task_id": str(task.get("id") or ""),
             "student_id": str(task.get("student_id") or task.get("student_name") or ""),
@@ -1078,13 +1077,23 @@ class TuoguanRouter:
             "expires_at": (now + timedelta(minutes=ttl_minutes)).isoformat(timespec="seconds"),
             "candidate_task_ids": [str(item.get("id") or "") for item in (candidates or []) if item.get("id")],
         }
-        self.store.write_json(_ACTIVE_TASK_CONTEXT_FILE, contexts)
+
+        def update_contexts(contexts: Any) -> dict[str, Any]:
+            contexts = contexts if isinstance(contexts, dict) else {}
+            contexts[identity.canonical_user_id] = row
+            return contexts
+
+        self.store.update_json(_ACTIVE_TASK_CONTEXT_FILE, {}, update_contexts)
 
     def _clear_active_task_context(self, identity: UserIdentity) -> None:
-        contexts = self._task_contexts()
-        if identity.canonical_user_id in contexts:
+        def clear_context(contexts: Any) -> Any:
+            contexts = contexts if isinstance(contexts, dict) else {}
+            if identity.canonical_user_id not in contexts:
+                return JSON_NO_CHANGE
             contexts.pop(identity.canonical_user_id, None)
-            self.store.write_json(_ACTIVE_TASK_CONTEXT_FILE, contexts)
+            return contexts
+
+        self.store.update_json(_ACTIVE_TASK_CONTEXT_FILE, {}, clear_context)
 
     def _pending_next_context(self, identity: UserIdentity) -> dict[str, Any] | None:
         contexts = self.store.read_json(_PENDING_NEXT_TASK_FILE, {})
@@ -1095,8 +1104,14 @@ class TuoguanRouter:
             return None
         expires_at = self._parse_datetime(item.get("expires_at"))
         if expires_at and expires_at < datetime.now():
-            contexts.pop(identity.canonical_user_id, None)
-            self.store.write_json(_PENDING_NEXT_TASK_FILE, contexts)
+            def expire_context(existing: Any) -> Any:
+                existing = existing if isinstance(existing, dict) else {}
+                if identity.canonical_user_id not in existing:
+                    return JSON_NO_CHANGE
+                existing.pop(identity.canonical_user_id, None)
+                return existing
+
+            self.store.update_json(_PENDING_NEXT_TASK_FILE, {}, expire_context)
             return None
         return item
 
@@ -1124,10 +1139,7 @@ class TuoguanRouter:
         ttl_minutes: int = 30,
     ) -> None:
         now = datetime.now()
-        contexts = self.store.read_json(_PENDING_NEXT_TASK_FILE, {})
-        if not isinstance(contexts, dict):
-            contexts = {}
-        contexts[user_id] = {
+        row = {
             "user_id": user_id,
             "task_id": str(task.get("id") or ""),
             "task_title": str(task.get("title") or ""),
@@ -1140,7 +1152,13 @@ class TuoguanRouter:
             "created_at": now.isoformat(timespec="seconds"),
             "expires_at": (now + timedelta(minutes=ttl_minutes)).isoformat(timespec="seconds"),
         }
-        self.store.write_json(_PENDING_NEXT_TASK_FILE, contexts)
+
+        def update_contexts(contexts: Any) -> dict[str, Any]:
+            contexts = contexts if isinstance(contexts, dict) else {}
+            contexts[user_id] = row
+            return contexts
+
+        self.store.update_json(_PENDING_NEXT_TASK_FILE, {}, update_contexts)
         remember_conversation_state_for_user(
             self.store,
             user_id=user_id,
@@ -1160,12 +1178,14 @@ class TuoguanRouter:
         )
 
     def _clear_pending_next_task_context(self, identity: UserIdentity) -> None:
-        contexts = self.store.read_json(_PENDING_NEXT_TASK_FILE, {})
-        if not isinstance(contexts, dict):
-            return
-        if identity.canonical_user_id in contexts:
+        def clear_context(contexts: Any) -> Any:
+            contexts = contexts if isinstance(contexts, dict) else {}
+            if identity.canonical_user_id not in contexts:
+                return JSON_NO_CHANGE
             contexts.pop(identity.canonical_user_id, None)
-            self.store.write_json(_PENDING_NEXT_TASK_FILE, contexts)
+            return contexts
+
+        self.store.update_json(_PENDING_NEXT_TASK_FILE, {}, clear_context)
 
     def _role_for_user_id(self, user_id: str) -> str:
         whitelist = self.store.read_json("wecom_whitelist.json", {})
@@ -2611,24 +2631,25 @@ class TuoguanRouter:
     ) -> None:
         if not task_id:
             return
-        outbox = self.store.read_json("notification_outbox.json", [])
-        if not isinstance(outbox, list):
-            return
         now = datetime.now().isoformat(timespec="seconds")
-        changed = False
-        for item in outbox:
-            if not isinstance(item, dict):
-                continue
-            if str(item.get("task_id") or "") != task_id:
-                continue
-            if str(item.get("status") or "") not in {"pending", "retry_pending"}:
-                continue
-            item["status"] = "suppressed"
-            item["suppressed_at"] = now
-            item["suppressed_reason"] = reason
-            changed = True
-        if changed:
-            self.store.write_json("notification_outbox.json", outbox[-2000:])
+
+        def suppress(outbox: Any) -> Any:
+            outbox = outbox if isinstance(outbox, list) else []
+            changed = False
+            for item in outbox:
+                if not isinstance(item, dict):
+                    continue
+                if str(item.get("task_id") or "") != task_id:
+                    continue
+                if str(item.get("status") or "") not in {"pending", "retry_pending", "sending"}:
+                    continue
+                item["status"] = "suppressed"
+                item["suppressed_at"] = now
+                item["suppressed_reason"] = reason
+                changed = True
+            return outbox[-2000:] if changed else JSON_NO_CHANGE
+
+        self.store.update_json("notification_outbox.json", [], suppress)
 
     def _remember_supervisor_task(
         self,

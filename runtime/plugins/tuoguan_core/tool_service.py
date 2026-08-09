@@ -26,7 +26,7 @@ from .programs import resolve_record_program
 from .programs import is_summer_operator
 from .records import analyze_teacher_record, save_analysis
 from .summer_records import save_summer_lesson_record
-from .store import TuoguanStore, TuoguanStoreError
+from .store import JSON_NO_CHANGE, TuoguanStore, TuoguanStoreError
 from .summer_points import change_points, query_points_ranking, query_student_points
 from .tasks import apply_task_reply, closure_missing_fields, current_task_for_user
 from .youyi_batch_capabilities import (
@@ -170,6 +170,16 @@ def _student_grades(profile: dict[str, Any]) -> set[str]:
             if isinstance(row, dict):
                 grades.add(_normalize_grade(row.get("grade")))
     return {grade for grade in grades if grade}
+
+
+def _parse_iso(value: Any) -> datetime | None:
+    try:
+        parsed = datetime.fromisoformat(str(value or ""))
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        return parsed.astimezone()
+    return parsed.astimezone()
 
 
 class TuoguanToolService:
@@ -401,39 +411,44 @@ class TuoguanToolService:
         if not user_id or not task_id:
             return
         now = datetime.now()
-        active = self.store.read_json("active_task_context.json", {})
-        if not isinstance(active, dict):
-            active = {}
-        active[user_id] = {
-            "user_id": user_id,
-            "task_id": task_id,
-            "student_id": str(task.get("student_id") or task.get("student_name") or ""),
-            "student_name": str(task.get("student_name") or ""),
-            "task_type": str(task.get("type") or "manual_assignment"),
-            "status": "selected",
-            "started_at": now.isoformat(timespec="seconds"),
-            "expires_at": (now + timedelta(hours=ttl_hours)).isoformat(timespec="seconds"),
-            "candidate_task_ids": [],
-            "source": "assigned_task_created",
-        }
-        self.store.write_json("active_task_context.json", active)
-        pending = self.store.read_json("pending_next_task_context.json", {})
-        if not isinstance(pending, dict):
-            pending = {}
-        pending[user_id] = {
-            "user_id": user_id,
-            "task_id": task_id,
-            "task_title": str(task.get("title") or ""),
-            "task_level": str(task.get("level") or "C"),
-            "task_type": str(task.get("type") or "manual_assignment"),
-            "student_id": str(task.get("student_id") or task.get("student_name") or ""),
-            "student_name": str(task.get("student_name") or ""),
-            "source": "new_task_notification",
-            "trigger_words": ["继续", "开始", "处理", "1", "开始下一个", "处理下一个"],
-            "created_at": now.isoformat(timespec="seconds"),
-            "expires_at": (now + timedelta(hours=ttl_hours)).isoformat(timespec="seconds"),
-        }
-        self.store.write_json("pending_next_task_context.json", pending)
+        started_at = now.isoformat(timespec="seconds")
+        expires_at = (now + timedelta(hours=ttl_hours)).isoformat(timespec="seconds")
+
+        def update_active(active: Any) -> dict[str, Any]:
+            active = active if isinstance(active, dict) else {}
+            active[user_id] = {
+                "user_id": user_id,
+                "task_id": task_id,
+                "student_id": str(task.get("student_id") or task.get("student_name") or ""),
+                "student_name": str(task.get("student_name") or ""),
+                "task_type": str(task.get("type") or "manual_assignment"),
+                "status": "selected",
+                "started_at": started_at,
+                "expires_at": expires_at,
+                "candidate_task_ids": [],
+                "source": "assigned_task_created",
+            }
+            return active
+
+        def update_pending(pending: Any) -> dict[str, Any]:
+            pending = pending if isinstance(pending, dict) else {}
+            pending[user_id] = {
+                "user_id": user_id,
+                "task_id": task_id,
+                "task_title": str(task.get("title") or ""),
+                "task_level": str(task.get("level") or "C"),
+                "task_type": str(task.get("type") or "manual_assignment"),
+                "student_id": str(task.get("student_id") or task.get("student_name") or ""),
+                "student_name": str(task.get("student_name") or ""),
+                "source": "new_task_notification",
+                "trigger_words": ["继续", "开始", "处理", "1", "开始下一个", "处理下一个"],
+                "created_at": started_at,
+                "expires_at": expires_at,
+            }
+            return pending
+
+        self.store.update_json("active_task_context.json", {}, update_active)
+        self.store.update_json("pending_next_task_context.json", {}, update_pending)
 
     @staticmethod
     def _looks_like_goal_workspace_task_misuse(*, raw_text: str, title: str, operation_id: str, assignee_user_id: str, student_name: str) -> bool:
@@ -609,15 +624,40 @@ class TuoguanToolService:
                 "unauthorized_write_blocked",
                 f"当前请求没有通过业务写入校验，未修改任何业务数据。审计编号：{audit_id}",
             )
-        receipts = self.store.read_json("tool_operations.json", {})
-        if not isinstance(receipts, dict):
-            receipts = {}
         receipt_key = f"{self.identity.canonical_user_id}:{operation}:{key}"
-        existing = receipts.get(receipt_key)
-        if isinstance(existing, dict) and isinstance(existing.get("result"), dict):
-            result = deepcopy(existing["result"])
+        receipt_claim: dict[str, Any] = {"claimed": False, "existing_result": None, "in_progress": False}
+
+        def claim_receipt(receipts: Any) -> Any:
+            receipts = receipts if isinstance(receipts, dict) else {}
+            existing = receipts.get(receipt_key)
+            if isinstance(existing, dict) and isinstance(existing.get("result"), dict):
+                receipt_claim["existing_result"] = deepcopy(existing["result"])
+                return JSON_NO_CHANGE
+            if isinstance(existing, dict) and str(existing.get("status") or "") == "in_progress":
+                claimed_at = _parse_iso(existing.get("claimed_at"))
+                if claimed_at is not None and datetime.now().astimezone() - claimed_at < timedelta(minutes=10):
+                    receipt_claim["in_progress"] = True
+                    return JSON_NO_CHANGE
+            receipts[receipt_key] = {
+                "actor": self.identity.canonical_user_id,
+                "operation": operation,
+                "operation_id": key,
+                "status": "in_progress",
+                "claimed_at": datetime.now().astimezone().isoformat(timespec="seconds"),
+            }
+            receipt_claim["claimed"] = True
+            return receipts
+
+        self.store.update_json("tool_operations.json", {}, claim_receipt)
+        if isinstance(receipt_claim.get("existing_result"), dict):
+            result = deepcopy(receipt_claim["existing_result"])
             result["already_applied"] = True
             return result
+        if receipt_claim.get("in_progress"):
+            return self._error(
+                "operation_already_in_progress",
+                "同一个 operation_id 正在执行或等待写后反查，本轮未重复执行，避免产生重复写入。",
+            )
         runtime_auth = runtime_auth or {"ledger_id": "test_or_offline_runtime"}
         preaudit_id = f"audit_write_authorized_{uuid.uuid4().hex}"
         with authorized_business_write(
@@ -636,47 +676,55 @@ class TuoguanToolService:
             result["message"] = "已理解并执行该操作，但写入反查没有完全通过，暂时不能确认成功。"
         if result.get("ok"):
             result["already_applied"] = False
+        def finish_receipt(receipts: Any) -> dict[str, Any]:
+            receipts = receipts if isinstance(receipts, dict) else {}
             receipts[receipt_key] = {
                 "actor": self.identity.canonical_user_id,
                 "operation": operation,
-                "created_at": datetime.now().isoformat(timespec="seconds"),
+                "operation_id": key,
+                "status": "completed" if result.get("ok") else "failed",
+                "created_at": datetime.now().astimezone().isoformat(timespec="seconds"),
                 "result": deepcopy(result),
             }
-            self.store.write_json("tool_operations.json", receipts)
+            return receipts
+
+        self.store.update_json("tool_operations.json", {}, finish_receipt)
         return result
 
     def _enqueue_notifications(self, notifications: list[dict[str, Any]]) -> None:
-        outbox = self.store.read_json("notification_outbox.json", [])
-        if not isinstance(outbox, list):
-            outbox = []
-        existing = {
-            str(item.get("id") or "")
-            for item in outbox
-            if isinstance(item, dict)
-        }
         stamp = datetime.now().isoformat(timespec="seconds")
-        for item in notifications:
-            notification_id = ":".join(
-                (
-                    str(item.get("task_id") or ""),
-                    str(item.get("role") or ""),
-                    str(item.get("action") or ""),
+
+        def append_notifications(outbox: Any) -> list[dict[str, Any]]:
+            outbox = outbox if isinstance(outbox, list) else []
+            existing = {
+                str(item.get("id") or "")
+                for item in outbox
+                if isinstance(item, dict)
+            }
+            for item in notifications:
+                notification_id = ":".join(
+                    (
+                        str(item.get("task_id") or ""),
+                        str(item.get("role") or ""),
+                        str(item.get("action") or ""),
+                    )
                 )
-            )
-            if not notification_id or notification_id in existing:
-                continue
-            outbox.append(
-                {
-                    **deepcopy(item),
-                    "id": notification_id,
-                    "status": "pending",
-                    "delivery_mode": "direct_wecom",
-                    "created_at": stamp,
-                    "attempt_count": 0,
-                }
-            )
-            existing.add(notification_id)
-        self.store.write_json("notification_outbox.json", outbox[-2000:])
+                if not notification_id or notification_id in existing:
+                    continue
+                outbox.append(
+                    {
+                        **deepcopy(item),
+                        "id": notification_id,
+                        "status": "pending",
+                        "delivery_mode": "direct_wecom",
+                        "created_at": stamp,
+                        "attempt_count": 0,
+                    }
+                )
+                existing.add(notification_id)
+            return outbox[-2000:]
+
+        self.store.update_json("notification_outbox.json", [], append_notifications)
 
     def context(self) -> dict[str, Any]:
         denied = self._approved()

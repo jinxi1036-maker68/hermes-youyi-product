@@ -6,12 +6,14 @@ import asyncio
 import hashlib
 import json
 import logging
+import uuid
+from copy import deepcopy
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
 
 from .models import RouteResult
-from .store import TuoguanStore, TuoguanStoreError
+from .store import JSON_NO_CHANGE, TuoguanStore, TuoguanStoreError
 from .tenant_context import current_tenant_id
 from .digital_employee_state import (
     ATTENTION_THREADS_FILE,
@@ -625,232 +627,314 @@ async def _drain_notification_outbox(adapter: Any) -> None:
     """Deliver only notifications created by the unified foundation."""
 
     store = TuoguanStore()
-    outbox = store.read_json("notification_outbox.json", [])
-    if not isinstance(outbox, list):
-        return
-    changed = False
     exclusions = store.read_json("task_execution_exclusions.json", {})
     excluded_task_ids = {
         str(value)
         for value in (exclusions.get("excluded_task_ids", []) if isinstance(exclusions, dict) else [])
     }
-    now = datetime.now().astimezone()
     max_attempts = 3
     retry_delay_seconds = 60
-    attention_updates: list[dict[str, Any]] = []
-    relationship_updates: list[dict[str, Any]] = []
-    for item in outbox:
-        if not isinstance(item, dict) or item.get("status") not in {"pending", "retry_pending"}:
+    processed = 0
+    while processed < 50:
+        now = datetime.now().astimezone()
+        claim = _claim_next_notification_outbox_item(store, excluded_task_ids=excluded_task_ids, now=now)
+        item = claim.get("item") if isinstance(claim.get("item"), dict) else {}
+        if not item:
+            return
+        processed += 1
+        event = str(claim.get("event") or "")
+        result = str(claim.get("result") or "")
+        if event:
+            _append_notification_audit(store, item, event, result)
+            if result == "missing_target_or_content":
+                _append_notification_failure(item, result)
+            _sync_notification_outbox_receipts(store, item)
             continue
-        retry_at = str(item.get("retry_at") or "").strip()
-        if retry_at:
-            try:
-                if _parse_outbox_datetime(retry_at, now=now) > now:
-                    continue
-            except ValueError:
-                item.update({"status": "failed", "last_error": "invalid_retry_at", "last_attempt_at": now.isoformat(timespec="seconds")})
-                _append_notification_audit(store, item, "notification_failed", "invalid_retry_at")
-                changed = True
-                continue
-        task_id = str(item.get("task_id") or "")
-        if task_id and task_id in excluded_task_ids:
-            # Preserve the evidence row, but stop historical test messages from
-            # ever interrupting a live teacher conversation.
-            item.update({
-                "status": "suppressed",
-                "suppressed_reason": "excluded_task",
-                "suppressed_at": now.isoformat(timespec="seconds"),
-            })
-            _append_notification_audit(store, item, "notification_suppressed", "excluded_task")
-            changed = True
-            continue
-        if item.get("delivery_mode") != "direct_wecom":
-            continue  # Preserve unrelated legacy failed evidence until explicitly cleaned.
-        stale_failure = _stale_outbox_failure_reason(item, now=now)
-        if stale_failure:
-            item.update({
-                "status": "failed",
-                "last_error": stale_failure,
-                "failed_at": now.isoformat(timespec="seconds"),
-                "last_attempt_at": now.isoformat(timespec="seconds"),
-            })
-            item.pop("retry_at", None)
-            _append_notification_audit(store, item, "notification_failed", stale_failure)
-            changed = True
-            continue
-        stale_reason = _stale_outbox_suppression_reason(item, now=now)
-        if stale_reason:
-            item.update({
-                "status": "suppressed",
-                "suppressed_reason": stale_reason,
-                "suppressed_at": now.isoformat(timespec="seconds"),
-            })
-            _append_notification_audit(store, item, "notification_suppressed", stale_reason)
-            changed = True
-            continue
-        deliver_at = str(item.get("deliver_at") or "").strip()
-        if deliver_at:
-            try:
-                if _parse_outbox_datetime(deliver_at, now=now) > now:
-                    continue
-            except ValueError:
-                item.update({"status": "failed", "last_error": "invalid_deliver_at", "last_attempt_at": datetime.now().isoformat(timespec="seconds")})
-                changed = True
-                continue
         target = str(item.get("touser") or "").strip()
         content = str(item.get("content") or "").strip()
-        if not target or not content:
-            item.update({"status": "failed", "last_error": "missing_target_or_content", "last_attempt_at": datetime.now().isoformat(timespec="seconds")})
-            _append_notification_failure(item, "missing_target_or_content")
-            changed = True
-            continue
-        last_inbound = _coerce_runtime_datetime(_ACTIVE_WECom_USERS.get(target), now=now)
-        if (
-            str(item.get("notification_type") or "") != "autonomous_daily_report"
-            and last_inbound is not None
-            and now - last_inbound < _ACTIVE_CONVERSATION_QUIET_PERIOD
-        ):
-            # Keep it pending. The next scheduler tick will deliver after the
-            # teacher has been idle, instead of inserting a system prompt into
-            # the middle of the model-guided task flow.
-            continue
-        result = await adapter.send(target, content, metadata={
+        send_result = await adapter.send(target, content, metadata={
             "handled_by": "tuoguan_core",
             "notification": True,
             "outbound_source": "system_push",
             "task_id": str(item.get("task_id") or ""),
             "action": str(item.get("action") or ""),
             "idempotency_key": str(item.get("id") or ""),
+            "outbox_lease_id": str(item.get("lease_id") or ""),
         })
-        item["attempt_count"] = int(item.get("attempt_count") or 0) + 1
-        item["last_attempt_at"] = datetime.now().isoformat(timespec="seconds")
-        if bool(getattr(result, "success", False)):
-            item["status"] = "sent"
-            item["sent_at"] = item["last_attempt_at"]
-            item["message_id"] = str(getattr(result, "message_id", "") or "")
-            item.pop("retry_at", None)
-            _append_notification_audit(store, item, "notification_sent", "success")
-            if str(item.get("attention_id") or ""):
-                attention_updates.append({
-                    "attention_id": str(item.get("attention_id") or ""),
-                    "status": "sent",
-                    "target": target,
-                    "delivery_receipt": {
-                        "success": True,
-                        "message_id": item["message_id"],
-                        "sent_at": item["sent_at"],
-                        "outbox_id": str(item.get("id") or ""),
-                    },
-                })
-            if str(item.get("relationship_touch_candidate_id") or ""):
-                relationship_updates.append({
-                    "candidate_id": str(item.get("relationship_touch_candidate_id") or ""),
-                    "status": "sent",
-                    "target": target,
-                    "delivery_receipt": {
-                        "success": True,
-                        "message_id": item["message_id"],
-                        "sent_at": item["sent_at"],
-                        "outbox_id": str(item.get("id") or ""),
-                    },
-                })
-        else:
-            item["last_error"] = str(getattr(result, "error", "") or "unknown")
-            _append_notification_failure(item, item["last_error"])
-            if int(item["attempt_count"]) < max_attempts:
-                item["status"] = "retry_pending"
-                item["retry_at"] = (now + timedelta(seconds=retry_delay_seconds)).isoformat(timespec="seconds")
-                _append_notification_audit(store, item, "notification_retry_scheduled", "retry_pending")
-            else:
-                item["status"] = "failed"
-                item.pop("retry_at", None)
-                _append_notification_audit(store, item, "notification_failed", "attempts_exhausted")
-                if str(item.get("attention_id") or ""):
-                    attention_updates.append({
-                        "attention_id": str(item.get("attention_id") or ""),
-                        "status": "failed",
-                        "target": target,
-                        "failure_reason": item["last_error"],
-                    })
-                if str(item.get("relationship_touch_candidate_id") or ""):
-                    relationship_updates.append({
-                        "candidate_id": str(item.get("relationship_touch_candidate_id") or ""),
-                        "status": "failed",
-                        "target": target,
-                        "failure_reason": item["last_error"],
-                    })
-        changed = True
-    if changed:
-        from .write_guard import authorized_business_write, prepare_system_write
-
-        allowed_files = {"notification_outbox.json", ATTENTION_THREADS_FILE, RELATIONSHIP_TOUCH_CANDIDATES_FILE, "daily_report_runs.jsonl", "action_executions.jsonl"}
-        write_auth = prepare_system_write(
-            store.data_dir,
-            job_name="notification_outbox_delivery",
-            allowed_files=allowed_files,
+        finalized = _finish_claimed_notification_outbox_item(
+            store,
+            claimed_item=item,
+            send_result=send_result,
+            now=datetime.now().astimezone(),
+            max_attempts=max_attempts,
+            retry_delay_seconds=retry_delay_seconds,
         )
-        with authorized_business_write(
-            source="system_job",
-            operation_id=write_auth["operation_id"],
-            ledger_id=write_auth["ledger_id"],
-            audit_id=write_auth["audit_id"],
-            allowed_files=allowed_files,
-        ):
-            store.write_json("notification_outbox.json", outbox[-2000:])
-            for attention_update in attention_updates:
-                identity = _router().identities.resolve(
-                    "wecom_callback",
-                    str(attention_update.get("target") or ""),
-                    chat_id=str(attention_update.get("target") or ""),
-                    message_text="",
-                )
-                update_attention_thread(
-                    store,
-                    identity=identity,
-                    attention_id=str(attention_update.get("attention_id") or ""),
-                    status=str(attention_update.get("status") or ""),
-                    operation_id=write_auth["operation_id"],
-                    delivery_receipt=attention_update.get("delivery_receipt"),
-                    failure_reason=str(attention_update.get("failure_reason") or ""),
-                    source_text="企业微信主动提醒发送回执",
-                )
-            for relationship_update in relationship_updates:
-                identity = _router().identities.resolve(
-                    "wecom_callback",
-                    str(relationship_update.get("target") or ""),
-                    chat_id=str(relationship_update.get("target") or ""),
-                    message_text="",
-                )
-                update_relationship_touch_candidate_status(
-                    store,
-                    identity=identity,
-                    candidate_id=str(relationship_update.get("candidate_id") or ""),
-                    status=str(relationship_update.get("status") or ""),
-                    operation_id=write_auth["operation_id"],
-                    delivery_receipt=relationship_update.get("delivery_receipt"),
-                    failure_reason=str(relationship_update.get("failure_reason") or ""),
-                    source_text="企业微信关系经营消息发送回执",
-                )
+        final_item = finalized.get("item") if isinstance(finalized.get("item"), dict) else {}
+        if not final_item:
+            continue
+        if str(final_item.get("status") or "") == "sent":
+            _append_notification_audit(store, final_item, "notification_sent", "success")
+        elif str(final_item.get("status") or "") == "retry_pending":
+            _append_notification_failure(final_item, str(final_item.get("last_error") or "unknown"))
+            _append_notification_audit(store, final_item, "notification_retry_scheduled", "retry_pending")
+        else:
+            _append_notification_failure(final_item, str(final_item.get("last_error") or "unknown"))
+            _append_notification_audit(store, final_item, "notification_failed", str(final_item.get("last_error") or "attempts_exhausted"))
+        _sync_notification_outbox_receipts(store, final_item)
+
+
+def _claim_next_notification_outbox_item(store: TuoguanStore, *, excluded_task_ids: set[str], now: datetime) -> dict[str, Any]:
+    from .write_guard import authorized_business_write, prepare_system_write
+
+    claim: dict[str, Any] = {}
+    now_iso = now.isoformat(timespec="seconds")
+    lease_id = f"outbox_lease_{uuid.uuid4().hex[:16]}"
+    allowed_files = {"notification_outbox.json"}
+    write_auth = prepare_system_write(store.data_dir, job_name="notification_outbox_claim", allowed_files=allowed_files)
+
+    def mutate(outbox: Any) -> Any:
+        outbox = outbox if isinstance(outbox, list) else []
+        for item in outbox:
+            if not isinstance(item, dict):
+                continue
+            status = str(item.get("status") or "")
+            if status == "sending":
+                lease_expires_at = _coerce_runtime_datetime(item.get("lease_expires_at"), now=now)
+                if lease_expires_at is not None and lease_expires_at <= now:
+                    item.update({
+                        "status": "result_unknown",
+                        "last_error": "send_result_unknown_after_lease_expired",
+                        "result_unknown_at": now_iso,
+                        "last_attempt_at": now_iso,
+                    })
+                    item.pop("retry_at", None)
+                    claim.update({"item": deepcopy(item), "event": "notification_result_unknown", "result": "lease_expired"})
+                    return outbox[-2000:]
+                continue
+            if status not in {"pending", "retry_pending"}:
+                continue
+            retry_at = str(item.get("retry_at") or "").strip()
+            if retry_at:
+                try:
+                    if _parse_outbox_datetime(retry_at, now=now) > now:
+                        continue
+                except ValueError:
+                    item.update({"status": "failed", "last_error": "invalid_retry_at", "last_attempt_at": now_iso})
+                    claim.update({"item": deepcopy(item), "event": "notification_failed", "result": "invalid_retry_at"})
+                    return outbox[-2000:]
+            task_id = str(item.get("task_id") or "")
+            if task_id and task_id in excluded_task_ids:
+                item.update({
+                    "status": "suppressed",
+                    "suppressed_reason": "excluded_task",
+                    "suppressed_at": now_iso,
+                })
+                claim.update({"item": deepcopy(item), "event": "notification_suppressed", "result": "excluded_task"})
+                return outbox[-2000:]
+            if item.get("delivery_mode") != "direct_wecom":
+                continue
+            stale_failure = _stale_outbox_failure_reason(item, now=now)
+            if stale_failure:
+                item.update({
+                    "status": "failed",
+                    "last_error": stale_failure,
+                    "failed_at": now_iso,
+                    "last_attempt_at": now_iso,
+                })
+                item.pop("retry_at", None)
+                claim.update({"item": deepcopy(item), "event": "notification_failed", "result": stale_failure})
+                return outbox[-2000:]
+            stale_reason = _stale_outbox_suppression_reason(item, now=now)
+            if stale_reason:
+                item.update({
+                    "status": "suppressed",
+                    "suppressed_reason": stale_reason,
+                    "suppressed_at": now_iso,
+                })
+                claim.update({"item": deepcopy(item), "event": "notification_suppressed", "result": stale_reason})
+                return outbox[-2000:]
+            deliver_at = str(item.get("deliver_at") or "").strip()
+            if deliver_at:
+                try:
+                    if _parse_outbox_datetime(deliver_at, now=now) > now:
+                        continue
+                except ValueError:
+                    item.update({"status": "failed", "last_error": "invalid_deliver_at", "last_attempt_at": now_iso})
+                    claim.update({"item": deepcopy(item), "event": "notification_failed", "result": "invalid_deliver_at"})
+                    return outbox[-2000:]
+            target = str(item.get("touser") or "").strip()
+            content = str(item.get("content") or "").strip()
+            if not target or not content:
+                item.update({"status": "failed", "last_error": "missing_target_or_content", "last_attempt_at": now_iso})
+                claim.update({"item": deepcopy(item), "event": "notification_failed", "result": "missing_target_or_content"})
+                return outbox[-2000:]
+            last_inbound = _coerce_runtime_datetime(_ACTIVE_WECom_USERS.get(target), now=now)
+            if (
+                str(item.get("notification_type") or "") != "autonomous_daily_report"
+                and last_inbound is not None
+                and now - last_inbound < _ACTIVE_CONVERSATION_QUIET_PERIOD
+            ):
+                continue
+            item.update({
+                "status": "sending",
+                "lease_id": lease_id,
+                "lease_owner": "notification_outbox_delivery",
+                "lease_started_at": now_iso,
+                "lease_expires_at": (now + timedelta(minutes=5)).isoformat(timespec="seconds"),
+                "last_attempt_at": now_iso,
+                "attempt_count": int(item.get("attempt_count") or 0) + 1,
+            })
+            item.pop("retry_at", None)
+            claim.update({"item": deepcopy(item)})
+            return outbox[-2000:]
+        return JSON_NO_CHANGE
+
+    with authorized_business_write(
+        source="system_job",
+        operation_id=write_auth["operation_id"],
+        ledger_id=write_auth["ledger_id"],
+        audit_id=write_auth["audit_id"],
+        allowed_files=allowed_files,
+    ):
+        store.update_json("notification_outbox.json", [], mutate)
+    return claim
+
+
+def _finish_claimed_notification_outbox_item(
+    store: TuoguanStore,
+    *,
+    claimed_item: dict[str, Any],
+    send_result: Any,
+    now: datetime,
+    max_attempts: int,
+    retry_delay_seconds: int,
+) -> dict[str, Any]:
+    from .write_guard import authorized_business_write, prepare_system_write
+
+    final: dict[str, Any] = {}
+    notification_id = str(claimed_item.get("id") or "")
+    lease_id = str(claimed_item.get("lease_id") or "")
+    success = bool(getattr(send_result, "success", False))
+    error = str(getattr(send_result, "error", "") or "unknown")
+    now_iso = now.isoformat(timespec="seconds")
+    allowed_files = {"notification_outbox.json"}
+    write_auth = prepare_system_write(store.data_dir, job_name="notification_outbox_receipt", allowed_files=allowed_files)
+
+    def mutate(outbox: Any) -> Any:
+        outbox = outbox if isinstance(outbox, list) else []
+        for item in outbox:
+            if not isinstance(item, dict):
+                continue
+            if str(item.get("id") or "") != notification_id:
+                continue
+            if str(item.get("lease_id") or "") != lease_id or str(item.get("status") or "") != "sending":
+                return JSON_NO_CHANGE
+            if success:
+                item["status"] = "sent"
+                item["sent_at"] = now_iso
+                item["message_id"] = str(getattr(send_result, "message_id", "") or "")
+                item.pop("retry_at", None)
+            else:
+                item["last_error"] = error
+                if int(item.get("attempt_count") or 0) < max_attempts:
+                    item["status"] = "retry_pending"
+                    item["retry_at"] = (now + timedelta(seconds=retry_delay_seconds)).isoformat(timespec="seconds")
+                else:
+                    item["status"] = "failed"
+                    item["failed_at"] = now_iso
+                    item.pop("retry_at", None)
+            item["last_attempt_at"] = now_iso
+            item.pop("lease_id", None)
+            item.pop("lease_owner", None)
+            item.pop("lease_started_at", None)
+            item.pop("lease_expires_at", None)
+            final["item"] = deepcopy(item)
+            return outbox[-2000:]
+        return JSON_NO_CHANGE
+
+    with authorized_business_write(
+        source="system_job",
+        operation_id=write_auth["operation_id"],
+        ledger_id=write_auth["ledger_id"],
+        audit_id=write_auth["audit_id"],
+        allowed_files=allowed_files,
+    ):
+        store.update_json("notification_outbox.json", [], mutate)
+    return final
+
+
+def _sync_notification_outbox_receipts(store: TuoguanStore, item: dict[str, Any]) -> None:
+    from .write_guard import authorized_business_write, prepare_system_write
+
+    status = str(item.get("status") or "")
+    if status not in {"sent", "failed", "retry_pending", "result_unknown", "suppressed"}:
+        return
+    allowed_files = {ATTENTION_THREADS_FILE, RELATIONSHIP_TOUCH_CANDIDATES_FILE, "daily_report_runs.jsonl", "action_executions.jsonl"}
+    write_auth = prepare_system_write(store.data_dir, job_name="notification_outbox_delivery_receipts", allowed_files=allowed_files)
+    with authorized_business_write(
+        source="system_job",
+        operation_id=write_auth["operation_id"],
+        ledger_id=write_auth["ledger_id"],
+        audit_id=write_auth["audit_id"],
+        allowed_files=allowed_files,
+    ):
+        if str(item.get("attention_id") or "") and status in {"sent", "failed", "result_unknown"}:
+            identity = _router().identities.resolve(
+                "wecom_callback",
+                str(item.get("touser") or item.get("target_user_id") or ""),
+                chat_id=str(item.get("touser") or item.get("target_user_id") or ""),
+                message_text="",
+            )
+            update_attention_thread(
+                store,
+                identity=identity,
+                attention_id=str(item.get("attention_id") or ""),
+                status=status,
+                operation_id=write_auth["operation_id"],
+                delivery_receipt=_delivery_receipt(item) if status == "sent" else None,
+                failure_reason=str(item.get("last_error") or ""),
+                source_text="企业微信主动提醒发送回执",
+            )
+        if str(item.get("relationship_touch_candidate_id") or "") and status in {"sent", "failed", "result_unknown"}:
+            identity = _router().identities.resolve(
+                "wecom_callback",
+                str(item.get("touser") or item.get("target_user_id") or ""),
+                chat_id=str(item.get("touser") or item.get("target_user_id") or ""),
+                message_text="",
+            )
+            update_relationship_touch_candidate_status(
+                store,
+                identity=identity,
+                candidate_id=str(item.get("relationship_touch_candidate_id") or ""),
+                status=status,
+                operation_id=write_auth["operation_id"],
+                delivery_receipt=_delivery_receipt(item) if status == "sent" else None,
+                failure_reason=str(item.get("last_error") or ""),
+                source_text="企业微信关系经营消息发送回执",
+            )
+        if str(item.get("notification_type") or "") == "autonomous_daily_report" and status in {"sent", "failed", "retry_pending", "result_unknown"}:
             try:
                 from .daily_reporter import sync_daily_report_delivery_status
 
-                for item in outbox:
-                    if not isinstance(item, dict):
-                        continue
-                    if str(item.get("notification_type") or "") != "autonomous_daily_report":
-                        continue
-                    if str(item.get("status") or "") not in {"sent", "failed", "retry_pending"}:
-                        continue
-                    sync_daily_report_delivery_status(
-                        store,
-                        outbox_item=item,
-                        operation_id=write_auth["operation_id"],
-                        ledger_id=write_auth["ledger_id"],
-                        audit_id=write_auth["audit_id"],
-                    )
-                    _sync_daily_report_action_execution(store, item, write_auth["operation_id"])
+                sync_daily_report_delivery_status(
+                    store,
+                    outbox_item=item,
+                    operation_id=write_auth["operation_id"],
+                    ledger_id=write_auth["ledger_id"],
+                    audit_id=write_auth["audit_id"],
+                )
+                _sync_daily_report_action_execution(store, item, write_auth["operation_id"])
             except Exception:
                 logger.exception("tuoguan_core failed to sync daily report delivery status")
+
+
+def _delivery_receipt(item: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "success": True,
+        "message_id": str(item.get("message_id") or ""),
+        "sent_at": str(item.get("sent_at") or ""),
+        "outbox_id": str(item.get("id") or ""),
+    }
 
 
 def _append_notification_audit(store: TuoguanStore, item: dict[str, Any], event: str, result: str) -> None:
@@ -880,7 +964,7 @@ def _sync_daily_report_action_execution(store: TuoguanStore, item: dict[str, Any
     if str(item.get("notification_type") or "") != "autonomous_daily_report":
         return
     status = str(item.get("status") or "")
-    if status not in {"sent", "failed", "retry_pending"}:
+    if status not in {"sent", "failed", "retry_pending", "result_unknown"}:
         return
     idempotency_key = f"daily_report_delivery:{item.get('id')}:{status}:{item.get('message_id') or item.get('last_error') or ''}"
     path = store.path_for("action_executions.jsonl")

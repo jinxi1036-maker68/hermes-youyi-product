@@ -11,7 +11,7 @@ from contextlib import contextmanager
 from copy import deepcopy
 from datetime import datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 from hermes_constants import get_hermes_home
 from utils import atomic_json_write
@@ -19,6 +19,9 @@ from utils import atomic_json_write
 
 class TuoguanStoreError(RuntimeError):
     """Raised when tutoring-center data cannot be read or written safely."""
+
+
+JSON_NO_CHANGE = object()
 
 
 def _owner_for_root_write(path: Path) -> tuple[int, int] | None:
@@ -63,6 +66,14 @@ class TuoguanStore:
                 return json.loads(path.read_text(encoding="utf-8-sig"))
             except (OSError, UnicodeError, json.JSONDecodeError) as exc:
                 raise TuoguanStoreError(f"Unable to read {name}: {exc}") from exc
+
+    def _read_json_unlocked(self, path: Path, name: str, fallback: Any) -> Any:
+        if not path.exists():
+            return deepcopy(fallback)
+        try:
+            return json.loads(path.read_text(encoding="utf-8-sig"))
+        except (OSError, UnicodeError, json.JSONDecodeError) as exc:
+            raise TuoguanStoreError(f"Unable to read {name}: {exc}") from exc
 
     def _backup_existing(self, path: Path) -> None:
         if not path.exists():
@@ -118,6 +129,31 @@ class TuoguanStore:
             except (OSError, TypeError, ValueError, PermissionError) as exc:
                 raise TuoguanStoreError(f"Unable to write {name}: {exc}") from exc
 
+    def update_json(self, name: str, fallback: Any, updater: Callable[[Any], Any]) -> Any:
+        """Read, modify, and atomically write one JSON resource under one process lock."""
+
+        from .write_guard import assert_business_write_allowed
+
+        path = self.path_for(name)
+        with self._lock:
+            try:
+                assert_business_write_allowed(self.data_dir, name)
+                with self._process_write_lock(path):
+                    current = self._read_json_unlocked(path, name, fallback)
+                    updated = updater(deepcopy(current))
+                    if updated is JSON_NO_CHANGE:
+                        return deepcopy(current)
+                    data = current if updated is None else updated
+                    path.parent.mkdir(parents=True, exist_ok=True)
+                    preserved_owner = _owner_for_root_write(path)
+                    self._backup_existing(path)
+                    atomic_json_write(path, data)
+                    if preserved_owner is not None:
+                        os.chown(path, *preserved_owner)
+                    return deepcopy(data)
+            except (OSError, TypeError, ValueError, PermissionError) as exc:
+                raise TuoguanStoreError(f"Unable to update {name}: {exc}") from exc
+
     def load_tasks(self) -> list[dict[str, Any]]:
         container = self.read_json("tasks.json", [])
         if isinstance(container, list):
@@ -129,12 +165,13 @@ class TuoguanStore:
         return deepcopy(tasks)
 
     def save_tasks(self, tasks: list[dict[str, Any]]) -> None:
-        existing = self.read_json("tasks.json", [])
-        if isinstance(existing, dict) and isinstance(existing.get("tasks"), list):
-            container = deepcopy(existing)
-            container["tasks"] = deepcopy(tasks)
-        elif isinstance(existing, list):
-            container = deepcopy(tasks)
-        else:
+        def replace(existing: Any) -> Any:
+            if isinstance(existing, dict) and isinstance(existing.get("tasks"), list):
+                container = deepcopy(existing)
+                container["tasks"] = deepcopy(tasks)
+                return container
+            if isinstance(existing, list):
+                return deepcopy(tasks)
             raise TuoguanStoreError("tasks.json must be a list or contain a tasks list")
-        self.write_json("tasks.json", container)
+
+        self.update_json("tasks.json", [], replace)

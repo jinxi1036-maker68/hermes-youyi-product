@@ -22,7 +22,7 @@ from .digital_employee_state import (
 )
 from .employee_identity import owner_user_id as _owner_user_id
 from .employee_identity import system_identity as _system_identity
-from .store import TuoguanStore
+from .store import JSON_NO_CHANGE, TuoguanStore
 from .tenant_context import current_tenant_id
 from .workstyle_profiles import daily_report_style_for_owner
 from .write_guard import assert_business_write_allowed, authorized_system_write
@@ -75,31 +75,36 @@ def queue_daily_boss_report(
             "outbox_item": row,
         }
 
-    outbox = actual_store.read_json(NOTIFICATION_OUTBOX_FILE, [])
-    if not isinstance(outbox, list):
-        outbox = []
-    existing = _find_outbox_item(outbox, notification_id)
-    if existing and str(existing.get("status") or "") in {"pending", "retry_pending", "sent"}:
-        return {
-            "ok": True,
-            "queued": False,
-            "idempotent_replay": True,
-            "notification_id": notification_id,
-            "existing_status": str(existing.get("status") or ""),
-            "report": report,
-        }
-
-    if existing:
-        existing.update(row)
-    else:
-        outbox.append(row)
-
     with authorized_system_write(
         actual_store.data_dir,
         job_name="daily_boss_report",
         allowed_files={NOTIFICATION_OUTBOX_FILE, DAILY_REPORT_RUNS_FILE},
     ) as auth:
-        actual_store.write_json(NOTIFICATION_OUTBOX_FILE, outbox[-2000:])
+        outbox_state: dict[str, Any] = {"queued": False, "existing_status": ""}
+
+        def upsert_daily_report(outbox: Any) -> Any:
+            outbox = outbox if isinstance(outbox, list) else []
+            existing = _find_outbox_item(outbox, notification_id)
+            if existing and str(existing.get("status") or "") in {"pending", "retry_pending", "sending", "sent"}:
+                outbox_state["existing_status"] = str(existing.get("status") or "")
+                return JSON_NO_CHANGE
+            if existing:
+                existing.update(row)
+            else:
+                outbox.append(row)
+            outbox_state["queued"] = True
+            return outbox[-2000:]
+
+        actual_store.update_json(NOTIFICATION_OUTBOX_FILE, [], upsert_daily_report)
+        if not outbox_state["queued"]:
+            return {
+                "ok": True,
+                "queued": False,
+                "idempotent_replay": True,
+                "notification_id": notification_id,
+                "existing_status": str(outbox_state.get("existing_status") or ""),
+                "report": report,
+            }
         _append_jsonl(
             actual_store,
             DAILY_REPORT_RUNS_FILE,
@@ -179,7 +184,7 @@ def sync_daily_report_delivery_status(
             "delivery_status": status,
             "status": status,
             "sent_at": fingerprint["sent_at"],
-            "failed_at": observed_at if status == "failed" else "",
+            "failed_at": observed_at if status in {"failed", "result_unknown"} else "",
             "message_id": fingerprint["message_id"],
             "last_error": fingerprint["last_error"],
             "observed_at": observed_at,

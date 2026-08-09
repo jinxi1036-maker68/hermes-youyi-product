@@ -66,7 +66,7 @@ from .self_evolution import (
     normalize_evolution_candidate,
     submit_self_evolution_event,
 )
-from .store import TuoguanStore
+from .store import JSON_NO_CHANGE, TuoguanStore
 from .tool_service import TuoguanToolService
 from .write_guard import authorized_system_write
 
@@ -1333,6 +1333,7 @@ def _materialize_owner_attention_candidates(
     stamp = timestamp.isoformat(timespec="seconds")
     day = timestamp.strftime("%Y%m%d")
     queued_count = 0
+    queued_rows: list[dict[str, Any]] = []
     for idx, candidate in enumerate(decision.get("boss_attention_candidates") or []):
         if queued_count >= 1:
             break
@@ -1394,6 +1395,7 @@ def _materialize_owner_attention_candidates(
             },
         }
         outbox.append(row)
+        queued_rows.append(deepcopy(row))
         existing_ids.add(notification_id)
         queued_count += 1
         attention_res = submit_attention_thread(
@@ -1426,8 +1428,21 @@ def _materialize_owner_attention_candidates(
             source_message_id=f"autonomous_employee_loop:{timestamp.strftime('%Y%m%d%H%M%S')}",
         )
         writes.append(_write_result("owner_attention_queued", res))
-    if queued_count:
-        store.write_json(_NOTIFICATION_OUTBOX_FILE, outbox[-2000:])
+    if queued_rows:
+        def append_queued(existing: Any) -> Any:
+            existing = existing if isinstance(existing, list) else []
+            ids = {str(item.get("id") or "") for item in existing if isinstance(item, dict)}
+            changed = False
+            for row in queued_rows:
+                row_id = str(row.get("id") or "")
+                if not row_id or row_id in ids:
+                    continue
+                existing.append(deepcopy(row))
+                ids.add(row_id)
+                changed = True
+            return existing[-2000:] if changed else JSON_NO_CHANGE
+
+        store.update_json(_NOTIFICATION_OUTBOX_FILE, [], append_queued)
     return writes
 
 
@@ -1526,6 +1541,7 @@ def _materialize_relationship_touch_candidates(
     owner_sent_today = _relationship_owner_sent_count(outbox, day)
     owner_queued = 0
     staff_queued_counts: dict[tuple[str, str], int] = {}
+    queued_rows: list[dict[str, Any]] = []
     for idx, candidate in enumerate(candidates[:6]):
         role = _limit(candidate.get("target_role"), 40)
         role_policy = policy.get(role) if isinstance(policy.get(role), dict) else {}
@@ -1575,7 +1591,7 @@ def _materialize_relationship_touch_candidates(
         notification_id = f"relationship_touch:{day}:{candidate_id}"
         if notification_id in existing_ids:
             continue
-        outbox.append({
+        row = {
             "id": notification_id,
             "status": "pending",
             "delivery_mode": "direct_wecom",
@@ -1602,7 +1618,9 @@ def _materialize_relationship_touch_candidates(
                 "changes_router": False,
                 "forces_next_action": False,
             },
-        })
+        }
+        outbox.append(row)
+        queued_rows.append(deepcopy(row))
         existing_ids.add(notification_id)
         if role == "boss":
             owner_queued += 1
@@ -1623,8 +1641,21 @@ def _materialize_relationship_touch_candidates(
             source_message_id=f"autonomous_employee_loop:{timestamp.strftime('%Y%m%d%H%M%S')}",
         )
         writes.append(_write_result("relationship_touch_queued", action_res))
-    if owner_queued or staff_queued_counts:
-        store.write_json(_NOTIFICATION_OUTBOX_FILE, outbox[-2000:])
+    if queued_rows:
+        def append_queued(existing: Any) -> Any:
+            existing = existing if isinstance(existing, list) else []
+            ids = {str(item.get("id") or "") for item in existing if isinstance(item, dict)}
+            changed = False
+            for row in queued_rows:
+                row_id = str(row.get("id") or "")
+                if not row_id or row_id in ids:
+                    continue
+                existing.append(deepcopy(row))
+                ids.add(row_id)
+                changed = True
+            return existing[-2000:] if changed else JSON_NO_CHANGE
+
+        store.update_json(_NOTIFICATION_OUTBOX_FILE, [], append_queued)
     return writes
 
 
