@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 from types import SimpleNamespace
+from datetime import datetime, timezone
 
 
 def _write_json(path: Path, name: str, payload) -> None:
@@ -91,3 +92,69 @@ def test_owner_attention_context_ignores_non_boss(tmp_path):
     )
 
     assert context == ""
+
+
+def test_recent_outbound_context_anchors_owner_what_does_it_mean(tmp_path):
+    from plugins.tuoguan_core.__init__ import _recent_owner_outbound_context
+    from plugins.tuoguan_core.store import TuoguanStore
+
+    now = datetime.now(timezone.utc).isoformat(timespec="seconds")
+    _write_json(
+        tmp_path,
+        "notification_outbox.json",
+        [
+            {
+                "id": "autonomous_owner_attention:20260809:goal:goal_9f25347346525253",
+                "notification_type": "autonomous_owner_attention",
+                "action": "owner_attention",
+                "status": "sent",
+                "recipient_user_id": "JinWenJie",
+                "sent_at": now,
+                "content": "金总，两个进度卡在同一个点：1. '她'是冯老师还是李老师？2. 沟通结果我直接看记录还是您告知？确认后我继续历史分析和准备材料。",
+            }
+        ],
+    )
+
+    context = _recent_owner_outbound_context(
+        TuoguanStore(tmp_path),
+        identity=SimpleNamespace(role="boss", canonical_user_id="JinWenJie", platform_user_id="JinWenJie"),
+        current_message="什么意思",
+    )
+
+    assert "【优益最近主动外发消息锚点】" in context
+    assert "老板本轮原话：什么意思" in context
+    assert "两个进度卡在同一个点" in context
+    assert "不要跳回旧会话" in context
+
+
+def test_recent_outbound_context_anchors_teacher_task_created_short_question(tmp_path):
+    from plugins.tuoguan_core.__init__ import _recent_owner_outbound_context
+    from plugins.tuoguan_core.store import TuoguanStore
+
+    now = datetime.now(timezone.utc).isoformat(timespec="seconds")
+    _write_json(
+        tmp_path,
+        "notification_outbox.json",
+        [
+            {
+                "id": "task_123:teacher:task_created",
+                "action": "task_created",
+                "status": "sent",
+                "role": "teacher",
+                "touser": "LiLaoShi",
+                "sent_at": now,
+                "content": "你收到一项新任务：今天放学前反馈小金沟通结果。请直接回复处理进展。",
+            }
+        ],
+    )
+
+    context = _recent_owner_outbound_context(
+        TuoguanStore(tmp_path),
+        identity=SimpleNamespace(role="teacher", canonical_user_id="LiLaoShi", platform_user_id="LiLaoShi"),
+        current_message="什么意思",
+    )
+
+    assert "【优益最近主动外发消息锚点】" in context
+    assert "老师本轮原话：什么意思" in context
+    assert "今天放学前反馈小金沟通结果" in context
+    assert "task_created" in context

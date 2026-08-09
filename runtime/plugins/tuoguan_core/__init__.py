@@ -177,10 +177,32 @@ def _open_owner_attention_context(store: TuoguanStore, *, identity: Any, current
     return "\n".join(lines)
 
 
-def _recent_owner_outbound_context(store: TuoguanStore, *, identity: Any, current_message: str = "") -> str:
-    """Recall recent proactive messages sent to the owner as conversation anchors."""
+_PROACTIVE_OUTBOUND_ANCHOR_TYPES = {
+    "autonomous_owner_attention",
+    "autonomous_daily_report",
+    "external_learning_report",
+    "relationship_touch",
+    "task_created",
+    "task_due",
+    "escalate_now",
+    "safety_created",
+    "safety_review_required_r1",
+    "safety_closed_teacher_feedback",
+    "corrective_business_reply",
+    "proactive_operations_guidance",
+}
 
-    if str(getattr(identity, "role", "") or "") != "boss":
+
+def _recent_owner_outbound_context(store: TuoguanStore, *, identity: Any, current_message: str = "") -> str:
+    """Recall recent proactive messages as conversation anchors for staff replies.
+
+    Kept under the historical owner-focused name because it is a private hook
+    already used by tests. The behavior is now role-neutral for boss, manager,
+    and teacher direct conversations.
+    """
+
+    role = str(getattr(identity, "role", "") or "")
+    if role not in {"boss", "manager", "teacher"}:
         return ""
     compact = "".join(str(current_message or "").split())
     if not compact:
@@ -189,15 +211,25 @@ def _recent_owner_outbound_context(store: TuoguanStore, *, identity: Any, curren
         "这里边", "这里面", "这里", "刚才", "上面", "那条", "这条",
         "你发", "发的", "推的", "汇报", "周报", "日报", "报告",
         "内容", "总结", "参考", "资料", "外部学习", "市场调研",
+        "什么意思", "啥意思", "什么情况", "没懂", "没看懂", "不懂",
+        "说清楚", "解释一下", "哪两个", "哪个", "指谁", "怎么回事",
     )
-    short_follow_up = len(compact) <= 24 and any(term in compact for term in ("总结", "内容", "这个", "这", "那", "嗯", "好"))
+    short_follow_up = len(compact) <= 24 and (
+        any(term in compact for term in ("总结", "内容", "这个", "这", "那", "嗯", "好", "什么意思", "啥意思", "什么", "不懂", "没懂", "解释", "哪个", "谁"))
+        or "?" in compact
+        or "？" in compact
+    )
     if not any(term in compact for term in anchor_terms) and not short_follow_up:
         return ""
 
     outbox = store.read_json("notification_outbox.json", [])
     if not isinstance(outbox, list):
-        return ""
-    owner_id = str(getattr(identity, "canonical_user_id", "") or "")
+        outbox = []
+    user_ids = {
+        str(getattr(identity, "canonical_user_id", "") or ""),
+        str(getattr(identity, "platform_user_id", "") or ""),
+    }
+    user_ids = {item for item in user_ids if item}
     now = datetime.now().astimezone()
     candidates: list[tuple[datetime, dict[str, Any]]] = []
     for item in outbox:
@@ -211,15 +243,11 @@ def _recent_owner_outbound_context(store: TuoguanStore, *, identity: Any, curren
             str(item.get("recipient_user_id") or ""),
             str(item.get("to_user_id") or ""),
         }
-        if owner_id and owner_id not in targets:
+        targets = {target for target in targets if target}
+        if user_ids and not (user_ids & targets):
             continue
-        notification_type = str(item.get("notification_type") or "")
-        if notification_type not in {
-            "external_learning_report",
-            "autonomous_daily_report",
-            "autonomous_owner_attention",
-            "relationship_touch",
-        }:
+        notification_type = str(item.get("notification_type") or item.get("action") or "")
+        if notification_type not in _PROACTIVE_OUTBOUND_ANCHOR_TYPES:
             continue
         sent_at = (
             _parse_iso_datetime(item.get("sent_at"))
@@ -230,29 +258,88 @@ def _recent_owner_outbound_context(store: TuoguanStore, *, identity: Any, curren
             continue
         if now - sent_at > timedelta(hours=3):
             continue
+        content = " ".join(str(item.get("content") or item.get("message") or item.get("text") or "").split())
+        if not content:
+            continue
         candidates.append((sent_at, item))
+    candidates.extend(_recent_outbound_history_candidates(store, user_ids=user_ids, now=now))
     if not candidates:
         return ""
     candidates.sort(key=lambda pair: pair[0], reverse=True)
+    role_label = {"boss": "老板", "manager": "店长", "teacher": "老师"}.get(role, "当前用户")
     lines = [
         "【优益最近主动外发消息锚点】",
-        "下面是小优最近主动发给老板的消息。它们只是当前对话衔接材料，不是 Router，也不替模型判断老板意图。",
-        f"老板本轮原话：{' '.join(str(current_message or '').split())[:800]}",
-        "如果老板说“这里边/刚才/上面/你发的/这条/内容/总结/周报/日报/报告”，请优先判断是否在追问下面最近一条主动消息。",
-        "如果相关：先围绕对应外发消息回答，不要跳回旧会话或旧工作项；如果需要查更完整来源，再由模型自主决定是否调用可信工具。",
-        "如果无关：把这些当背景材料，自然回答老板当前问题。",
+        f"下面是小优最近主动发给{role_label}的消息。它们只是当前对话衔接材料，不是 Router，也不替模型判断用户意图。",
+        f"{role_label}本轮原话：{' '.join(str(current_message or '').split())[:800]}",
+        "如果用户说“什么意思/啥意思/没懂/刚才/上面/你发的/这条/内容/总结/日报/任务/哪个/谁”，请优先判断是否在追问下面最近一条主动消息。",
+        "如果相关：先围绕对应外发消息解释清楚，不要跳回旧会话、旧偏好或旧工作项；如果需要查更完整来源，再由模型自主决定是否调用可信工具。",
+        "如果无关：把这些当背景材料，自然回答当前问题。",
     ]
+    seen: set[str] = set()
     for sent_at, item in candidates[:3]:
-        content = " ".join(str(item.get("content") or "").split())
+        content = " ".join(str(item.get("content") or item.get("message") or item.get("message_text") or "").split())
+        key = str(item.get("id") or item.get("message_id") or content[:120])
+        if key in seen:
+            continue
+        seen.add(key)
         lines.extend([
             f"- notification_id: {item.get('id', '')}",
-            f"  notification_type: {item.get('notification_type', '')}",
+            f"  notification_type: {item.get('notification_type') or item.get('action') or item.get('source') or ''}",
             f"  action: {item.get('action', '')}",
             f"  sent_at: {sent_at.isoformat(timespec='seconds')}",
             f"  summary: {str(item.get('summary') or '')[:300]}",
             f"  content_excerpt: {content[:1200]}",
         ])
     return "\n".join(lines)
+
+
+def _recent_outbound_history_candidates(
+    store: TuoguanStore,
+    *,
+    user_ids: set[str],
+    now: datetime,
+) -> list[tuple[datetime, dict[str, Any]]]:
+    """Fallback anchors from hidden system_push history when outbox is incomplete."""
+
+    path = store.path_for("message_history.jsonl")
+    if not path.exists():
+        return []
+    candidates: list[tuple[datetime, dict[str, Any]]] = []
+    try:
+        with path.open("r", encoding="utf-8-sig") as handle:
+            for line in handle:
+                try:
+                    item = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                if not isinstance(item, dict):
+                    continue
+                if str(item.get("direction") or "") != "outbound":
+                    continue
+                candidate_user_ids = {
+                    str(item.get("canonical_user_id") or ""),
+                    str(item.get("user_id") or ""),
+                }
+                candidate_user_ids = {value for value in candidate_user_ids if value}
+                if user_ids and not (user_ids & candidate_user_ids):
+                    continue
+                content = " ".join(str(item.get("message_text") or "").split())
+                if not content:
+                    continue
+                sent_at = _parse_iso_datetime(item.get("created_at"))
+                if sent_at is None or now - sent_at > timedelta(hours=3):
+                    continue
+                candidates.append((sent_at, {
+                    "id": item.get("id") or item.get("idempotency_key") or item.get("message_id") or "",
+                    "notification_type": item.get("source") or "message_history_outbound",
+                    "action": item.get("related_state_type") or "",
+                    "sent_at": item.get("created_at") or "",
+                    "content": content,
+                    "message_id": item.get("message_id") or "",
+                }))
+    except OSError:
+        return []
+    return candidates[-3:]
 
 
 def _term_boundary_context(store: TuoguanStore, *, raw_text: str, include_for_attention: bool = False) -> str:
