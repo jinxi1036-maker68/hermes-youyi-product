@@ -35,6 +35,7 @@ PROTECTED_BUSINESS_FILES = {
     "youyi_operating_model.json",
     "operational_facts.json",
     "operational_fact_candidates.jsonl",
+    "person_workstyle_events.jsonl",
     "institution_onboarding_state.json",
     "service_relations.json",
     "service_relation_candidates.jsonl",

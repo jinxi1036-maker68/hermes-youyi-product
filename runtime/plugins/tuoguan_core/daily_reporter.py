@@ -24,6 +24,7 @@ from .employee_identity import owner_user_id as _owner_user_id
 from .employee_identity import system_identity as _system_identity
 from .store import TuoguanStore
 from .tenant_context import current_tenant_id
+from .workstyle_profiles import daily_report_style_for_owner
 from .write_guard import assert_business_write_allowed, authorized_system_write
 
 DAILY_REPORT_RUNS_FILE = "daily_report_runs.jsonl"
@@ -212,11 +213,14 @@ def build_daily_boss_report(kind: str, *, store: TuoguanStore | None = None, now
     }
     proactivity_health = _proactivity_health(actual_store, timestamp)
     source_counts["proactivity_issue_count"] = len(proactivity_health)
+    owner_id = _owner_user_id(actual_store)
+    workstyle = daily_report_style_for_owner(actual_store, owner_id)
+    source_counts["workstyle_preference_count"] = len(workstyle.get("active_preferences") or [])
     if report_kind == "morning":
-        content = _render_morning_report(timestamp, items, waiting_items, open_attention, brief, source_counts, proactivity_health)
+        content = _render_morning_report(timestamp, items, waiting_items, open_attention, brief, source_counts, proactivity_health, workstyle)
         summary = "小优每日早间工作安排"
     else:
-        content = _render_evening_report(timestamp, items, waiting_items, open_attention, brief, source_counts, proactivity_health)
+        content = _render_evening_report(timestamp, items, waiting_items, open_attention, brief, source_counts, proactivity_health, workstyle)
         summary = "小优每日晚间工作日报"
     return {
         "ok": True,
@@ -240,28 +244,38 @@ def _render_morning_report(
     brief: dict[str, Any],
     source_counts: dict[str, int],
     proactivity_health: list[str],
+    workstyle: dict[str, Any],
 ) -> str:
     scorecard = brief.get("employee_scorecard") if isinstance(brief.get("employee_scorecard"), dict) else {}
     latest_review = scorecard.get("latest_review") if isinstance(scorecard.get("latest_review"), dict) else {}
+    report_items = _concise_report_items(
+        [
+            _first_or_default(
+                _owner_digest_lines(brief, latest_review, source_counts, purpose="morning"),
+                "目标进展：暂无新的目标证据；我先做事实巡检，有缺口再说明需要谁补事实。",
+            ),
+            _first_or_default(
+                _work_item_lines(items, purpose="morning"),
+                "今天先做：继续巡检活跃目标、机构认知缺口和记录覆盖。",
+            ),
+            _first_or_default(
+                _waiting_lines(waiting_items, open_attention),
+                "卡点：当前没有未解决提醒；发现关键缺口时，我会问事实归属人。",
+            ),
+            _first_or_default(
+                _tomorrow_lines(items, latest_review),
+                "下一步：把等待、证据和需要确认的人拆清楚，不把建议当结果。",
+            ),
+        ],
+        proactivity_health=proactivity_health,
+        max_items=_style_max_items(workstyle),
+    )
     lines = [
-        f"金总，早上好。我是小优，给你报一下今天的自主工作安排。时间：{timestamp.strftime('%Y-%m-%d %H:%M')}",
-        "",
-        "老板今天先看这句话：",
-        *_numbered(_owner_digest_lines(brief, latest_review, source_counts, purpose="morning"), empty="1. 目标进展：当前没有新的目标证据；我会先做事实巡检，有缺口再说明需要谁确认。"),
-        "",
-        "今天我会重点盯这几件事：",
-        *_numbered(_work_item_lines(items, purpose="morning"), empty="1. 暂无新的活跃工作事项；我会继续做只读巡检和事实缺口检查。"),
-        "",
-        "现在仍在等待或需要留意的地方：",
-        *_numbered(_waiting_lines(waiting_items, open_attention), empty="1. 当前没有未解决提醒；如果发现需要你确认的关键事实，我会按白天低频规则单独问你。"),
-        "",
-        "主动性健康：",
-        *_numbered(proactivity_health, empty="1. 过去24小时暂未发现主动汇报或主动外发异常；今天继续按日报和事实归属人提问规则推进。"),
-        "",
-        "今天的推进边界：我不会主动联系家长、不会批量派任务、不会改工资绩效权限；需要老师或店长补事实时，只问明确任务、记录、执行结果或运营事实。",
-        _source_line(source_counts),
+        f"金总，早上好，我是小优。今天重点：",
+        *_numbered(report_items, empty="1. 今天暂无新增材料，我会继续做事实巡检和卡点跟进。"),
+        _style_closing_line(workstyle),
     ]
-    return _limit_message("\n".join(lines), 2000)
+    return _limit_message("\n".join(lines), _style_limit(workstyle))
 
 
 def _render_evening_report(
@@ -272,36 +286,40 @@ def _render_evening_report(
     brief: dict[str, Any],
     source_counts: dict[str, int],
     proactivity_health: list[str],
+    workstyle: dict[str, Any],
 ) -> str:
     scorecard = brief.get("employee_scorecard") if isinstance(brief.get("employee_scorecard"), dict) else {}
     latest_review = scorecard.get("latest_review") if isinstance(scorecard.get("latest_review"), dict) else {}
     value = brief.get("value_progress_ledger") if isinstance(brief.get("value_progress_ledger"), dict) else {}
     value_entries = value.get("entries") if isinstance(value.get("entries"), list) else []
+    report_items = _concise_report_items(
+        [
+            _first_or_default(
+                _owner_digest_lines(brief, latest_review, source_counts, purpose="evening"),
+                "目标进展：今天没有新的可确认目标结果；我不会把等待状态写成完成。",
+            ),
+            _first_or_default(
+                _work_item_lines(items, purpose="evening"),
+                "工作状态：今天没有新的可确认业务推进记录。",
+            ),
+            _first_or_default(
+                _value_lines(value_entries, latest_review),
+                "价值证据：暂无新的可确认价值结果；继续按真实证据记录。",
+            ),
+            _first_or_default(
+                _waiting_lines(waiting_items, open_attention) or _tomorrow_lines(items, latest_review),
+                "明天先看：活跃目标、事实缺口、记录覆盖和老板待确认事项。",
+            ),
+        ],
+        proactivity_health=proactivity_health,
+        max_items=_style_max_items(workstyle),
+    )
     lines = [
-        f"金总，今晚给你交一下今天的工作日报。时间：{timestamp.strftime('%Y-%m-%d %H:%M')}",
-        "",
-        "老板先看结论：",
-        *_numbered(_owner_digest_lines(brief, latest_review, source_counts, purpose="evening"), empty="1. 目标进展：今天没有新的可确认目标结果；我不会把等待状态写成完成。"),
-        "",
-        "今天我确认看到的工作状态：",
-        *_numbered(_work_item_lines(items, purpose="evening"), empty="1. 今天没有新的可确认业务推进记录；我没有把等待状态写成完成。"),
-        "",
-        "今天的价值和证据：",
-        *_numbered(_value_lines(value_entries, latest_review), empty="1. 暂无新的可确认价值结果；我会继续按真实证据记录，不夸大归因。"),
-        "",
-        "仍然卡住或明天要继续看的事：",
-        *_numbered(_waiting_lines(waiting_items, open_attention), empty="1. 当前没有未解决提醒；明天我会继续检查活跃目标、事实缺口和结果未知动作。"),
-        "",
-        "明天优先安排：",
-        *_numbered(_tomorrow_lines(items, latest_review), empty="1. 继续巡检活跃目标、机构认知缺口、记录覆盖和老板待确认事项。"),
-        "",
-        "主动性健康：",
-        *_numbered(proactivity_health, empty="1. 过去24小时暂未发现主动汇报或主动外发异常；如果外发失败，我会留下失败状态而不是沉默。"),
-        "",
-        "边界确认：今晚不主动联系家长、不派任务、不改业务数据；老师/店长只在工作事实归属明确且频率允许时被低频询问。",
-        _source_line(source_counts),
+        "金总，今晚工作重点：",
+        *_numbered(report_items, empty="1. 今天暂无新增材料，我没有把等待状态写成完成。"),
+        _style_closing_line(workstyle),
     ]
-    return _limit_message("\n".join(lines), 2200)
+    return _limit_message("\n".join(lines), _style_limit(workstyle))
 
 
 def _proactivity_health(store: TuoguanStore, timestamp: datetime) -> list[str]:
@@ -504,6 +522,57 @@ def _tomorrow_lines(items: list[dict[str, Any]], latest_review: dict[str, Any]) 
             title = _pick_text(item, "title", "focus_key") or "工作项"
             lines.append(f"{title}：{next_action}")
     return lines[:4]
+
+
+def _first_or_default(lines: list[str], fallback: str) -> str:
+    for line in lines:
+        cleaned = _limit_text(str(line or ""), 160)
+        if cleaned:
+            return cleaned
+    return fallback
+
+
+def _concise_report_items(
+    candidates: list[str],
+    *,
+    proactivity_health: list[str],
+    max_items: int,
+) -> list[str]:
+    items: list[str] = []
+    seen: set[str] = set()
+    candidate_limit = max_items - 1 if proactivity_health else max_items
+    for candidate in candidates:
+        cleaned = _limit_text(candidate, 170)
+        key = "".join(cleaned.split())
+        if cleaned and key not in seen:
+            items.append(cleaned)
+            seen.add(key)
+        if len(items) >= max(2, candidate_limit):
+            break
+    if proactivity_health and len(items) < max_items:
+        items.append("异常：" + _limit_text(proactivity_health[0], 150))
+    return items[:max(3, max_items)]
+
+
+def _style_max_items(workstyle: dict[str, Any]) -> int:
+    try:
+        value = int(workstyle.get("max_items") or 5)
+    except (TypeError, ValueError):
+        value = 5
+    return max(3, min(value, 5))
+
+
+def _style_limit(workstyle: dict[str, Any]) -> int:
+    try:
+        value = int(workstyle.get("max_chars") or 700)
+    except (TypeError, ValueError):
+        value = 700
+    return max(420, min(value, 1200))
+
+
+def _style_closing_line(workstyle: dict[str, Any]) -> str:
+    closing = str(workstyle.get("closing_line") or "").strip()
+    return closing or "细节我已留档，需要我展开哪一项你直接说。"
 
 
 def _outbox_row(

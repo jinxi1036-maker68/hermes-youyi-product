@@ -56,6 +56,10 @@ from .operational_facts import (
     submit_operational_fact_candidate,
 )
 from .staff_directory import query_staff_directory as build_staff_directory_report
+from .workstyle_profiles import (
+    query_person_workstyle_profile as build_person_workstyle_profile,
+    submit_person_workstyle_preference as save_person_workstyle_preference,
+)
 from .digital_employee_state import (
     update_wakeup_request,
     submit_due_wakeup_candidate,
@@ -496,6 +500,7 @@ class TuoguanToolService:
             "withdraw_goal",
             "submit_operational_fact",
             "confirm_operational_fact",
+            "submit_person_workstyle_preference",
             "submit_service_relation_fact_candidate",
             "submit_profile_candidate",
             "submit_profile_candidate_correction",
@@ -2109,6 +2114,71 @@ class TuoguanToolService:
             limit=limit,
         )
         return self._ok("query_staff_directory", data=result, message=result.get("rendered_text", ""))
+
+    def query_person_workstyle_profile(
+        self,
+        *,
+        target_user_id: str = "",
+        target_role: str = "",
+        scope: str = "",
+        limit: int = 30,
+    ) -> dict[str, Any]:
+        denied = self._approved()
+        if denied:
+            return denied
+        if self.identity.role not in {"teacher", "manager", "boss"}:
+            return self._error("permission_denied", "当前账号不能查询服务方式档案。")
+        result = build_person_workstyle_profile(
+            self.store,
+            identity=self.identity,
+            target_user_id=target_user_id,
+            target_role=target_role,
+            scope=scope,
+            limit=limit,
+        )
+        if not result.get("ok"):
+            return self._error(str(result.get("error") or "workstyle_profile_unavailable"), str(result.get("message") or "服务方式档案查询失败。"))
+        return self._ok("query_person_workstyle_profile", data=result, message=result.get("rendered_text", ""))
+
+    def submit_person_workstyle_preference(
+        self,
+        *,
+        preference_type: str,
+        scope: str,
+        preference_text: str,
+        operation_id: str,
+        normalized_rule: str = "",
+        target_user_id: str = "",
+        target_name: str = "",
+        target_role: str = "",
+        source_text: str = "",
+    ) -> dict[str, Any]:
+        denied = self._approved()
+        if denied:
+            return denied
+        if self.identity.role not in {"teacher", "manager", "boss"}:
+            return self._error("permission_denied", "当前账号不能提交服务方式偏好。")
+
+        def execute() -> dict[str, Any]:
+            result = save_person_workstyle_preference(
+                self.store,
+                identity=self.identity,
+                preference_type=preference_type,
+                scope=scope,
+                preference_text=preference_text,
+                normalized_rule=normalized_rule,
+                target_user_id=target_user_id,
+                target_name=target_name,
+                target_role=target_role,
+                source_text=source_text,
+                operation_id=operation_id,
+            )
+            if not result.get("ok"):
+                return self._error(str(result.get("error") or "workstyle_preference_failed"), str(result.get("message") or "服务方式偏好没有保存成功。"))
+            data = {**result, "writeback_verified": bool(result.get("writeback_verified"))}
+            return self._ok("submit_person_workstyle_preference", data=data, message=result.get("rendered_text", ""))
+
+        return self._operation(operation_id, "submit_person_workstyle_preference", execute)
 
     def submit_operational_fact(
         self,

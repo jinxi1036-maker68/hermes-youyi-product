@@ -49,7 +49,7 @@ def test_tuoguan_core_does_not_register_pre_model_business_decision_hooks():
     assert {tool["name"] for tool in tools}
 
 
-def test_pre_llm_call_establishes_write_context_without_prompt_injection(tmp_path, monkeypatch):
+def test_pre_llm_call_establishes_write_context_with_workstyle_material_only(tmp_path, monkeypatch):
     import plugins.tuoguan_core as plugin
     from plugins.tuoguan_core.models import UserIdentity
     from plugins.tuoguan_core.runtime_foundation import clear_runtime_state, write_authorization_for
@@ -91,7 +91,10 @@ def test_pre_llm_call_establishes_write_context_without_prompt_injection(tmp_pat
         user_message="小赵今天作业完成得慢。",
     )
 
-    assert result is None
+    assert result is not None
+    assert "小优服务方式档案" in result["context"]
+    assert "当前人员的服务方式偏好" not in result["context"]
+    assert "当前轮写入规则" not in result["context"]
     assert write_authorization_for("teacher1", "record_student") is not None
 
 
@@ -139,9 +142,70 @@ def test_pre_llm_call_injects_narrow_rule_for_explicit_write(tmp_path, monkeypat
 
     assert result is not None
     assert "模型仍负责理解用户、判断是否追问、是否写入或是否先说明边界" in result["context"]
-    assert "如果要声明记录、修改、加扣分、创建、完成、确认、提交或上报已经真实发生" in result["context"]
+    assert "如果要声明记录、修改、加扣分、创建、完成、确认、提交、上报、保存偏好、记住工作方式已经真实发生" in result["context"]
     assert "不要根据历史里的" in result["context"]
     assert write_authorization_for("boss1", "change_summer_points") is not None
+
+
+def test_pre_llm_call_injects_workstyle_feedback_contract(tmp_path, monkeypatch):
+    import plugins.tuoguan_core as plugin
+    from plugins.tuoguan_core.models import UserIdentity
+    from plugins.tuoguan_core.runtime_foundation import clear_runtime_state, write_authorization_for
+    from plugins.tuoguan_core.store import TuoguanStore
+    from plugins.tuoguan_core.workstyle_profiles import submit_person_workstyle_preference
+
+    clear_runtime_state()
+    store = TuoguanStore(tmp_path)
+    identity = UserIdentity(
+        platform="wecom",
+        platform_user_id="boss1",
+        canonical_user_id="boss1",
+        person_name="金总",
+        role="boss",
+        approval_state="approved",
+    )
+    saved = submit_person_workstyle_preference(
+        store,
+        identity=identity,
+        preference_type="report_length",
+        scope="daily_report",
+        preference_text="晚报只说重点。",
+        normalized_rule="晚报只说重点。",
+        operation_id="pre-llm-workstyle-seed",
+    )
+    assert saved["ok"] is True
+
+    manual_context = tmp_path / "manual_context"
+    manual_context.mkdir()
+    (manual_context / "hermes_model_context_injection_allowlist_v1.json").write_text(
+        json.dumps(
+            {
+                "runtime_foundation": {"enabled": True},
+                "allowed_capability_cards": [],
+            }
+        ),
+        encoding="utf-8",
+    )
+    fake_router = SimpleNamespace(
+        store=store,
+        identities=SimpleNamespace(resolve=lambda *args, **kwargs: identity),
+    )
+    monkeypatch.setattr(plugin, "_router", lambda: fake_router)
+
+    result = plugin._on_pre_llm_call(
+        platform=Platform.WECOM_CALLBACK,
+        sender_id="wecom_callback:boss1",
+        session_id="session-workstyle",
+        turn_id="turn-workstyle",
+        user_message="以后晚报只说重点，别发一大堆。",
+    )
+
+    assert result is not None
+    assert "小优服务方式档案" in result["context"]
+    assert "日报/汇报长短：晚报只说重点。" in result["context"]
+    assert "tuoguan_submit_person_workstyle_preference" in result["context"]
+    assert "未看到工具 ok=true 且 writeback_verified=true 前，不得说" in result["context"]
+    assert write_authorization_for("boss1", "submit_person_workstyle_preference") is not None
 
 
 def test_pre_llm_call_injects_boundary_for_ambiguous_retry(tmp_path, monkeypatch):

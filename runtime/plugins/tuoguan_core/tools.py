@@ -367,6 +367,33 @@ TUOGUAN_QUERY_STAFF_DIRECTORY_SCHEMA = _schema(
     ["user_id"],
 )
 
+TUOGUAN_QUERY_PERSON_WORKSTYLE_PROFILE_SCHEMA = _schema(
+    "只读查询某个人希望小优怎样服务自己，包括汇报长短、语气、提醒时间、跟进方式、细节程度、格式偏好和不要怎样说。档案只影响小优的服务方式，不改变权限、制度、工资、家长外发、正式任务或事实判断。",
+    _identity_props({
+        "target_user_id": {"type": "string", "description": "可选，默认查询当前会话人员；老板可查其他人员。"},
+        "target_role": {"type": "string", "enum": ["", "boss", "manager", "teacher", "staff"], "default": "", "description": "可选，目标人员角色。"},
+        "scope": {"type": "string", "enum": ["", "daily_report", "direct_reply", "task_followup", "proactive_question", "teacher_support", "manager_support", "all_communication"], "default": "", "description": "可选，偏好适用场景。"},
+        "limit": {"type": "integer", "default": 30, "description": "最多返回偏好条数。"},
+    }),
+    ["user_id"],
+)
+
+TUOGUAN_SUBMIT_PERSON_WORKSTYLE_PREFERENCE_SCHEMA = _schema(
+    "保存低风险个人服务方式偏好，例如更短汇报、少说过程、五点后提醒、语气更直接、只列重点。该工具只保存工作方式，不改权限、制度、工资、家长外发、数据删除或正式任务；工具返回 ok=true 且 writeback_verified=true 后才可表达已经保存。",
+    _identity_props({
+        "preference_type": {"type": "string", "enum": ["report_length", "tone", "reminder_time", "followup_style", "detail_level", "format", "avoidance", "positive_preference", "other_low_risk"], "description": "偏好类型。"},
+        "scope": {"type": "string", "enum": ["daily_report", "direct_reply", "task_followup", "proactive_question", "teacher_support", "manager_support", "all_communication"], "description": "偏好适用场景。"},
+        "preference_text": {"type": "string", "description": "用户明确表达的偏好内容，保留原意。"},
+        "normalized_rule": {"type": "string", "description": "可选，将偏好整理成简短规则；不得加入用户没有表达的事实。"},
+        "target_user_id": {"type": "string", "description": "可选，默认保存到当前会话人员。"},
+        "target_name": {"type": "string", "description": "可选，目标人员显示名。"},
+        "target_role": {"type": "string", "enum": ["", "boss", "manager", "teacher", "staff"], "default": "", "description": "可选，目标人员角色。"},
+        "source_text": {"type": "string", "description": "用户原话，不得改写成制度。"},
+        "operation_id": {"type": "string", "description": "使用当前消息 id 作为幂等键。"},
+    }),
+    ["user_id", "preference_type", "scope", "preference_text", "operation_id"],
+)
+
 TUOGUAN_SUBMIT_OPERATIONAL_FACT_SCHEMA = _schema(
     "把用户明确说出的机构运营事实保存为候选或已确认事实，带来源和范围。适合模型在问清缺口后记录答案；不得保存模型推断为已确认事实。",
     _identity_props({
@@ -1064,6 +1091,8 @@ TOOLS = (
     ("tuoguan_query_institution_onboarding_gaps", TUOGUAN_QUERY_INSTITUTION_ONBOARDING_GAPS_SCHEMA, _handler("query_institution_onboarding_gaps")),
     ("tuoguan_query_operational_facts", TUOGUAN_QUERY_OPERATIONAL_FACTS_SCHEMA, _handler("query_operational_facts")),
     ("tuoguan_query_staff_directory", TUOGUAN_QUERY_STAFF_DIRECTORY_SCHEMA, _handler("query_staff_directory")),
+    ("tuoguan_query_person_workstyle_profile", TUOGUAN_QUERY_PERSON_WORKSTYLE_PROFILE_SCHEMA, _handler("query_person_workstyle_profile")),
+    ("tuoguan_submit_person_workstyle_preference", TUOGUAN_SUBMIT_PERSON_WORKSTYLE_PREFERENCE_SCHEMA, _handler("submit_person_workstyle_preference")),
     ("tuoguan_submit_operational_fact", TUOGUAN_SUBMIT_OPERATIONAL_FACT_SCHEMA, _handler("submit_operational_fact")),
     ("tuoguan_confirm_operational_fact", TUOGUAN_CONFIRM_OPERATIONAL_FACT_SCHEMA, _handler("confirm_operational_fact")),
     ("tuoguan_query_student_service_relations", TUOGUAN_QUERY_STUDENT_SERVICE_RELATIONS_SCHEMA, _handler("query_student_service_relations")),

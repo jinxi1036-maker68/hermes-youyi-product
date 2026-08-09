@@ -320,6 +320,21 @@ def _public_identity_context(store: TuoguanStore) -> str:
     return ""
 
 
+def _workstyle_context(store: TuoguanStore, *, identity: Any, raw_text: str) -> str:
+    try:
+        from .workstyle_profiles import workstyle_context_for_user
+
+        return workstyle_context_for_user(
+            store,
+            identity=identity,
+            scope="",
+            raw_text=raw_text,
+        )
+    except Exception:
+        logger.exception("tuoguan_core failed to recall person workstyle context")
+        return ""
+
+
 def _record_owner_inbound_fact(
     store: TuoguanStore,
     *,
@@ -1133,6 +1148,17 @@ def _on_pre_llm_call(**kwargs: Any) -> dict[str, str] | None:
             context_parts.insert(0, identity_context)
     except Exception:
         logger.exception("tuoguan_core failed to recall public identity context")
+    try:
+        if "identity" in locals():
+            workstyle_context = _workstyle_context(
+                _router().store,
+                identity=identity,
+                raw_text=raw_text,
+            )
+            if workstyle_context:
+                context_parts.append(workstyle_context)
+    except Exception:
+        logger.exception("tuoguan_core failed to append workstyle context")
     compact_raw = "".join(raw_text.split())
     ambiguous_retry = compact_raw in {
         "你再试一下",
@@ -1153,6 +1179,7 @@ def _on_pre_llm_call(**kwargs: Any) -> dict[str, str] | None:
             "加", "扣", "减", "积分", "兑换", "拍卖",
             "记录", "登记", "创建", "新建", "完成任务", "更新任务",
             "确认", "提交", "上报", "修改", "改成", "设为",
+            "记住", "以后按", "以后就按", "工作方式", "偏好", "汇报格式",
         )
     ) and not asks_how_to_confirm
     if ambiguous_retry:
@@ -1166,7 +1193,7 @@ def _on_pre_llm_call(**kwargs: Any) -> dict[str, str] | None:
             "【优益当前轮写入规则】如果用户本轮明确要求记录、修改、加扣分、创建、完成、确认、提交或上报，"
             "必须调用对应 tuoguan_ 可信工具，以本轮工具结果为唯一执行依据。"
             "模型仍负责理解用户、判断是否追问、是否写入或是否先说明边界；系统只负责权限、审计、幂等和写后核验。"
-            "如果要声明记录、修改、加扣分、创建、完成、确认、提交或上报已经真实发生，必须先看到本轮可信工具返回成功。"
+            "如果要声明记录、修改、加扣分、创建、完成、确认、提交、上报、保存偏好、记住工作方式已经真实发生，必须先看到本轮可信工具返回成功。"
             "不要根据历史里的“写入被拦截/配置未生效/所有写入不能用”等旧结论直接拒绝或声称失败；"
             "只有本轮工具返回 ok=false 时，才可以说明本轮未成功。"
             "写入成功必须来自工具 ok=true 且 writeback_verified=true；不要伪造成功。"

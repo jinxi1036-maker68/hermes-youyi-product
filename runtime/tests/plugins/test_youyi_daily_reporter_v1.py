@@ -68,9 +68,12 @@ def test_morning_report_queues_boss_only_outbox_item(tmp_path):
     assert item["touser"] == "boss1"
     assert item["action"] == "daily_morning_report"
     assert "早上好" in item["content"]
-    assert "今天的自主工作安排" in item["content"]
-    assert "老板今天先看这句话" in item["content"]
+    assert "今天重点" in item["content"]
     assert "目标进展" in item["content"]
+    assert "细节我已留档，需要我展开哪一项你直接说。" in item["content"]
+    assert "推进边界" not in item["content"]
+    assert "材料来源" not in item["content"]
+    assert len(item["content"]) <= 700
     assert item["auto_effects"]["sends_teacher_messages"] is False
     assert item["auto_effects"]["sends_parent_messages"] is False
     assert item["auto_effects"]["forces_next_action"] is False
@@ -113,12 +116,54 @@ def test_evening_report_does_not_claim_waiting_as_completion(tmp_path):
     result = build_daily_boss_report("evening", store=store, now=datetime(2026, 7, 30, 21, 0, tzinfo=cn_tz))
 
     assert result["ok"] is True
-    assert "今晚给你交一下今天的工作日报" in result["content"]
-    assert "老板先看结论" in result["content"]
+    assert "今晚工作重点" in result["content"]
     assert "目标进展" in result["content"]
     assert "等待老板确认" in result["content"]
     assert "没有把等待状态写成完成" in result["content"] or "等待" in result["content"]
+    assert "细节我已留档，需要我展开哪一项你直接说。" in result["content"]
+    assert "边界确认" not in result["content"]
+    assert "材料来源" not in result["content"]
+    assert len(result["content"]) <= 700
     assert result["auto_effects"]["changes_salary"] is False
+
+
+def test_owner_daily_report_applies_saved_concise_workstyle(tmp_path):
+    from plugins.tuoguan_core.daily_reporter import build_daily_boss_report
+    from plugins.tuoguan_core.models import UserIdentity
+    from plugins.tuoguan_core.workstyle_profiles import submit_person_workstyle_preference
+    from plugins.tuoguan_core.write_guard import authorized_system_write
+
+    store = _seed_store(tmp_path)
+    identity = UserIdentity(
+        platform="wecom",
+        platform_user_id="boss1",
+        canonical_user_id="boss1",
+        person_name="金总",
+        role="boss",
+        approval_state="approved",
+    )
+    with authorized_system_write(
+        store.data_dir,
+        job_name="test_owner_workstyle",
+        allowed_files={"person_workstyle_events.jsonl"},
+    ):
+        saved = submit_person_workstyle_preference(
+            store,
+            identity=identity,
+            preference_type="report_length",
+            scope="daily_report",
+            preference_text="以后日报只保留三条重点。",
+            normalized_rule="日报只保留三条重点。",
+            operation_id="daily-style-test-1",
+        )
+
+    assert saved["ok"] is True
+    cn_tz = timezone(timedelta(hours=8))
+    result = build_daily_boss_report("evening", store=store, now=datetime(2026, 7, 30, 21, 0, tzinfo=cn_tz))
+
+    numbered_lines = [line for line in result["content"].splitlines() if line[:2] in {"1.", "2.", "3.", "4.", "5."}]
+    assert len(numbered_lines) <= 3
+    assert len(result["content"]) <= 520
 
 
 def test_daily_report_drain_bypasses_active_conversation_quiet_period(tmp_path, monkeypatch):
@@ -126,6 +171,7 @@ def test_daily_report_drain_bypasses_active_conversation_quiet_period(tmp_path, 
 
     cn_tz = timezone(timedelta(hours=8))
     now = datetime.now().astimezone()
+    today = now.strftime("%Y%m%d")
     monkeypatch.setenv("HERMES_TUOGUAN_DATA_DIR", str(tmp_path))
     _write_json(tmp_path, "write_guard_config.json", {"enabled": True})
     _write_json(
@@ -133,7 +179,7 @@ def test_daily_report_drain_bypasses_active_conversation_quiet_period(tmp_path, 
         "notification_outbox.json",
         [
             {
-                "id": "autonomous_daily_report:20260808:evening",
+                "id": f"autonomous_daily_report:{today}:evening",
                 "status": "pending",
                 "delivery_mode": "direct_wecom",
                 "notification_type": "autonomous_daily_report",
@@ -143,7 +189,7 @@ def test_daily_report_drain_bypasses_active_conversation_quiet_period(tmp_path, 
                 "touser": "boss1",
                 "content": "金总，今晚给你交一下今天的工作日报。",
                 "summary": "小优每日晚间工作日报",
-                "created_at": datetime(2026, 8, 8, 21, 0, tzinfo=cn_tz).isoformat(timespec="seconds"),
+                "created_at": now.astimezone(cn_tz).isoformat(timespec="seconds"),
                 "attempt_count": 0,
             }
         ],
@@ -158,7 +204,7 @@ def test_daily_report_drain_bypasses_active_conversation_quiet_period(tmp_path, 
     class Adapter:
         async def send(self, target, content, metadata=None):
             assert target == "boss1"
-            assert metadata["idempotency_key"] == "autonomous_daily_report:20260808:evening"
+            assert metadata["idempotency_key"] == f"autonomous_daily_report:{today}:evening"
             return Result()
 
     try:
