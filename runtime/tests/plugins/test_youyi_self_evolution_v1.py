@@ -194,6 +194,22 @@ def test_english_high_risk_terms_are_not_low_risk_or_context_candidates(tmp_path
     assert brief["next_day_context"] == []
 
 
+def test_owner_feedback_source_does_not_match_fee_high_risk_term():
+    from plugins.tuoguan_core.self_evolution import classify_evolution_risk, normalize_evolution_candidate
+
+    summary = "昨天老板嫌晚报太长，今天日报只放重点和异常，不展开过程。"
+    evidence = [{"source": "owner_feedback"}]
+
+    assert classify_evolution_risk(candidate_type="self_correction", summary=summary, evidence=evidence) == "low"
+    candidate = normalize_evolution_candidate({
+        "candidate_type": "self_correction",
+        "summary": summary,
+        "evidence": evidence,
+    })
+    assert candidate["risk_level"] == "low"
+    assert candidate["status"] == "ready_for_application"
+
+
 def test_night_employee_loop_materializes_evolution_candidate_without_outbox(tmp_path):
     from plugins.tuoguan_core.autonomous_employee_loop import build_employee_loop_materials, run_autonomous_employee_loop
     from plugins.tuoguan_core.self_evolution import conversation_evolution_context_for_user

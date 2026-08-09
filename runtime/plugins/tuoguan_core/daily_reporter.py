@@ -22,6 +22,7 @@ from .digital_employee_state import (
 )
 from .employee_identity import owner_user_id as _owner_user_id
 from .employee_identity import system_identity as _system_identity
+from .self_evolution import build_self_evolution_brief
 from .store import JSON_NO_CHANGE, TuoguanStore
 from .tenant_context import current_tenant_id
 from .workstyle_profiles import daily_report_style_for_owner
@@ -204,6 +205,7 @@ def build_daily_boss_report(kind: str, *, store: TuoguanStore | None = None, now
     identity = _system_identity()
     work = query_hermes_work_items(actual_store, identity=identity, include_closed=False, limit=10)
     brief = query_autonomous_work_brief(actual_store, identity=identity, limit=10)
+    self_evolution = build_self_evolution_brief(actual_store, identity=identity, limit=6)
     attention = query_attention_threads(actual_store, identity=identity, include_closed=False, limit=5)
     items = work.get("items") if isinstance(work.get("items"), list) else []
     waiting_items = [item for item in items if str(item.get("status") or "") == "waiting"]
@@ -218,14 +220,16 @@ def build_daily_boss_report(kind: str, *, store: TuoguanStore | None = None, now
     }
     proactivity_health = _proactivity_health(actual_store, timestamp)
     source_counts["proactivity_issue_count"] = len(proactivity_health)
+    source_counts["self_evolution_next_day_count"] = len(self_evolution.get("next_day_context") or [])
+    source_counts["self_evolution_review_queue_count"] = int(self_evolution.get("review_queue_count") or 0)
     owner_id = _owner_user_id(actual_store)
     workstyle = daily_report_style_for_owner(actual_store, owner_id)
     source_counts["workstyle_preference_count"] = len(workstyle.get("active_preferences") or [])
     if report_kind == "morning":
-        content = _render_morning_report(timestamp, items, waiting_items, open_attention, brief, source_counts, proactivity_health, workstyle)
+        content = _render_morning_report(timestamp, items, waiting_items, open_attention, brief, self_evolution, source_counts, proactivity_health, workstyle)
         summary = "小优每日早间工作安排"
     else:
-        content = _render_evening_report(timestamp, items, waiting_items, open_attention, brief, source_counts, proactivity_health, workstyle)
+        content = _render_evening_report(timestamp, items, waiting_items, open_attention, brief, self_evolution, source_counts, proactivity_health, workstyle)
         summary = "小优每日晚间工作日报"
     return {
         "ok": True,
@@ -247,31 +251,36 @@ def _render_morning_report(
     waiting_items: list[dict[str, Any]],
     open_attention: list[dict[str, Any]],
     brief: dict[str, Any],
+    self_evolution: dict[str, Any],
     source_counts: dict[str, int],
     proactivity_health: list[str],
     workstyle: dict[str, Any],
 ) -> str:
     scorecard = brief.get("employee_scorecard") if isinstance(brief.get("employee_scorecard"), dict) else {}
     latest_review = scorecard.get("latest_review") if isinstance(scorecard.get("latest_review"), dict) else {}
+    candidate_lines = [
+        _first_or_default(
+            _owner_digest_lines(brief, latest_review, source_counts, purpose="morning"),
+            "目标进展：暂无新的目标证据；我先做事实巡检，有缺口再说明需要谁补事实。",
+        ),
+        _first_or_default(
+            _work_item_lines(items, purpose="morning"),
+            "今天先做：继续巡检活跃目标、机构认知缺口和记录覆盖。",
+        ),
+        _first_or_default(
+            _waiting_lines(waiting_items, open_attention),
+            "卡点：当前没有未解决提醒；发现关键缺口时，我会问事实归属人。",
+        ),
+        _first_or_default(
+            _tomorrow_lines(items, latest_review),
+            "下一步：把等待、证据和需要确认的人拆清楚，不把建议当结果。",
+        ),
+    ]
+    evolution_lines = _self_evolution_lines(self_evolution, purpose="morning")
+    if evolution_lines:
+        candidate_lines.insert(1, evolution_lines[0])
     report_items = _concise_report_items(
-        [
-            _first_or_default(
-                _owner_digest_lines(brief, latest_review, source_counts, purpose="morning"),
-                "目标进展：暂无新的目标证据；我先做事实巡检，有缺口再说明需要谁补事实。",
-            ),
-            _first_or_default(
-                _work_item_lines(items, purpose="morning"),
-                "今天先做：继续巡检活跃目标、机构认知缺口和记录覆盖。",
-            ),
-            _first_or_default(
-                _waiting_lines(waiting_items, open_attention),
-                "卡点：当前没有未解决提醒；发现关键缺口时，我会问事实归属人。",
-            ),
-            _first_or_default(
-                _tomorrow_lines(items, latest_review),
-                "下一步：把等待、证据和需要确认的人拆清楚，不把建议当结果。",
-            ),
-        ],
+        candidate_lines,
         proactivity_health=proactivity_health,
         max_items=_style_max_items(workstyle),
     )
@@ -289,6 +298,7 @@ def _render_evening_report(
     waiting_items: list[dict[str, Any]],
     open_attention: list[dict[str, Any]],
     brief: dict[str, Any],
+    self_evolution: dict[str, Any],
     source_counts: dict[str, int],
     proactivity_health: list[str],
     workstyle: dict[str, Any],
@@ -297,25 +307,29 @@ def _render_evening_report(
     latest_review = scorecard.get("latest_review") if isinstance(scorecard.get("latest_review"), dict) else {}
     value = brief.get("value_progress_ledger") if isinstance(brief.get("value_progress_ledger"), dict) else {}
     value_entries = value.get("entries") if isinstance(value.get("entries"), list) else []
+    candidate_lines = [
+        _first_or_default(
+            _owner_digest_lines(brief, latest_review, source_counts, purpose="evening"),
+            "目标进展：今天没有新的可确认目标结果；我不会把等待状态写成完成。",
+        ),
+        _first_or_default(
+            _work_item_lines(items, purpose="evening"),
+            "工作状态：今天没有新的可确认业务推进记录。",
+        ),
+        _first_or_default(
+            _value_lines(value_entries, latest_review),
+            "价值证据：暂无新的可确认价值结果；继续按真实证据记录。",
+        ),
+        _first_or_default(
+            _waiting_lines(waiting_items, open_attention) or _tomorrow_lines(items, latest_review),
+            "明天先看：活跃目标、事实缺口、记录覆盖和老板待确认事项。",
+        ),
+    ]
+    evolution_lines = _self_evolution_lines(self_evolution, purpose="evening")
+    if evolution_lines:
+        candidate_lines.insert(1, evolution_lines[0])
     report_items = _concise_report_items(
-        [
-            _first_or_default(
-                _owner_digest_lines(brief, latest_review, source_counts, purpose="evening"),
-                "目标进展：今天没有新的可确认目标结果；我不会把等待状态写成完成。",
-            ),
-            _first_or_default(
-                _work_item_lines(items, purpose="evening"),
-                "工作状态：今天没有新的可确认业务推进记录。",
-            ),
-            _first_or_default(
-                _value_lines(value_entries, latest_review),
-                "价值证据：暂无新的可确认价值结果；继续按真实证据记录。",
-            ),
-            _first_or_default(
-                _waiting_lines(waiting_items, open_attention) or _tomorrow_lines(items, latest_review),
-                "明天先看：活跃目标、事实缺口、记录覆盖和老板待确认事项。",
-            ),
-        ],
+        candidate_lines,
         proactivity_health=proactivity_health,
         max_items=_style_max_items(workstyle),
     )
@@ -527,6 +541,24 @@ def _tomorrow_lines(items: list[dict[str, Any]], latest_review: dict[str, Any]) 
             title = _pick_text(item, "title", "focus_key") or "工作项"
             lines.append(f"{title}：{next_action}")
     return lines[:4]
+
+
+def _self_evolution_lines(brief: dict[str, Any], *, purpose: str) -> list[str]:
+    if not isinstance(brief, dict):
+        return []
+    next_context = [
+        _limit_text(str(item or ""), 130)
+        for item in (brief.get("next_day_context") or [])
+        if str(item or "").strip()
+    ]
+    review_count = int(brief.get("review_queue_count") or 0)
+    lines: list[str] = []
+    if next_context:
+        prefix = "今天带入" if purpose == "morning" else "复盘进化"
+        lines.append(f"{prefix}：{next_context[0]}")
+    if purpose == "evening" and review_count > 0:
+        lines.append(f"待确认进化：{review_count} 条中高风险候选只留档，未自动生效。")
+    return lines[:2]
 
 
 def _first_or_default(lines: list[str], fallback: str) -> str:

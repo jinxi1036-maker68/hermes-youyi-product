@@ -12,6 +12,7 @@ from copy import deepcopy
 from datetime import datetime
 import hashlib
 import json
+import re
 import uuid
 from typing import Any
 
@@ -244,14 +245,28 @@ def classify_evolution_risk(
             proposed_effect,
         )
     )
-    compact = "".join(text.split()).lower()
-    if any("".join(term.split()).lower() in compact for term in HIGH_RISK_TERMS):
+    if any(_has_high_risk_term(text, term) for term in HIGH_RISK_TERMS):
         return "high"
     if candidate_type in MEDIUM_RISK_TYPES:
         return "medium"
     if candidate_type in LOW_RISK_TYPES:
         return "low"
     return "medium"
+
+
+def _has_high_risk_term(text: str, term: str) -> bool:
+    raw = str(text or "").lower()
+    raw_term = str(term or "").lower().strip()
+    if not raw_term:
+        return False
+    if raw_term.isascii():
+        if " " in raw_term:
+            compact_text = re.sub(r"[^a-z0-9]+", "", raw)
+            compact_term = re.sub(r"[^a-z0-9]+", "", raw_term)
+            return bool(compact_term and compact_term in compact_text)
+        return re.search(rf"(?<![a-z0-9]){re.escape(raw_term)}(?![a-z0-9])", raw) is not None
+    compact = "".join(raw.split())
+    return "".join(raw_term.split()) in compact
 
 
 def submit_self_evolution_event(
