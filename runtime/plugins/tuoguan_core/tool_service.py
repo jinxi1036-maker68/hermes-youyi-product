@@ -29,6 +29,7 @@ from .summer_records import save_summer_lesson_record
 from .store import JSON_NO_CHANGE, TuoguanStore, TuoguanStoreError
 from .summer_points import change_points, query_points_ranking, query_student_points
 from .tasks import apply_task_reply, closure_missing_fields, current_task_for_user
+from .temporal_grounding import parse_business_due_at
 from .youyi_batch_capabilities import (
     create_assigned_task,
     create_trial_lead,
@@ -425,6 +426,7 @@ class TuoguanToolService:
             active[user_id] = {
                 "user_id": user_id,
                 "task_id": task_id,
+                "task_title": str(task.get("title") or ""),
                 "student_id": str(task.get("student_id") or task.get("student_name") or ""),
                 "student_name": str(task.get("student_name") or ""),
                 "task_type": str(task.get("type") or "manual_assignment"),
@@ -433,6 +435,9 @@ class TuoguanToolService:
                 "expires_at": expires_at,
                 "candidate_task_ids": [],
                 "source": "assigned_task_created",
+                "owner_user_id": str(task.get("created_by") or ""),
+                "expected_report_at": str(task.get("due_at") or ""),
+                "original_owner_text": str(task.get("source_text") or task.get("title") or ""),
             }
             return active
 
@@ -450,6 +455,9 @@ class TuoguanToolService:
                 "trigger_words": ["继续", "开始", "处理", "1", "开始下一个", "处理下一个"],
                 "created_at": started_at,
                 "expires_at": expires_at,
+                "owner_user_id": str(task.get("created_by") or ""),
+                "expected_report_at": str(task.get("due_at") or ""),
+                "original_owner_text": str(task.get("source_text") or task.get("title") or ""),
             }
             return pending
 
@@ -475,16 +483,7 @@ class TuoguanToolService:
 
     @staticmethod
     def _relative_due_at(text: str) -> str:
-        compact = "".join(str(text or "").split())
-        match = re.search(r"(\d+)分钟后", compact)
-        minutes = int(match.group(1)) if match else 0
-        if not minutes:
-            chinese = {"一": 1, "两": 2, "二": 2, "三": 3, "四": 4, "五": 5, "十": 10}
-            match = re.search(r"([一两二三四五十])分钟后", compact)
-            minutes = chinese.get(match.group(1), 0) if match else 0
-        if minutes <= 0:
-            return ""
-        return (datetime.now().astimezone() + timedelta(minutes=minutes)).isoformat(timespec="seconds")
+        return parse_business_due_at(text, allow_default=False)
 
     def _operation(
         self,

@@ -15,6 +15,7 @@ from typing import Any
 from .models import RouteResult
 from .store import JSON_NO_CHANGE, TuoguanStore, TuoguanStoreError
 from .tenant_context import current_tenant_id
+from .temporal_grounding import build_temporal_grounding_context
 from .digital_employee_state import (
     ATTENTION_THREADS_FILE,
     BUSINESS_EVENTS_FILE,
@@ -1369,6 +1370,20 @@ def _on_pre_llm_call(**kwargs: Any) -> dict[str, str] | None:
         logger.exception("tuoguan_core failed to recall public identity context")
     try:
         if "identity" in locals():
+            temporal_context = build_temporal_grounding_context(
+                _router().store,
+                identity=identity,
+                raw_text=raw_text,
+                session_id=session_id,
+                chat_id=chat_id,
+                platform=platform,
+            )
+            if temporal_context:
+                context_parts.append(temporal_context)
+    except Exception:
+        logger.exception("tuoguan_core failed to append temporal grounding context")
+    try:
+        if "identity" in locals():
             self_evolution_context = _self_evolution_context(
                 _router().store,
                 identity=identity,
@@ -1412,6 +1427,21 @@ def _on_pre_llm_call(**kwargs: Any) -> dict[str, str] | None:
         "可以",
     }
     asks_how_to_confirm = any(term in compact_raw for term in ("怎么确认", "如何确认", "需要我怎么确认", "你需要我怎么确认"))
+    task_completion_like = (
+        compact_raw in {
+            "这个任务已经完成",
+            "这个任务完成了",
+            "刚才那个任务完成了",
+            "任务已经完成",
+            "任务完成了",
+            "这个任务已经处理了",
+            "任务已经处理了",
+            "已经处理了",
+            "完成了",
+            "处理完了",
+        }
+        or ("任务" in compact_raw and any(term in compact_raw for term in ("完成", "处理完", "闭环", "关掉", "关闭")))
+    )
     write_like = any(
         term in compact_raw
         for term in (
@@ -1421,6 +1451,7 @@ def _on_pre_llm_call(**kwargs: Any) -> dict[str, str] | None:
             "记住", "以后按", "以后就按", "工作方式", "偏好", "汇报格式",
         )
     ) and not asks_how_to_confirm
+    write_like = write_like or (task_completion_like and not asks_how_to_confirm)
     if ambiguous_retry:
         context_parts.append(
             "【优益当前轮写入边界】用户本轮没有重新说明明确的写入对象、动作和内容，"

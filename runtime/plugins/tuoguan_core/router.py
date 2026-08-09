@@ -142,6 +142,7 @@ from .staff_config import (
 )
 from .tasks import apply_task_reply, current_task_for_user
 from .tasks import classify_task_reply, closure_missing_fields
+from .temporal_grounding import parse_business_due_at
 
 
 _SENSITIVE_TERMS = (
@@ -1655,24 +1656,7 @@ class TuoguanRouter:
 
     @staticmethod
     def _manual_due_at(text: str, *, level: str) -> str:
-        compact = str(text or "").replace(" ", "")
-        now = datetime.now()
-        if "今晚" in compact:
-            due = now.replace(hour=21, minute=0, second=0, microsecond=0)
-        elif "今天" in compact or "今日" in compact:
-            hour = 18 if "下午" in compact else 20
-            due = now.replace(hour=hour, minute=0, second=0, microsecond=0)
-        elif "明天" in compact or "明日" in compact:
-            hour = 18 if "下午" in compact else 20
-            due = (now + timedelta(days=1)).replace(hour=hour, minute=0, second=0, microsecond=0)
-        elif "后天" in compact:
-            due = (now + timedelta(days=2)).replace(hour=20, minute=0, second=0, microsecond=0)
-        else:
-            days = 1 if level in {"S", "A"} else 2
-            due = (now + timedelta(days=days)).replace(hour=20, minute=0, second=0, microsecond=0)
-        if due <= now:
-            due = now + timedelta(hours=2)
-        return due.isoformat(timespec="seconds")
+        return parse_business_due_at(text, level=level, allow_default=True)
 
     @staticmethod
     def _manual_task_title(text: str, student_name: str, task_type: str) -> str:

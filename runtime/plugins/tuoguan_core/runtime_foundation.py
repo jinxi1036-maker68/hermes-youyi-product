@@ -175,6 +175,7 @@ def _looks_like_unverified_success(text: str) -> bool:
         "\u5df2\u5f55\u5165", "\u5df2\u767b\u8bb0", "\u5df2\u65b0\u589e", "\u5df2\u6dfb\u52a0", "\u5df2\u5408\u5e76", "\u5df2\u6539\u597d",
         "\u5df2\u5904\u7406", "\u5df2\u5b8c\u6210", "\u6210\u529f\u8bb0\u5f55", "\u5df2\u8bb0\u5f55", "\u641e\u5b9a\u4e86", "\u5df2\u7ecf\u5199\u5165",
         "\u5df2\u52a0", "\u5df2\u6263", "\u5f53\u524d\u79ef\u5206", "\u5df2\u521b\u5efa", "\u5df2\u751f\u6210",
+        "状态已更新", "任务正式闭环", "任务已闭环", "提醒停止", "已存档", "档案已更新",
     )
     return any(word in compact for word in success_words)
 
@@ -206,6 +207,18 @@ def _sanitize_external_reply(
         return "我刚才连接中断，这次没有处理完整。请稍等一下再发一次，我会重新接着处理。"
     if any(marker in value for marker in _INTERNAL_MECHANISM_MARKERS):
         return "我刚才不该讲内部处理细节。你正常说要查谁、记录谁、处理哪件事就行，我会按你的身份权限去理解和处理。"
+    unverified_task_claim_terms = (
+        "任务正式闭环",
+        "任务已闭环",
+        "状态已更新",
+        "提醒停止",
+        "已存档",
+        "档案已更新",
+        "已更新为\"已完成\"",
+        "已更新为“已完成”",
+    )
+    if not verified_state_change and any(term in value for term in unverified_task_claim_terms):
+        return "我刚才不能在没有任务工具确认的情况下说任务已闭环。请告诉我具体是哪一个任务或学生，我会按任务记录核验后再确认。"
     if str(actor_role or "") in {"teacher", "manager"}:
         staff_side_leak_terms = (
             "汇报给老板",
