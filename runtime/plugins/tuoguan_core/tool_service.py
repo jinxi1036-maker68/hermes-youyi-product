@@ -84,6 +84,7 @@ from .digital_employee_state import (
     query_external_learning_brief,
     query_external_research_runs,
     query_employee_work_map,
+    query_fact_gap_candidates,
     query_industry_learning_candidates,
     query_market_research_candidates,
     query_proactive_work_radar,
@@ -94,6 +95,7 @@ from .digital_employee_state import (
     submit_industry_learning_candidate,
     submit_action_execution,
     submit_business_event,
+    submit_fact_gap_candidate,
     submit_goal_evidence,
     submit_hermes_work_item,
     submit_gray_optimization_decision,
@@ -542,6 +544,7 @@ class TuoguanToolService:
             "submit_due_wakeup_candidate",
             "submit_business_event",
             "submit_action_execution",
+            "submit_fact_gap_candidate",
         }
         if compact_raw in {
             "你再试一下",
@@ -2887,6 +2890,58 @@ class TuoguanToolService:
             return self._error("permission_denied", "只有店长或老板可以查看小优机构工作地图。")
         result = query_employee_work_map(self.store, identity=self.identity, limit=limit)
         return self._ok("query_employee_work_map", data=result, message=str(result.get("rendered_text") or ""))
+
+    def query_fact_gap_candidates(self, *, ask_role: str = "", status: str = "", limit: int = 50) -> dict[str, Any]:
+        denied = self._approved()
+        if denied:
+            return denied
+        if self.identity.role not in {"manager", "boss"}:
+            return self._error("permission_denied", "只有店长或老板可以查看事实缺口候选。")
+        result = query_fact_gap_candidates(self.store, identity=self.identity, ask_role=ask_role, status=status, limit=limit)
+        return self._ok("query_fact_gap_candidates", data=result, message=str(result.get("rendered_text") or ""))
+
+    def submit_fact_gap_candidate(
+        self,
+        *,
+        gap_key: str,
+        gap_text: str,
+        fact_owner_role: str,
+        operation_id: str,
+        suggested_question: str = "",
+        target_user_id: str = "",
+        target_name: str = "",
+        impact: str = "",
+        urgency: str = "normal",
+        target_time: str = "",
+        related_objects: list[Any] | None = None,
+        source_text: str = "",
+        source_message_id: str = "",
+    ) -> dict[str, Any]:
+        denied = self._approved()
+        if denied:
+            return denied
+
+        def execute() -> dict[str, Any]:
+            result = submit_fact_gap_candidate(
+                self.store,
+                identity=self.identity,
+                gap_key=gap_key,
+                gap_text=gap_text,
+                fact_owner_role=fact_owner_role,
+                operation_id=operation_id,
+                suggested_question=suggested_question,
+                target_user_id=target_user_id,
+                target_name=target_name,
+                impact=impact,
+                urgency=urgency,
+                target_time=target_time,
+                related_objects=related_objects,
+                source_text=source_text,
+                source_message_id=source_message_id,
+            )
+            return result if not result.get("ok") else self._ok("submit_fact_gap_candidate", data=result, message=str(result.get("rendered_text") or ""))
+
+        return self._operation(operation_id, "submit_fact_gap_candidate", execute)
 
     def query_self_evolution_ledger(self, *, candidate_type: str = "", status: str = "", limit: int = 30) -> dict[str, Any]:
         denied = self._approved()

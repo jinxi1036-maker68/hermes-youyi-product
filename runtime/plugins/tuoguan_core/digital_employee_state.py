@@ -2294,7 +2294,128 @@ def submit_institution_fact_gap(
         "auto_effects": {"sends_messages": False, "forces_next_action": False, "changes_router": False},
     }
     _append_jsonl(store, INSTITUTION_FACT_GAP_EVENTS_FILE, row)
-    return {"ok": True, "gap_event": row, "writeback_verified": True, "state_changed": True, "rendered_text": "已保存机构事实缺口；它只是提醒 Hermes 缺什么事实，不自动询问或执行。"}
+    verified = any(
+        str(item.get("gap_event_id") or "") == row["gap_event_id"]
+        for item in _read_jsonl(store, INSTITUTION_FACT_GAP_EVENTS_FILE)[-80:]
+    )
+    return {
+        "ok": bool(verified),
+        "gap_event": row,
+        "writeback_verified": bool(verified),
+        "state_changed": bool(verified),
+        "rendered_text": "已保存机构事实缺口；它只是提醒 Hermes 缺什么事实，不自动询问或执行。" if verified else "已理解机构事实缺口，但写后反查未通过。",
+    }
+
+
+def query_fact_gap_candidates(
+    store: TuoguanStore,
+    *,
+    identity: UserIdentity,
+    ask_role: str = "",
+    status: str = "",
+    limit: int = 50,
+) -> dict[str, Any]:
+    if identity.role not in {"boss", "manager"} and identity.platform != "system":
+        return {"ok": False, "error": "permission_denied", "message": "只有老板、店长或系统巡检可以查看事实缺口候选。"}
+    normalized_role = str(ask_role or "").strip()
+    normalized_status = str(status or "").strip()
+    rows = []
+    for row in _read_jsonl(store, INSTITUTION_FACT_GAP_EVENTS_FILE):
+        if str(row.get("tenant_id") or "") not in {"", current_tenant_id()}:
+            continue
+        row_status = str(row.get("status") or "candidate")
+        if normalized_role and str(row.get("ask_role") or "") != normalized_role:
+            continue
+        if normalized_status and row_status != normalized_status:
+            continue
+        item = deepcopy(row)
+        item.setdefault("status", row_status)
+        item.setdefault("external_send_allowed", False)
+        item.setdefault("model_decides_whether_to_ask", True)
+        rows.append(item)
+    rows.sort(key=lambda item: str(item.get("created_at") or ""))
+    cap = max(1, min(int(limit or 50), 200))
+    rows = rows[-cap:]
+    by_role: dict[str, int] = {}
+    urgency_counts: dict[str, int] = {}
+    for row in rows:
+        role = str(row.get("ask_role") or "unknown")
+        urgency = str(row.get("urgency") or "normal")
+        by_role[role] = by_role.get(role, 0) + 1
+        urgency_counts[urgency] = urgency_counts.get(urgency, 0) + 1
+    return {
+        "ok": True,
+        "report_type": "fact_gap_candidates_v1",
+        "tenant_id": current_tenant_id(),
+        "read_only": True,
+        "candidate_count": len(rows),
+        "candidates": _strip_forbidden(rows),
+        "by_ask_role": by_role,
+        "urgency_counts": urgency_counts,
+        "actions_taken": [],
+        "boundary": {
+            "sends_messages": False,
+            "creates_tasks": False,
+            "changes_business_facts": False,
+            "changes_router": False,
+            "model_decides_whether_to_ask": True,
+        },
+        "rendered_text": f"查到 {len(rows)} 条事实缺口候选；它们只说明缺什么和建议问谁，不自动外发。",
+        "render_verified": True,
+    }
+
+
+def submit_fact_gap_candidate(
+    store: TuoguanStore,
+    *,
+    identity: UserIdentity,
+    gap_key: str,
+    gap_text: str,
+    fact_owner_role: str,
+    operation_id: str,
+    suggested_question: str = "",
+    target_user_id: str = "",
+    target_name: str = "",
+    impact: str = "",
+    urgency: str = "normal",
+    target_time: str = "",
+    related_objects: list[Any] | None = None,
+    source_text: str = "",
+    source_message_id: str = "",
+) -> dict[str, Any]:
+    related = list(related_objects or [])
+    related.append({
+        "candidate_kind": "fact_gap_candidate",
+        "suggested_question": _limit_text(suggested_question, 300),
+        "target_user_id": str(target_user_id or "").strip(),
+        "target_name": _limit_text(target_name, 80),
+        "impact": _limit_text(impact, 400),
+        "external_send_allowed": False,
+        "model_decides_whether_to_ask": True,
+    })
+    result = submit_institution_fact_gap(
+        store,
+        identity=identity,
+        gap_key=gap_key,
+        gap_text=gap_text,
+        ask_role=fact_owner_role,
+        operation_id=operation_id,
+        target_time=target_time,
+        urgency=urgency,
+        related_objects=related,
+        source_text=source_text,
+        source_message_id=source_message_id,
+    )
+    if result.get("ok") and isinstance(result.get("gap_event"), dict):
+        result["fact_gap_candidate"] = result["gap_event"]
+        result["auto_effects"] = {
+            "sends_messages": False,
+            "creates_tasks": False,
+            "changes_business_facts": False,
+            "changes_router": False,
+            "model_decides_whether_to_ask": True,
+        }
+    return result
 
 
 def query_hermes_employee_scorecard(store: TuoguanStore, *, identity: UserIdentity, limit: int = 30) -> dict[str, Any]:
@@ -4623,6 +4744,7 @@ _AUTONOMOUS_LOG_TOOL_NAMES = {
     "tuoguan_query_proactive_work_radar",
     "tuoguan_query_self_evolution_ledger",
     "tuoguan_query_employee_work_map",
+    "tuoguan_query_fact_gap_candidates",
     "tuoguan_query_institution_understanding",
     "tuoguan_query_hermes_employee_scorecard",
     "tuoguan_query_industry_learning_candidates",
@@ -4642,6 +4764,7 @@ _AUTONOMOUS_LOG_TOOL_NAMES = {
     "tuoguan_submit_business_event",
     "tuoguan_submit_action_execution",
     "tuoguan_submit_institution_fact_gap",
+    "tuoguan_submit_fact_gap_candidate",
     "tuoguan_update_institution_understanding",
     "tuoguan_submit_employee_self_review",
     "tuoguan_submit_industry_learning_candidate",

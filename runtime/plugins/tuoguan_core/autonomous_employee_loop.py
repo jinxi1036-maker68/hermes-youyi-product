@@ -52,7 +52,7 @@ from .digital_employee_state import (
     submit_attention_thread,
     submit_employee_self_review,
     submit_business_event,
-    submit_institution_fact_gap,
+    submit_fact_gap_candidate,
     submit_hermes_work_item,
     submit_relationship_touch_candidate,
     submit_value_progress_entry,
@@ -826,20 +826,24 @@ def materialize_employee_decision(
                 continue
             if service_relations_deferred and _is_deferred_service_relation_attention(gap_key, gap_text, gap_text):
                 continue
-            res = submit_institution_fact_gap(
+            res = submit_fact_gap_candidate(
                 store,
                 identity=identity,
                 gap_key=gap_key,
                 gap_text=gap_text,
-                ask_role=_limit(gap.get("ask_role") or "boss", 80),
+                fact_owner_role=_limit(gap.get("ask_role") or "boss", 80),
                 operation_id=f"{op_prefix}:institution_gap:{idx}",
+                suggested_question=_limit(gap.get("suggested_question") or gap.get("question") or gap.get("ask_candidate"), 300),
+                target_user_id=_limit(gap.get("target_user_id"), 120),
+                target_name=_limit(gap.get("target_name"), 80),
+                impact=_limit(gap.get("impact"), 400),
                 target_time=_limit(gap.get("target_time"), 80),
                 urgency=_limit(gap.get("urgency") or "normal", 40),
                 related_objects=_list_any(gap.get("related_objects"), 8),
                 source_text=decision.get("institution_understanding") or decision.get("employee_summary") or "",
                 source_message_id=f"autonomous_employee_loop:{timestamp.strftime('%Y%m%d%H%M%S')}",
             )
-            writes.append(_write_result("institution_fact_gap", res))
+            writes.append(_write_result("fact_gap_candidate", res))
         for idx, update in enumerate(decision.get("work_item_updates") or []):
             if service_relations_deferred:
                 _apply_deferred_service_relation_boundary(update)

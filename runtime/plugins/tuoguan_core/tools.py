@@ -996,6 +996,36 @@ TUOGUAN_QUERY_EMPLOYEE_WORK_MAP_SCHEMA = _schema(
     ["user_id"],
 )
 
+TUOGUAN_QUERY_FACT_GAP_CANDIDATES_SCHEMA = _schema(
+    "只读查询小优事实缺口候选：缺什么事实、影响什么、建议问老板/店长/老师谁、优先级和证据。查询不外发、不创建任务、不把候选当成已确认事实。",
+    _identity_props({
+        "ask_role": {"type": "string", "enum": ["", "boss", "manager", "teacher", "staff"], "default": "", "description": "可选，按建议事实归属角色筛选。"},
+        "status": {"type": "string", "default": "", "description": "可选，默认候选状态为 candidate。"},
+        "limit": {"type": "integer", "default": 50},
+    }),
+    ["user_id"],
+)
+
+TUOGUAN_SUBMIT_FACT_GAP_CANDIDATE_SCHEMA = _schema(
+    "保存事实缺口候选。只记录小优缺什么、为什么影响工作、建议问谁和候选问题；不直接外发、不创建任务、不改正式机构事实、不规定模型下一步。",
+    _identity_props({
+        "gap_key": {"type": "string", "description": "稳定缺口键，如 teacher_record_habit、service_relation_owner。"},
+        "gap_text": {"type": "string", "description": "缺口说明。"},
+        "fact_owner_role": {"type": "string", "enum": ["boss", "manager", "teacher", "staff"], "description": "最可能掌握事实的人群。"},
+        "suggested_question": {"type": "string", "description": "模型可参考的一句话问题候选，不代表已经发送。"},
+        "target_user_id": {"type": "string", "description": "可选，建议询问对象 user_id。"},
+        "target_name": {"type": "string", "description": "可选，建议询问对象姓名。"},
+        "impact": {"type": "string", "description": "这个事实缺口会影响什么工作。"},
+        "urgency": {"type": "string", "enum": ["low", "normal", "high", "urgent"], "default": "normal"},
+        "target_time": {"type": "string", "description": "建议关注时间，可为空。"},
+        "related_objects": {"type": "array", "items": {}, "description": "相关学生、任务、目标或证据。"},
+        "source_text": {"type": "string", "description": "来源原文或简述。"},
+        "source_message_id": {"type": "string", "description": "来源消息 id。"},
+        "operation_id": {"type": "string", "description": "幂等操作 id。"},
+    }),
+    ["user_id", "gap_key", "gap_text", "fact_owner_role", "operation_id"],
+)
+
 TUOGUAN_QUERY_SELF_EVOLUTION_LEDGER_SCHEMA = _schema(
     "只读查询小优自我进化账本：最近学到的工作方式、错误修正、工具失败、机构事实缺口、手册候选、明日重点和 multi-agent 建议采纳记录。它只提供经验和审核材料，不自动改变制度、权限、手册、家长外发或模型下一步。",
     _identity_props({
@@ -1142,6 +1172,8 @@ TOOLS = (
     ("tuoguan_query_autonomous_work_brief", TUOGUAN_QUERY_AUTONOMOUS_WORK_BRIEF_SCHEMA, _handler("query_autonomous_work_brief")),
     ("tuoguan_query_proactive_work_radar", TUOGUAN_QUERY_PROACTIVE_WORK_RADAR_SCHEMA, _handler("query_proactive_work_radar")),
     ("tuoguan_query_employee_work_map", TUOGUAN_QUERY_EMPLOYEE_WORK_MAP_SCHEMA, _handler("query_employee_work_map")),
+    ("tuoguan_query_fact_gap_candidates", TUOGUAN_QUERY_FACT_GAP_CANDIDATES_SCHEMA, _handler("query_fact_gap_candidates")),
+    ("tuoguan_submit_fact_gap_candidate", TUOGUAN_SUBMIT_FACT_GAP_CANDIDATE_SCHEMA, _handler("submit_fact_gap_candidate")),
     ("tuoguan_query_self_evolution_ledger", TUOGUAN_QUERY_SELF_EVOLUTION_LEDGER_SCHEMA, _handler("query_self_evolution_ledger")),
     ("tuoguan_query_industry_learning_candidates", TUOGUAN_QUERY_INDUSTRY_LEARNING_CANDIDATES_SCHEMA, _handler("query_industry_learning_candidates")),
     ("tuoguan_query_external_research_runs", TUOGUAN_QUERY_EXTERNAL_RESEARCH_RUNS_SCHEMA, _handler("query_external_research_runs")),
