@@ -1026,6 +1026,39 @@ TUOGUAN_SUBMIT_FACT_GAP_CANDIDATE_SCHEMA = _schema(
     ["user_id", "gap_key", "gap_text", "fact_owner_role", "operation_id"],
 )
 
+TUOGUAN_SUBMIT_STAFF_VOICE_SIGNAL_SCHEMA = _schema(
+    "保存员工声音信号。老师/店长侧只做支持和问题梳理；本工具只沉淀老板侧管理摘要、风险、证据和建议关注点，不改绩效、工资、制度、权限，不触达家长，也不在员工回复中暴露上报状态。",
+    _identity_props({
+        "operation_id": {"type": "string", "description": "幂等操作 id，优先使用当前消息 id。"},
+        "source_role": {"type": "string", "enum": ["", "teacher", "manager"], "default": "", "description": "声音来源角色；默认取当前可信身份。"},
+        "source_user_id": {"type": "string", "description": "来源老师/店长 user_id；不确定可空。"},
+        "source_name": {"type": "string", "description": "来源老师/店长姓名；不确定可空。"},
+        "category": {"type": "string", "enum": ["", "workload_pressure", "schedule_or_staffing", "collaboration_conflict", "policy_confusion", "morale_risk", "resignation_risk", "safety_or_student_risk", "management_suggestion", "tooling_or_process_frustration", "other_work_signal"], "default": ""},
+        "risk_level": {"type": "string", "enum": ["", "low", "medium", "high", "urgent"], "default": "", "description": "低风险做趋势，中高风险老板可点名，high/urgent 生成老板-only 提醒候选。"},
+        "signal_summary": {"type": "string", "description": "脱敏摘要，说明员工表达出的工作相关信号。"},
+        "impact": {"type": "string", "description": "可能影响的现场协作、学生服务、人员稳定或制度执行。"},
+        "suggested_owner_action": {"type": "string", "description": "建议老板关注什么；不是指令，不替老板决策。"},
+        "evidence_excerpt": {"type": "string", "description": "短证据摘要，不要放完整私聊原文。"},
+        "source_text": {"type": "string", "description": "来源原文或简述，会被限制长度；不默认展示给老板。"},
+        "source_message_id": {"type": "string", "description": "来源消息 id，用于幂等。"},
+        "occurred_at": {"type": "string", "description": "信号发生时间 ISO，可空。"},
+        "status": {"type": "string", "enum": ["open", "reviewed", "resolved", "dismissed", "superseded"], "default": "open"},
+    }),
+    ["user_id", "operation_id", "signal_summary"],
+)
+
+TUOGUAN_QUERY_STAFF_VOICE_RADAR_SCHEMA = _schema(
+    "老板只读查询员工声音雷达：汇总老师/店长表达出的抱怨、压力、协作冲突、制度不清、离职风险、安全风险和管理建议。低风险默认趋势化，中高风险显示人员和证据摘要；不外发、不派任务、不改绩效工资制度。",
+    _identity_props({
+        "risk_level": {"type": "string", "enum": ["", "low", "medium", "high", "urgent"], "default": ""},
+        "status": {"type": "string", "enum": ["", "open", "reviewed", "resolved", "dismissed", "superseded"], "default": ""},
+        "now_at": {"type": "string", "description": "可选，当前时间 ISO 字符串；默认系统当前时间。"},
+        "since_hours": {"type": "integer", "default": 168, "description": "查询最近多少小时。"},
+        "limit": {"type": "integer", "default": 50},
+    }),
+    ["user_id"],
+)
+
 TUOGUAN_QUERY_XIAOYOU_HEALTH_SCHEMA = _schema(
     "只读查询小优健康度：日报是否送达、主动问题是否卡住、任务提醒是否重复、工具失败候选、进化候选和事实缺口。它只返回维护/看板材料，不外发、不派任务、不改事实。",
     _identity_props({
@@ -1183,6 +1216,8 @@ TOOLS = (
     ("tuoguan_query_employee_work_map", TUOGUAN_QUERY_EMPLOYEE_WORK_MAP_SCHEMA, _handler("query_employee_work_map")),
     ("tuoguan_query_fact_gap_candidates", TUOGUAN_QUERY_FACT_GAP_CANDIDATES_SCHEMA, _handler("query_fact_gap_candidates")),
     ("tuoguan_submit_fact_gap_candidate", TUOGUAN_SUBMIT_FACT_GAP_CANDIDATE_SCHEMA, _handler("submit_fact_gap_candidate")),
+    ("tuoguan_submit_staff_voice_signal", TUOGUAN_SUBMIT_STAFF_VOICE_SIGNAL_SCHEMA, _handler("submit_staff_voice_signal")),
+    ("tuoguan_query_staff_voice_radar", TUOGUAN_QUERY_STAFF_VOICE_RADAR_SCHEMA, _handler("query_staff_voice_radar")),
     ("tuoguan_query_xiaoyou_health", TUOGUAN_QUERY_XIAOYOU_HEALTH_SCHEMA, _handler("query_xiaoyou_health")),
     ("tuoguan_query_self_evolution_ledger", TUOGUAN_QUERY_SELF_EVOLUTION_LEDGER_SCHEMA, _handler("query_self_evolution_ledger")),
     ("tuoguan_query_industry_learning_candidates", TUOGUAN_QUERY_INDUSTRY_LEARNING_CANDIDATES_SCHEMA, _handler("query_industry_learning_candidates")),

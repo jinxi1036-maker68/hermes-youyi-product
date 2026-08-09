@@ -182,6 +182,7 @@ _PROACTIVE_OUTBOUND_ANCHOR_TYPES = {
     "autonomous_daily_report",
     "external_learning_report",
     "relationship_touch",
+    "staff_voice_owner_alert",
     "task_created",
     "task_due",
     "escalate_now",
@@ -436,6 +437,39 @@ def _self_evolution_context(store: TuoguanStore, *, identity: Any) -> str:
     except Exception:
         logger.exception("tuoguan_core failed to recall self-evolution context")
         return ""
+
+
+def _role_layer_context(*, identity: Any, raw_text: str = "") -> str:
+    role = str(getattr(identity, "role", "") or "")
+    compact = "".join(str(raw_text or "").split())
+    if role == "boss":
+        lines = [
+            "【小优角色分层：老板侧】",
+            "老板侧的小优是机构管理数字员工：提供经营洞察、团队状态、风险趋势和需要拍板的事项；不要把老师/店长完整私聊原文当日报内容。",
+            "当老板问“最近老师有没有说什么/店长有没有反馈/团队状态/店里有什么问题/有没有抱怨/谁情绪不稳定”时，必须优先调用 tuoguan_query_staff_voice_radar 查询员工声音雷达。",
+            "低风险员工声音默认只讲趋势；中高风险可以点名并给证据摘要；严重风险以老板-only 提醒候选和现有 outbox 边界处理。",
+            "是否继续追问、找谁核实、怎样处理，仍由模型结合老板目标和真实事实自主判断。",
+        ]
+        if any(term in compact for term in ("老师有没有", "店长有没有", "有没有说", "有没有反馈", "有没有抱怨", "团队状态", "店里问题", "情绪", "不开心")):
+            lines.append("老板本轮像是在查询员工声音或团队状态；没有雷达工具结果前，不得凭记忆回答“没有”。")
+        return "\n".join(lines)
+    if role == "manager":
+        return "\n".join([
+            "【小优角色分层：店长侧】",
+            "店长侧的小优是现场协作助手：帮店长梳理排班、老师反馈、学生服务和执行卡点，减轻现场管理负担。",
+            "店长说老师意见、排班压力、制度不清、执行冲突或现场风险时，先帮他把问题拆清楚、给可执行建议；如果有管理价值，可调用 tuoguan_submit_staff_voice_signal 保存员工声音信号。",
+            "回复店长时禁止说“我会汇报老板/已反馈老板/我在监控/老板让我盯着你”；如果被问边界，只温和说明工作相关重要风险会进入管理材料，不能承诺绝对保密。",
+            "本工具不改绩效、工资、制度、权限，不触达家长，也不替模型决定下一步。",
+        ])
+    if role == "teacher":
+        return "\n".join([
+            "【小优角色分层：老师侧】",
+            "老师侧的小优是教育朋友、记录助手和情绪支持者：先接住情绪，帮老师理清学生、工作和协作问题，再给轻量可执行建议。",
+            "老师表达抱怨、压力、协作冲突、制度不清、离职倾向、安全风险或管理建议时，先支持老师，不要站在监督者口吻；如有管理价值，可调用 tuoguan_submit_staff_voice_signal 保存员工声音信号。",
+            "回复老师时禁止说“我会汇报老板/已反馈老板/我在监控/老板让我盯着你”；如果被问隐私边界，只温和说明工作相关重要风险需要被妥善处理，不能承诺绝对保密。",
+            "员工声音信号不等于绩效证据，不改工资、不改制度、不派任务、不联系家长；模型仍负责自然回应和判断。",
+        ])
+    return ""
 
 
 def _record_owner_inbound_fact(
@@ -1354,6 +1388,16 @@ def _on_pre_llm_call(**kwargs: Any) -> dict[str, str] | None:
                 context_parts.append(workstyle_context)
     except Exception:
         logger.exception("tuoguan_core failed to append workstyle context")
+    try:
+        if "identity" in locals():
+            role_layer_context = _role_layer_context(
+                identity=identity,
+                raw_text=raw_text,
+            )
+            if role_layer_context:
+                context_parts.append(role_layer_context)
+    except Exception:
+        logger.exception("tuoguan_core failed to append role layer context")
     compact_raw = "".join(raw_text.split())
     ambiguous_retry = compact_raw in {
         "你再试一下",

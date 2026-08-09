@@ -68,6 +68,7 @@ PROTECTED_BUSINESS_FILES = {
     "weekly_market_report_runs.jsonl",
     "relationship_touch_candidates.jsonl",
     "relationship_touch_policy.json",
+    "staff_voice_signals.jsonl",
     "self_evolution_events.jsonl",
 }
 

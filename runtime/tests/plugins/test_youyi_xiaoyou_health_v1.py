@@ -150,6 +150,28 @@ def _seed_store(tmp_path: Path):
             }
         ],
     )
+    _append_jsonl(
+        tmp_path,
+        "staff_voice_signals.jsonl",
+        [
+            {
+                "record_type": "staff_voice_signal",
+                "signal_id": "staff_voice_health_1",
+                "tenant_id": "youyi_tuoguan",
+                "source_role": "teacher",
+                "source_user_id": "teacher1",
+                "source_name": "李老师",
+                "category": "morale_risk",
+                "risk_level": "high",
+                "status": "open",
+                "signal_summary": "老师表达近期安排混乱并影响心情。",
+                "impact": "可能影响老师稳定和现场协作。",
+                "suggested_owner_action": "建议老板先看排班事实，再决定是否调整沟通方式。",
+                "occurred_at": "2026-08-09T10:30:00+08:00",
+                "created_at": "2026-08-09T10:30:00+08:00",
+            }
+        ],
+    )
     return TuoguanStore(tmp_path)
 
 
@@ -171,6 +193,8 @@ def test_xiaoyou_health_summarizes_read_only_operating_signals(tmp_path):
     assert result["proactive_work"]["outbox"]["repeated_task_reminder_candidate_count"] == 1
     assert result["fact_gaps"]["candidate_count"] == 1
     assert result["fact_gaps"]["by_ask_role"]["teacher"] == 1
+    assert result["staff_voice"]["available"] is True
+    assert result["staff_voice"]["high_or_urgent_open_count"] == 1
     assert result["evolution"]["next_day_context_count"] == 1
     assert result["evolution"]["pending_review_count"] == 1
     assert result["evolution"]["tool_failure_candidate_count"] == 1

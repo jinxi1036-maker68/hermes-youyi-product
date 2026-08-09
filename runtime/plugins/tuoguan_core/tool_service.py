@@ -89,6 +89,7 @@ from .digital_employee_state import (
     query_industry_learning_candidates,
     query_market_research_candidates,
     query_proactive_work_radar,
+    query_staff_voice_radar,
     query_student_service_relations,
     query_value_ledger,
     query_value_progress_ledger,
@@ -97,6 +98,7 @@ from .digital_employee_state import (
     submit_action_execution,
     submit_business_event,
     submit_fact_gap_candidate,
+    submit_staff_voice_signal,
     submit_goal_evidence,
     submit_hermes_work_item,
     submit_gray_optimization_decision,
@@ -546,6 +548,7 @@ class TuoguanToolService:
             "submit_business_event",
             "submit_action_execution",
             "submit_fact_gap_candidate",
+            "submit_staff_voice_signal",
         }
         if compact_raw in {
             "你再试一下",
@@ -2943,6 +2946,70 @@ class TuoguanToolService:
             return result if not result.get("ok") else self._ok("submit_fact_gap_candidate", data=result, message=str(result.get("rendered_text") or ""))
 
         return self._operation(operation_id, "submit_fact_gap_candidate", execute)
+
+    def submit_staff_voice_signal(
+        self,
+        *,
+        operation_id: str,
+        source_role: str = "",
+        category: str = "",
+        risk_level: str = "",
+        signal_summary: str = "",
+        impact: str = "",
+        suggested_owner_action: str = "",
+        source_user_id: str = "",
+        source_name: str = "",
+        evidence_excerpt: str = "",
+        source_text: str = "",
+        source_message_id: str = "",
+        occurred_at: str = "",
+        status: str = "open",
+    ) -> dict[str, Any]:
+        denied = self._approved()
+        if denied:
+            return denied
+
+        def execute() -> dict[str, Any]:
+            result = submit_staff_voice_signal(
+                self.store,
+                identity=self.identity,
+                operation_id=operation_id,
+                source_role=source_role,
+                category=category,
+                risk_level=risk_level,
+                signal_summary=signal_summary,
+                impact=impact,
+                suggested_owner_action=suggested_owner_action,
+                source_user_id=source_user_id,
+                source_name=source_name,
+                evidence_excerpt=evidence_excerpt,
+                source_text=source_text,
+                source_message_id=source_message_id,
+                occurred_at=occurred_at,
+                status=status,
+            )
+            return result if not result.get("ok") else self._ok("submit_staff_voice_signal", data=result, message=str(result.get("rendered_text") or ""))
+
+        return self._operation(operation_id, "submit_staff_voice_signal", execute)
+
+    def query_staff_voice_radar(self, *, risk_level: str = "", status: str = "", now_at: str = "", since_hours: int = 168, limit: int = 50) -> dict[str, Any]:
+        denied = self._approved()
+        if denied:
+            return denied
+        if self.identity.role != "boss":
+            return self._error("permission_denied", "只有老板可以查看员工声音雷达。")
+        result = query_staff_voice_radar(
+            self.store,
+            identity=self.identity,
+            risk_level=risk_level,
+            status=status,
+            now_at=now_at,
+            since_hours=since_hours,
+            limit=limit,
+        )
+        if not result.get("ok"):
+            return self._error(str(result.get("error") or "staff_voice_unavailable"), str(result.get("message") or "员工声音雷达查询失败。"))
+        return self._ok("query_staff_voice_radar", data=result, message=str(result.get("rendered_text") or ""))
 
     def query_xiaoyou_health(self, *, now_at: str = "", limit: int = 20) -> dict[str, Any]:
         denied = self._approved()

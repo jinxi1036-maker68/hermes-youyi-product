@@ -19,6 +19,7 @@ from .digital_employee_state import (
     query_attention_threads,
     query_autonomous_work_brief,
     query_hermes_work_items,
+    query_staff_voice_radar,
 )
 from .employee_identity import owner_user_id as _owner_user_id
 from .employee_identity import system_identity as _system_identity
@@ -206,6 +207,7 @@ def build_daily_boss_report(kind: str, *, store: TuoguanStore | None = None, now
     work = query_hermes_work_items(actual_store, identity=identity, include_closed=False, limit=10)
     brief = query_autonomous_work_brief(actual_store, identity=identity, limit=10)
     self_evolution = build_self_evolution_brief(actual_store, identity=identity, limit=6)
+    staff_voice = query_staff_voice_radar(actual_store, identity=identity, now_at=timestamp.isoformat(timespec="seconds"), since_hours=24, limit=10)
     attention = query_attention_threads(actual_store, identity=identity, include_closed=False, limit=5)
     items = work.get("items") if isinstance(work.get("items"), list) else []
     waiting_items = [item for item in items if str(item.get("status") or "") == "waiting"]
@@ -222,14 +224,16 @@ def build_daily_boss_report(kind: str, *, store: TuoguanStore | None = None, now
     source_counts["proactivity_issue_count"] = len(proactivity_health)
     source_counts["self_evolution_next_day_count"] = len(self_evolution.get("next_day_context") or [])
     source_counts["self_evolution_review_queue_count"] = int(self_evolution.get("review_queue_count") or 0)
+    source_counts["staff_voice_signal_count"] = int(staff_voice.get("signal_count") or 0) if isinstance(staff_voice, dict) else 0
+    source_counts["staff_voice_high_or_urgent_open_count"] = int(staff_voice.get("high_or_urgent_open_count") or 0) if isinstance(staff_voice, dict) else 0
     owner_id = _owner_user_id(actual_store)
     workstyle = daily_report_style_for_owner(actual_store, owner_id)
     source_counts["workstyle_preference_count"] = len(workstyle.get("active_preferences") or [])
     if report_kind == "morning":
-        content = _render_morning_report(timestamp, items, waiting_items, open_attention, brief, self_evolution, source_counts, proactivity_health, workstyle)
+        content = _render_morning_report(timestamp, items, waiting_items, open_attention, brief, self_evolution, source_counts, proactivity_health, workstyle, staff_voice)
         summary = "小优每日早间工作安排"
     else:
-        content = _render_evening_report(timestamp, items, waiting_items, open_attention, brief, self_evolution, source_counts, proactivity_health, workstyle)
+        content = _render_evening_report(timestamp, items, waiting_items, open_attention, brief, self_evolution, source_counts, proactivity_health, workstyle, staff_voice)
         summary = "小优每日晚间工作日报"
     return {
         "ok": True,
@@ -255,6 +259,7 @@ def _render_morning_report(
     source_counts: dict[str, int],
     proactivity_health: list[str],
     workstyle: dict[str, Any],
+    staff_voice: dict[str, Any],
 ) -> str:
     scorecard = brief.get("employee_scorecard") if isinstance(brief.get("employee_scorecard"), dict) else {}
     latest_review = scorecard.get("latest_review") if isinstance(scorecard.get("latest_review"), dict) else {}
@@ -279,6 +284,9 @@ def _render_morning_report(
     evolution_lines = _self_evolution_lines(self_evolution, purpose="morning")
     if evolution_lines:
         candidate_lines.insert(1, evolution_lines[0])
+    staff_voice_line = _staff_voice_report_line(staff_voice, purpose="morning")
+    if staff_voice_line:
+        candidate_lines.insert(2, staff_voice_line)
     report_items = _concise_report_items(
         candidate_lines,
         proactivity_health=proactivity_health,
@@ -302,6 +310,7 @@ def _render_evening_report(
     source_counts: dict[str, int],
     proactivity_health: list[str],
     workstyle: dict[str, Any],
+    staff_voice: dict[str, Any],
 ) -> str:
     scorecard = brief.get("employee_scorecard") if isinstance(brief.get("employee_scorecard"), dict) else {}
     latest_review = scorecard.get("latest_review") if isinstance(scorecard.get("latest_review"), dict) else {}
@@ -328,6 +337,9 @@ def _render_evening_report(
     evolution_lines = _self_evolution_lines(self_evolution, purpose="evening")
     if evolution_lines:
         candidate_lines.insert(1, evolution_lines[0])
+    staff_voice_line = _staff_voice_report_line(staff_voice, purpose="evening")
+    if staff_voice_line:
+        candidate_lines.insert(2, staff_voice_line)
     report_items = _concise_report_items(
         candidate_lines,
         proactivity_health=proactivity_health,
@@ -559,6 +571,30 @@ def _self_evolution_lines(brief: dict[str, Any], *, purpose: str) -> list[str]:
     if purpose == "evening" and review_count > 0:
         lines.append(f"待确认进化：{review_count} 条中高风险候选只留档，未自动生效。")
     return lines[:2]
+
+
+def _staff_voice_report_line(radar: dict[str, Any], *, purpose: str) -> str:
+    if not isinstance(radar, dict) or not radar.get("ok"):
+        return ""
+    named = radar.get("named_signals") if isinstance(radar.get("named_signals"), list) else []
+    high_count = int(radar.get("high_or_urgent_open_count") or 0)
+    trends = radar.get("low_risk_trends") if isinstance(radar.get("low_risk_trends"), list) else []
+    if high_count and named:
+        latest = named[-1]
+        who = _limit_text(latest.get("source_name") or latest.get("source_user_id") or latest.get("source_role") or "员工", 40)
+        summary = _limit_text(latest.get("signal_summary"), 120)
+        return f"员工声音：{high_count} 条高风险开放，最近 {who} 提到 {summary or '现场问题'}。"
+    medium = [item for item in named if str(item.get("risk_level") or "") == "medium"]
+    if medium:
+        latest = medium[-1]
+        who = _limit_text(latest.get("source_name") or latest.get("source_user_id") or latest.get("source_role") or "员工", 40)
+        summary = _limit_text(latest.get("signal_summary"), 120)
+        label = "今天关注" if purpose == "morning" else "团队反馈"
+        return f"员工声音：{label} {who} 的中风险反馈：{summary or '需进一步看事实'}。"
+    if trends:
+        trend = trends[0]
+        return f"员工声音：低风险趋势 {trend.get('category')} {trend.get('count')} 条，先观察趋势，不点名打扰。"
+    return ""
 
 
 def _first_or_default(lines: list[str], fallback: str) -> str:

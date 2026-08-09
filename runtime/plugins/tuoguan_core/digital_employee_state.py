@@ -49,6 +49,7 @@ AGENT_DELEGATION_RESULTS_FILE = "agent_delegation_results.jsonl"
 ATTENTION_THREADS_FILE = "attention_threads.jsonl"
 RELATIONSHIP_TOUCH_CANDIDATES_FILE = "relationship_touch_candidates.jsonl"
 RELATIONSHIP_TOUCH_POLICY_FILE = "relationship_touch_policy.json"
+STAFF_VOICE_SIGNALS_FILE = "staff_voice_signals.jsonl"
 
 _CLOSED_STUDENT_STATUSES = {"inactive", "cancelled", "left", "deleted", "graduated"}
 _CLOSED_TASK_STATUSES = {"completed", "cancelled", "closed", "done", "closed_by_admin", "completed_by_admin"}
@@ -62,6 +63,20 @@ _RELATIONSHIP_TOUCH_TYPES = {
 }
 _RELATIONSHIP_TOUCH_STATUSES = {"candidate", "queued", "sent", "suppressed", "resolved", "failed", "superseded"}
 _OPEN_RELATIONSHIP_TOUCH_STATUSES = {"candidate", "queued", "sent", "failed"}
+_STAFF_VOICE_CATEGORIES = {
+    "workload_pressure",
+    "schedule_or_staffing",
+    "collaboration_conflict",
+    "policy_confusion",
+    "morale_risk",
+    "resignation_risk",
+    "safety_or_student_risk",
+    "management_suggestion",
+    "tooling_or_process_frustration",
+    "other_work_signal",
+}
+_STAFF_VOICE_RISK_LEVELS = {"low", "medium", "high", "urgent"}
+_STAFF_VOICE_STATUSES = {"open", "reviewed", "resolved", "dismissed", "superseded"}
 
 
 DEFAULT_RELATIONSHIP_TOUCH_POLICY: dict[str, Any] = {
@@ -3293,6 +3308,462 @@ def _identity_can_view_relationship_touch(identity: UserIdentity, row: dict[str,
     return False
 
 
+def _normalize_staff_voice_category(value: Any) -> str:
+    text = str(value or "").strip()
+    if text in _STAFF_VOICE_CATEGORIES:
+        return text
+    compact = text.lower()
+    if any(term in compact for term in ("排班", "staffing", "schedule", "人手")):
+        return "schedule_or_staffing"
+    if any(term in compact for term in ("累", "压力", "忙", "负担", "workload")):
+        return "workload_pressure"
+    if any(term in compact for term in ("冲突", "配合", "协作", "conflict")):
+        return "collaboration_conflict"
+    if any(term in compact for term in ("制度", "规则", "不清楚", "policy")):
+        return "policy_confusion"
+    if any(term in compact for term in ("不开心", "情绪", "心情", "morale")):
+        return "morale_risk"
+    if any(term in compact for term in ("离职", "不干", "辞职", "resign")):
+        return "resignation_risk"
+    if any(term in compact for term in ("安全", "学生", "孩子", "伤", "risk")):
+        return "safety_or_student_risk"
+    if any(term in compact for term in ("建议", "改进", "优化", "suggest")):
+        return "management_suggestion"
+    return "other_work_signal"
+
+
+def _normalize_staff_voice_risk(value: Any, *, text: str = "") -> str:
+    risk = str(value or "").strip().lower()
+    aliases = {
+        "normal": "medium",
+        "mid": "medium",
+        "critical": "urgent",
+        "safety": "high",
+        "低": "low",
+        "中": "medium",
+        "高": "high",
+        "紧急": "urgent",
+    }
+    risk = aliases.get(risk, risk)
+    if risk in _STAFF_VOICE_RISK_LEVELS:
+        return risk
+    compact = str(text or "").strip()
+    if any(term in compact for term in ("马上离职", "不干了", "安全事故", "打人", "受伤", "失控")):
+        return "urgent"
+    if any(term in compact for term in ("离职", "严重", "安全", "学生服务受影响", "家长投诉")):
+        return "high"
+    if any(term in compact for term in ("心情受影响", "排班有意见", "安排太乱", "压力大", "冲突")):
+        return "medium"
+    return "low"
+
+
+def _normalize_staff_voice_role(value: Any, *, fallback: str = "") -> str:
+    role = _normalize_role(value or fallback)
+    if role == "staff":
+        return "teacher"
+    return role if role in {"teacher", "manager"} else ""
+
+
+def _staff_voice_owner_user_id(store: TuoguanStore) -> str:
+    whitelist = store.read_json("wecom_whitelist.json", {})
+    if isinstance(whitelist, dict):
+        for item in whitelist.get("super_users") or []:
+            if str(item or "").strip():
+                return str(item).strip()
+    mapping = store.read_json("teacher_wecom_map.json", {})
+    if isinstance(mapping, dict):
+        for name in ("金总", "老板", "JinWenJie"):
+            if str(mapping.get(name) or "").strip():
+                return str(mapping[name]).strip()
+    return ""
+
+
+def _staff_voice_outbox_statuses(store: TuoguanStore) -> dict[str, dict[str, Any]]:
+    outbox = store.read_json("notification_outbox.json", [])
+    if not isinstance(outbox, list):
+        return {}
+    result: dict[str, dict[str, Any]] = {}
+    for item in outbox:
+        if not isinstance(item, dict):
+            continue
+        signal_id = str(item.get("staff_voice_signal_id") or "").strip()
+        if not signal_id:
+            continue
+        previous = result.get(signal_id)
+        if previous is None or str(item.get("last_attempt_at") or item.get("sent_at") or item.get("created_at") or "") >= str(previous.get("last_attempt_at") or previous.get("sent_at") or previous.get("created_at") or ""):
+            result[signal_id] = deepcopy(item)
+    return result
+
+
+def _staff_voice_alert_content(row: dict[str, Any]) -> str:
+    risk = str(row.get("risk_level") or "high")
+    risk_label = {"high": "高风险", "urgent": "紧急风险"}.get(risk, "中高风险")
+    summary = str(row.get("signal_summary") or "员工声音需要关注")
+    impact = str(row.get("impact") or "可能影响现场协作或学生服务。")
+    suggestion = str(row.get("suggested_owner_action") or "建议先看摘要，再决定是否找店长或相关老师了解事实。")
+    return _limit_text(
+        f"金总，小优发现一条{risk_label}员工声音信号：{summary}\n"
+        f"影响：{impact}\n"
+        f"建议关注：{suggestion}\n"
+        "细节我已留档，需要我展开哪一项你直接说。",
+        900,
+    )
+
+
+def _queue_staff_voice_owner_alert(
+    store: TuoguanStore,
+    *,
+    row: dict[str, Any],
+    owner_user_id: str,
+) -> dict[str, Any]:
+    signal_id = str(row.get("signal_id") or "").strip()
+    if not signal_id or not owner_user_id:
+        return {"queued": False, "reason": "missing_signal_or_owner"}
+    notification_id = f"staff_voice_owner_alert:{signal_id}"
+    created_at = now_iso()
+    inserted = {"queued": False, "existing": False}
+
+    def mutate(outbox: Any) -> Any:
+        outbox = outbox if isinstance(outbox, list) else []
+        for item in outbox:
+            if isinstance(item, dict) and str(item.get("id") or "") == notification_id:
+                inserted.update({"queued": False, "existing": True, "outbox_id": notification_id, "status": str(item.get("status") or "")})
+                return JSON_NO_CHANGE
+        outbox.append({
+            "id": notification_id,
+            "status": "pending",
+            "delivery_mode": "direct_wecom",
+            "notification_type": "staff_voice_owner_alert",
+            "task_id": f"staff_voice:{signal_id}",
+            "role": "boss",
+            "action": "staff_voice_high_risk_alert",
+            "target_user_id": owner_user_id,
+            "recipient_user_id": owner_user_id,
+            "to_user_id": owner_user_id,
+            "touser": owner_user_id,
+            "content": _staff_voice_alert_content(row),
+            "summary": _limit_text(row.get("signal_summary"), 260),
+            "staff_voice_signal_id": signal_id,
+            "staff_voice_risk_level": str(row.get("risk_level") or ""),
+            "staff_voice_category": str(row.get("category") or ""),
+            "created_at": created_at,
+            "attempt_count": 0,
+            "auto_effects": {
+                "sends_parent_messages": False,
+                "sends_teacher_messages": False,
+                "sends_manager_messages": False,
+                "sends_owner_messages": True,
+                "creates_tasks": False,
+                "changes_salary": False,
+                "changes_performance_conclusion": False,
+                "changes_permissions": False,
+                "changes_policy": False,
+                "changes_router": False,
+                "forces_next_action": False,
+            },
+        })
+        inserted.update({"queued": True, "existing": False, "outbox_id": notification_id, "status": "pending"})
+        return outbox[-2000:]
+
+    store.update_json("notification_outbox.json", [], mutate)
+    return inserted
+
+
+def _fold_staff_voice_signals(store: TuoguanStore) -> dict[str, dict[str, Any]]:
+    result: dict[str, dict[str, Any]] = {}
+    for row in _read_jsonl(store, STAFF_VOICE_SIGNALS_FILE):
+        signal_id = str(row.get("signal_id") or "")
+        if not signal_id:
+            continue
+        item = deepcopy(row)
+        item.setdefault("record_type", "staff_voice_signal")
+        item.setdefault("status", "open")
+        result[signal_id] = item
+    outbox_by_signal = _staff_voice_outbox_statuses(store)
+    for signal_id, item in result.items():
+        alert = item.get("owner_alert") if isinstance(item.get("owner_alert"), dict) else {}
+        outbox_item = outbox_by_signal.get(signal_id)
+        if outbox_item:
+            alert = {
+                **deepcopy(alert),
+                "outbox_id": str(outbox_item.get("id") or alert.get("outbox_id") or ""),
+                "outbox_status": str(outbox_item.get("status") or ""),
+                "last_attempt_at": str(outbox_item.get("last_attempt_at") or ""),
+                "sent_at": str(outbox_item.get("sent_at") or ""),
+            }
+        item["owner_alert"] = alert
+    return result
+
+
+def submit_staff_voice_signal(
+    store: TuoguanStore,
+    *,
+    identity: UserIdentity,
+    operation_id: str,
+    source_role: str = "",
+    category: str = "",
+    risk_level: str = "",
+    signal_summary: str = "",
+    impact: str = "",
+    suggested_owner_action: str = "",
+    source_user_id: str = "",
+    source_name: str = "",
+    evidence_excerpt: str = "",
+    source_text: str = "",
+    source_message_id: str = "",
+    occurred_at: str = "",
+    status: str = "open",
+) -> dict[str, Any]:
+    """Persist a staff voice signal without changing business policy or staff records."""
+
+    if identity.role not in {"teacher", "manager", "boss"} and identity.platform != "system":
+        return {"ok": False, "error": "permission_denied", "message": "只有老板、店长、老师或系统复盘可以提交员工声音信号。"}
+    normalized_role = _normalize_staff_voice_role(source_role, fallback=identity.role)
+    if not normalized_role:
+        return {"ok": False, "error": "invalid_staff_voice_source_role", "message": "员工声音来源必须是老师或店长。"}
+    summary = _limit_text(signal_summary, 500)
+    if not summary:
+        return {"ok": False, "error": "staff_voice_requires_summary", "message": "员工声音信号必须包含脱敏摘要。"}
+    combined_text = " ".join(str(value or "") for value in (signal_summary, impact, suggested_owner_action, evidence_excerpt, source_text))
+    normalized_category = _normalize_staff_voice_category(category or combined_text)
+    normalized_risk = _normalize_staff_voice_risk(risk_level, text=combined_text)
+    normalized_status = str(status or "open").strip()
+    if normalized_status not in _STAFF_VOICE_STATUSES:
+        normalized_status = "open"
+    actor_user_id = str(identity.canonical_user_id or identity.platform_user_id or "").strip()
+    normalized_source_user_id = str(source_user_id or (actor_user_id if identity.role == normalized_role else "")).strip()
+    normalized_source_name = _limit_text(source_name or (identity.person_name if identity.role == normalized_role else ""), 80)
+    occurred = _parse_time(occurred_at) or datetime.now().astimezone()
+    semantic_fingerprint = json.dumps({
+        "day": occurred.date().isoformat(),
+        "source_role": normalized_role,
+        "source_user_id": normalized_source_user_id,
+        "category": normalized_category,
+        "summary": re.sub(r"\s+", "", summary).lower()[:180],
+    }, ensure_ascii=False, sort_keys=True)
+    if source_message_id:
+        semantic_fingerprint = f"message:{source_message_id}:{normalized_category}"
+    for existing in reversed(_read_jsonl(store, STAFF_VOICE_SIGNALS_FILE)[-1000:]):
+        if str(existing.get("semantic_fingerprint") or "") == semantic_fingerprint:
+            return {
+                "ok": True,
+                "signal": existing,
+                "writeback_verified": True,
+                "state_changed": False,
+                "idempotent_replay": True,
+                "rendered_text": "相同员工声音信号已保存，本轮未重复追加。",
+            }
+
+    signal_id = _new_id("staff_voice")
+    owner_alert_required = normalized_risk in {"high", "urgent"}
+    owner_user_id = _staff_voice_owner_user_id(store) if owner_alert_required else ""
+    now_value = now_iso()
+    row = {
+        "record_type": "staff_voice_signal",
+        "schema_version": 1,
+        "signal_id": signal_id,
+        "tenant_id": current_tenant_id(),
+        "source_role": normalized_role,
+        "source_user_id": normalized_source_user_id,
+        "source_name": normalized_source_name,
+        "category": normalized_category,
+        "risk_level": normalized_risk,
+        "status": normalized_status,
+        "signal_summary": summary,
+        "impact": _limit_text(impact, 500),
+        "suggested_owner_action": _limit_text(suggested_owner_action, 500),
+        "evidence_excerpt": _limit_text(evidence_excerpt or source_text, 300),
+        "source_text": _limit_text(source_text, 500),
+        "source": _autonomous_source(identity, operation_id, source_message_id),
+        "occurred_at": occurred.isoformat(timespec="seconds"),
+        "created_at": now_value,
+        "updated_at": now_value,
+        "semantic_fingerprint": semantic_fingerprint,
+        "visibility": {
+            "boss_can_view_management_summary": True,
+            "staff_side_disclose_owner_reporting": False,
+            "boss_query_default_raw_transcript": False,
+            "low_risk_trend_only": normalized_risk == "low",
+        },
+        "owner_alert": {
+            "required": owner_alert_required,
+            "queued": False,
+            "outbox_id": "",
+            "status": "not_required" if not owner_alert_required else ("owner_missing" if not owner_user_id else "pending_queue"),
+        },
+        "auto_effects": {
+            "sends_parent_messages": False,
+            "sends_teacher_messages": False,
+            "sends_manager_messages": False,
+            "sends_owner_messages": False,
+            "creates_tasks": False,
+            "changes_salary": False,
+            "changes_performance_conclusion": False,
+            "changes_permissions": False,
+            "changes_policy": False,
+            "touches_parents": False,
+            "changes_router": False,
+            "forces_next_action": False,
+        },
+    }
+    if owner_alert_required and owner_user_id:
+        alert = _queue_staff_voice_owner_alert(store, row=row, owner_user_id=owner_user_id)
+        row["owner_alert"] = {
+            **row["owner_alert"],
+            "queued": bool(alert.get("queued") or alert.get("existing")),
+            "existing": bool(alert.get("existing")),
+            "outbox_id": str(alert.get("outbox_id") or ""),
+            "status": str(alert.get("status") or "pending"),
+        }
+        row["auto_effects"]["sends_owner_messages"] = bool(alert.get("queued"))
+    _append_jsonl(store, STAFF_VOICE_SIGNALS_FILE, row)
+    verified = any(
+        str(item.get("signal_id") or "") == signal_id
+        for item in _read_jsonl(store, STAFF_VOICE_SIGNALS_FILE)[-20:]
+    )
+    return {
+        "ok": True,
+        "signal": row,
+        "writeback_verified": verified,
+        "state_changed": True,
+        "owner_alert_candidate": deepcopy(row["owner_alert"]),
+        "rendered_text": (
+            "已保存员工声音信号；老师/店长侧不展示上报状态，老板侧可通过员工声音雷达查看管理摘要。"
+            if not owner_alert_required
+            else "已保存高风险员工声音信号，并生成老板-only 提醒候选。"
+        ),
+    }
+
+
+def query_staff_voice_radar(
+    store: TuoguanStore,
+    *,
+    identity: UserIdentity,
+    risk_level: str = "",
+    status: str = "",
+    now_at: str = "",
+    since_hours: int = 168,
+    limit: int = 50,
+) -> dict[str, Any]:
+    """Boss-only management radar built from staff voice signals."""
+
+    if identity.role != "boss" and identity.platform != "system":
+        return {"ok": False, "error": "permission_denied", "message": "只有老板或系统巡检可以查看员工声音雷达。"}
+    limit = max(1, min(int(limit or 50), 200))
+    hours = max(1, min(int(since_hours or 168), 24 * 90))
+    now_value = _parse_time(now_at) or datetime.now().astimezone()
+    if now_value.tzinfo is None:
+        now_value = now_value.astimezone()
+    since = now_value - timedelta(hours=hours)
+    risk_filter = _normalize_staff_voice_risk(risk_level) if str(risk_level or "").strip() else ""
+    status_filter = str(status or "").strip()
+    rows: list[dict[str, Any]] = []
+    for row in _fold_staff_voice_signals(store).values():
+        if str(row.get("record_type") or "") != "staff_voice_signal":
+            continue
+        if risk_filter and str(row.get("risk_level") or "") != risk_filter:
+            continue
+        if status_filter and str(row.get("status") or "") != status_filter:
+            continue
+        row_time = _parse_time(row.get("occurred_at") or row.get("created_at"))
+        if row_time is not None and row_time.tzinfo is None:
+            row_time = row_time.astimezone()
+        if row_time is not None and row_time < since:
+            continue
+        rows.append(deepcopy(row))
+    rows.sort(key=lambda item: str(item.get("occurred_at") or item.get("created_at") or ""))
+    rows = rows[-limit:]
+    risk_counts = {key: 0 for key in ("low", "medium", "high", "urgent")}
+    category_counts: dict[str, int] = {}
+    role_counts: dict[str, int] = {"teacher": 0, "manager": 0}
+    for row in rows:
+        risk = str(row.get("risk_level") or "low")
+        risk_counts[risk] = risk_counts.get(risk, 0) + 1
+        category = str(row.get("category") or "other_work_signal")
+        category_counts[category] = category_counts.get(category, 0) + 1
+        role = str(row.get("source_role") or "")
+        if role:
+            role_counts[role] = role_counts.get(role, 0) + 1
+
+    low_trends: list[dict[str, Any]] = []
+    for category, count in sorted(category_counts.items(), key=lambda pair: (-pair[1], pair[0])):
+        low_count = len([row for row in rows if str(row.get("risk_level") or "") == "low" and str(row.get("category") or "") == category])
+        if not low_count:
+            continue
+        samples = [
+            _limit_text(row.get("signal_summary"), 120)
+            for row in rows
+            if str(row.get("risk_level") or "") == "low" and str(row.get("category") or "") == category
+        ][:3]
+        low_trends.append({
+            "category": category,
+            "count": low_count,
+            "sample_summaries": samples,
+            "names_hidden_by_default": True,
+        })
+
+    named_signals: list[dict[str, Any]] = []
+    for row in rows:
+        if str(row.get("risk_level") or "") == "low":
+            continue
+        named_signals.append({
+            "signal_id": str(row.get("signal_id") or ""),
+            "source_role": str(row.get("source_role") or ""),
+            "source_user_id": str(row.get("source_user_id") or ""),
+            "source_name": str(row.get("source_name") or ""),
+            "category": str(row.get("category") or ""),
+            "risk_level": str(row.get("risk_level") or ""),
+            "status": str(row.get("status") or "open"),
+            "signal_summary": _limit_text(row.get("signal_summary"), 220),
+            "impact": _limit_text(row.get("impact"), 220),
+            "suggested_owner_action": _limit_text(row.get("suggested_owner_action"), 220),
+            "evidence_excerpt": _limit_text(row.get("evidence_excerpt"), 180),
+            "occurred_at": str(row.get("occurred_at") or ""),
+            "owner_alert": deepcopy(row.get("owner_alert") if isinstance(row.get("owner_alert"), dict) else {}),
+        })
+    urgent_or_high = [row for row in named_signals if str(row.get("risk_level") or "") in {"high", "urgent"} and str(row.get("status") or "open") == "open"]
+    lines = [
+        f"员工声音雷达：近 {hours} 小时 {len(rows)} 条，低风险 {risk_counts.get('low', 0)} 条，中高风险 {len(named_signals)} 条。",
+    ]
+    if low_trends:
+        trend_text = "；".join(f"{item['category']} {item['count']} 条" for item in low_trends[:3])
+        lines.append(f"低风险趋势：{trend_text}。")
+    if named_signals:
+        first = named_signals[-1]
+        who = str(first.get("source_name") or first.get("source_user_id") or first.get("source_role") or "员工")
+        lines.append(f"需关注：{who} [{first.get('risk_level')}] {first.get('signal_summary')}")
+    if urgent_or_high:
+        lines.append(f"高风险开放信号：{len(urgent_or_high)} 条，建议老板优先看摘要后决定是否找事实归属人沟通。")
+    lines.append("这些是老板侧管理材料；不会自动进入绩效、工资、制度或家长外发。")
+    return {
+        "ok": True,
+        "report_type": "staff_voice_radar_v1",
+        "tenant_id": current_tenant_id(),
+        "read_only": True,
+        "generated_at": now_value.isoformat(timespec="seconds"),
+        "since_hours": hours,
+        "signal_count": len(rows),
+        "risk_counts": risk_counts,
+        "category_counts": category_counts,
+        "source_role_counts": role_counts,
+        "low_risk_trends": low_trends,
+        "named_signals": named_signals,
+        "high_or_urgent_open_count": len(urgent_or_high),
+        "actions_taken": [],
+        "boundary": {
+            "boss_only_query": True,
+            "low_risk_names_hidden_by_default": True,
+            "does_not_change_salary": True,
+            "does_not_change_performance": True,
+            "does_not_change_policy": True,
+            "does_not_contact_parents": True,
+            "model_decides_next_action": True,
+        },
+        "rendered_text": "\n".join(lines),
+        "render_verified": True,
+    }
+
+
 def _safe_relationship_message(message: Any, *, role: str, work_related: bool) -> str:
     text = _limit_text(message, 700)
     if len(text) < 8:
@@ -4412,6 +4883,11 @@ def query_xiaoyou_health(
     outbox_health = _xiaoyou_outbox_health(outbox, since_ts)
     attention = query_attention_threads(store, identity=identity, include_closed=False, limit=limit)
     fact_gaps = query_fact_gap_candidates(store, identity=identity, limit=limit)
+    staff_voice = (
+        query_staff_voice_radar(store, identity=identity, now_at=now.isoformat(timespec="seconds"), since_hours=24, limit=min(max(int(limit or 20), 5), 50))
+        if identity.role == "boss" or identity.platform == "system"
+        else {"ok": False, "error": "boss_only"}
+    )
     try:
         from .self_evolution import build_self_evolution_brief
 
@@ -4432,6 +4908,9 @@ def query_xiaoyou_health(
     fact_gap_count = int(fact_gaps.get("candidate_count") or 0) if isinstance(fact_gaps, dict) else 0
     if fact_gap_count:
         issues.append(f"有 {fact_gap_count} 条机构事实缺口候选，需要小优按事实归属人择机补齐。")
+    staff_voice_high_count = int(staff_voice.get("high_or_urgent_open_count") or 0) if isinstance(staff_voice, dict) and staff_voice.get("ok") else 0
+    if staff_voice_high_count:
+        issues.append(f"有 {staff_voice_high_count} 条员工声音高风险开放信号，需要老板优先关注。")
     pending_review = int(evolution.get("review_queue_count") or 0) if isinstance(evolution, dict) else 0
     if pending_review:
         issues.append(f"有 {pending_review} 条中高风险进化候选等待人工确认，未自动生效。")
@@ -4456,6 +4935,15 @@ def query_xiaoyou_health(
             "by_ask_role": deepcopy(fact_gaps.get("by_ask_role") or {}) if isinstance(fact_gaps, dict) else {},
             "urgency_counts": deepcopy(fact_gaps.get("urgency_counts") or {}) if isinstance(fact_gaps, dict) else {},
             "candidates": deepcopy((fact_gaps.get("candidates") or [])[: min(max(int(limit or 20), 1), 20)]) if isinstance(fact_gaps, dict) else [],
+        },
+        "staff_voice": {
+            "available": bool(isinstance(staff_voice, dict) and staff_voice.get("ok")),
+            "signal_count_last_24h": int(staff_voice.get("signal_count") or 0) if isinstance(staff_voice, dict) and staff_voice.get("ok") else 0,
+            "risk_counts": deepcopy(staff_voice.get("risk_counts") or {}) if isinstance(staff_voice, dict) and staff_voice.get("ok") else {},
+            "high_or_urgent_open_count": staff_voice_high_count,
+            "low_risk_trends": deepcopy((staff_voice.get("low_risk_trends") or [])[:5]) if isinstance(staff_voice, dict) and staff_voice.get("ok") else [],
+            "named_signals": deepcopy((staff_voice.get("named_signals") or [])[:5]) if isinstance(staff_voice, dict) and staff_voice.get("ok") else [],
+            "boss_only": True,
         },
         "evolution": {
             "next_day_context_count": len(next_context),
@@ -4575,6 +5063,12 @@ def _render_xiaoyou_health(health: dict[str, Any]) -> str:
         f"- 进化：今日可带入 {((health.get('evolution') or {}).get('next_day_context_count') or 0)} 条；待确认 {((health.get('evolution') or {}).get('pending_review_count') or 0)} 条；工具失败候选 {((health.get('evolution') or {}).get('tool_failure_candidate_count') or 0)} 条。",
         f"- 事实缺口：{((health.get('fact_gaps') or {}).get('candidate_count') or 0)} 条。",
     ]
+    staff_voice = health.get("staff_voice") if isinstance(health.get("staff_voice"), dict) else {}
+    if staff_voice.get("available"):
+        lines.append(
+            f"- 员工声音：近24小时 {staff_voice.get('signal_count_last_24h') or 0} 条；"
+            f"高风险开放 {staff_voice.get('high_or_urgent_open_count') or 0} 条。"
+        )
     issues = health.get("issues") if isinstance(health.get("issues"), list) else []
     if issues:
         lines.append("- 需要关注：" + "；".join(str(item) for item in issues[:3]))
