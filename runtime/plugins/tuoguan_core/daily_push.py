@@ -186,7 +186,7 @@ def dashboard_push_message(identity: UserIdentity, store: TuoguanStore) -> str:
     else:
         lead = "今天先看经营重点：风险、工资、续费和数据问题。"
     return (
-        f"【Hermes {role_label}今日任务】\n"
+        f"【小优{role_label}今日任务】\n"
         f"{lead}\n"
         f"{url}\n\n"
         f"链接有效期至 {expiry}。看板只读，处理记录和任务仍回企业微信直接说。"

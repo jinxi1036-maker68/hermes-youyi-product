@@ -1317,7 +1317,7 @@ def _work_item_card(item: dict[str, Any]) -> dict[str, Any]:
     phase = _as_dict(item.get("current_phase"))
     return {
         "focus_key": str(item.get("focus_key") or ""),
-        "title": str(item.get("title") or item.get("focus_summary") or item.get("focus_key") or "Hermes 工作事项"),
+        "title": str(item.get("title") or item.get("focus_summary") or item.get("focus_key") or "小优工作事项"),
         "status": str(item.get("status") or "active"),
         "phase": _short_text(phase.get("name") or phase.get("phase") or item.get("stage") or ""),
         "blocker": _short_text(current_waiting.get("reason") or item.get("owner_escalation_reason") or item.get("focus_summary") or ""),
@@ -1420,7 +1420,7 @@ def _relationship_touch_snapshot(
             }
             for row in latest
         ],
-        "boundary_note": "这些是 Hermes 的关系经营候选；老师/店长未授权前只展示，不自动外发。",
+        "boundary_note": "这些是小优的关系经营候选；老师/店长未授权前只展示，不自动外发。",
     }
 
 
@@ -1511,9 +1511,9 @@ def _hermes_employee_snapshot(
         ]
     return {
         "headline": (
-            "Hermes 正在推进：" + str(current.get("title"))
+            "小优正在推进：" + str(current.get("title"))
             if current
-            else "暂无活跃目标，Hermes 会继续巡检机构事实、记录覆盖和风险信号。"
+            else "暂无活跃目标，小优会继续巡检机构事实、记录覆盖和风险信号。"
         ),
         "role_tone": "professional_operator" if role == "boss" else "store_assistant",
         "cards": cards,
@@ -1536,7 +1536,7 @@ def _hermes_employee_snapshot(
             for row in values
         ][:2],
         "risk_summary": risk_summary,
-        "boundary_note": "看板只展示 Hermes 的状态、证据和建议，不替 Hermes 决定下一步，也不扩大外发权限。",
+        "boundary_note": "看板只展示小优的状态、证据和建议，不替小优决定下一步，也不扩大外发权限。",
     }
 
 
@@ -1567,7 +1567,7 @@ def _manager_assistant_snapshot(
     if not support:
         support.append({"title": "今天先保持现场巡检", "detail": "当前没有明显老师支持缺口，重点看安全、记录覆盖和老板目标落地。"})
     return {
-        "headline": "Hermes 今天帮你盯现场执行和老师支持。",
+        "headline": "小优今天帮你盯现场执行和老师支持。",
         "store_status": {
             "today_records": summary.get("today_records", 0),
             "coverage_rate_7d": summary.get("coverage_rate_7d", 0),
@@ -1618,9 +1618,9 @@ def _teacher_hermes_blocks(
     tree_level = max(1, min(9, score // 12 + 1))
     companion = {
         "headline": (
-            f"{display_name}，今天 Hermes 已经帮你整理了 {len(today_records)} 条成长证据。"
+            f"{display_name}，今天小优已经帮你整理了 {len(today_records)} 条成长证据。"
             if today_records
-            else f"{display_name}，今天还没有新记录；你顺手说一句，Hermes 就能帮你整理成孩子成长证据。"
+            else f"{display_name}，今天还没有新记录；你顺手说一句，小优就能帮你整理成孩子成长证据。"
         ),
         "helped_today": [
             f"整理今日记录 {len(today_records)} 条",
@@ -1651,7 +1651,7 @@ def _teacher_hermes_blocks(
             "stability": stability,
         },
         "growth_text": (
-            "这棵树来自你和 Hermes 的配合：回复越及时、细节越具体、越能变成家校素材，树就长得越好。"
+            "这棵树来自你和小优的配合：回复越及时、细节越具体、越能变成家校素材，树就长得越好。"
         ),
         "next_tip": (
             "再补一句孩子具体表现和老师怎么处理，会更容易长出果实。"
@@ -1774,7 +1774,7 @@ def _teacher_dashboard(
         f"今天你留下了{len(today_records)}条孩子成长证据，其中"
         f"{sum(1 for record in today_records if _is_quality_record(record))}条质量不错。"
         if today_records
-        else "今天还没有新的记录。等你在企业微信顺手说一句，Hermes会帮你整理成孩子的成长证据。"
+        else "今天还没有新的记录。等你在企业微信顺手说一句，小优会帮你整理成孩子的成长证据。"
     )
     hermes_companion, hermes_tree = _teacher_hermes_blocks(
         display_name=display_name or user_id,
@@ -1838,7 +1838,7 @@ def _teacher_dashboard(
         },
         "hermes_companion": hermes_companion,
         "hermes_colleague_touch": {
-            "headline": "Hermes 同事一句话",
+            "headline": "小优同事一句话",
             "message": colleague_line,
             "candidates": relationship_touch.get("items", []),
             "boundary_note": "这些候选用于陪伴、鼓励和减负；未授权前不会自动私聊老师，私人情绪聊天不默认进入老板绩效材料。",

@@ -103,14 +103,32 @@ def test_dashboard_v2_adds_hermes_role_blocks(tmp_path):
     assert teacher["hermes_performance_tree"]["cap_amount"] == 200
     assert teacher["hermes_performance_tree"]["estimated_amount"] >= 0
     assert "扣" not in json.dumps(teacher["hermes_performance_tree"], ensure_ascii=False)
+    public_payload = json.dumps(
+        {
+            "boss_headline": boss["hermes_employee"]["headline"],
+            "boss_boundary": boss["hermes_employee"]["boundary_note"],
+            "teacher_headline": teacher["hermes_companion"]["headline"],
+            "teacher_growth": teacher["hermes_performance_tree"]["growth_text"],
+        },
+        ensure_ascii=False,
+    )
+    assert "小优" in public_payload
+    assert "Hermes" not in public_payload
 
 
 def test_dashboard_v2_frontend_contains_new_default_tabs():
     from plugins.tuoguan_core.dashboard_http import _DASHBOARD_HTML
 
-    assert "Hermes 数字员工工作台" in _DASHBOARD_HTML
-    assert "Hermes 店长助手" in _DASHBOARD_HTML
-    assert "Hermes 老师成长助手" in _DASHBOARD_HTML
+    assert "小优数字员工工作台" in _DASHBOARD_HTML
+    assert "小优店长助手" in _DASHBOARD_HTML
+    assert "小优老师成长助手" in _DASHBOARD_HTML
+    assert "小优助手" in _DASHBOARD_HTML
+    assert "正在读取小优看板数据" in _DASHBOARD_HTML
+    assert 'replace(/Hermes/g, "小优")' in _DASHBOARD_HTML
+    assert "Hermes 数字员工工作台" not in _DASHBOARD_HTML
+    assert "Hermes 店长助手" not in _DASHBOARD_HTML
+    assert "Hermes 老师成长助手" not in _DASHBOARD_HTML
+    assert "Hermes助手" not in _DASHBOARD_HTML
     assert "boss-brief" in _DASHBOARD_HTML
     assert "需要我拍板" in _DASHBOARD_HTML
     assert "后台跟进事项" in _DASHBOARD_HTML
