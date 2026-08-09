@@ -151,6 +151,109 @@ def test_staff_voice_radar_is_boss_only_and_registered(tmp_path):
     assert radar["data"]["named_signals"][0]["source_name"] == "李老师"
 
 
+def test_boss_can_query_staff_conversation_activity_from_reply_ledger(tmp_path):
+    from plugins.tuoguan_core.staff_conversation_activity import query_staff_conversation_activity
+    from plugins.tuoguan_core.models import UserIdentity
+
+    store = _seed_store(tmp_path, guard_enabled=False)
+    now = datetime(2026, 8, 9, 18, 40, tzinfo=timezone(timedelta(hours=8)))
+    _append_jsonl(
+        tmp_path,
+        "reply_ledger.jsonl",
+        [
+            {
+                "message_id": "msg-teacher-1",
+                "user_id": "teacher1",
+                "role": "teacher",
+                "raw_text": "这个任务已经完成",
+                "final_reply": "收到，我先记录你的反馈。",
+                "created_at": "2026-08-09T18:04:13+08:00",
+            },
+            {
+                "message_id": "msg-boss-1",
+                "user_id": "boss1",
+                "role": "boss",
+                "raw_text": "今天有没有老师找你对话",
+                "final_reply": "",
+                "created_at": "2026-08-09T18:05:00+08:00",
+            },
+            {
+                "message_id": "msg-teacher-2",
+                "user_id": "teacher1",
+                "role": "teacher",
+                "raw_text": "我还有什么任务吗",
+                "final_reply": "我帮你看一下任务。",
+                "created_at": "2026-08-09T18:31:51+08:00",
+            },
+            {
+                "message_id": "msg-manager-1",
+                "user_id": "manager1",
+                "role": "manager",
+                "raw_text": "几个老师最近对排班有意见。",
+                "final_reply": "我先帮你把冲突点拆一下。",
+                "created_at": "2026-08-09T17:20:00+08:00",
+            },
+            {
+                "message_id": "msg-old",
+                "user_id": "teacher1",
+                "role": "teacher",
+                "raw_text": "昨天的消息",
+                "final_reply": "",
+                "created_at": "2026-08-08T18:00:00+08:00",
+            },
+        ],
+    )
+    boss = UserIdentity("wecom_callback", "boss1", "boss1", "金总", "boss", "approved")
+
+    report = query_staff_conversation_activity(store, identity=boss, period="today", now_at=now.isoformat())
+
+    assert report["ok"] is True
+    assert report["report_type"] == "staff_conversation_activity_v1"
+    assert report["staff_contact_count"] == 2
+    assert report["total_message_count"] == 3
+    assert report["role_counts"]["teacher"] == 1
+    assert report["role_counts"]["manager"] == 1
+    teacher = next(item for item in report["conversations"] if item["user_id"] == "teacher1")
+    assert teacher["name"] == "李老师"
+    assert teacher["message_count"] == 2
+    assert teacher["latest_text"] == "我还有什么任务吗"
+    assert "今天有 2 位老师/店长" in report["rendered_text"]
+    assert "老板侧活动摘要" in report["rendered_text"]
+
+
+def test_staff_conversation_activity_is_boss_only_registered_and_semantic(tmp_path):
+    import plugins.tuoguan_core as plugin
+    from plugins.tuoguan_core.runtime_foundation import MODEL_SELECTED_READ_TOOLS, _semantic_tool_match
+    from plugins.tuoguan_core.tool_service import TuoguanToolService
+    from plugins.tuoguan_core.tools import TOOLS
+    from plugins.tuoguan_core.models import UserIdentity
+
+    store = _seed_store(tmp_path, guard_enabled=False)
+    names = {name for name, _schema, _handler in TOOLS}
+    assert "tuoguan_query_staff_conversation_activity" in names
+    assert "tuoguan_query_staff_conversation_activity" in MODEL_SELECTED_READ_TOOLS
+    assert _semantic_tool_match(
+        {"raw_text": "今天有没有老师找你对话"},
+        "tuoguan_query_staff_conversation_activity",
+        {"period": "today"},
+    )
+
+    teacher_service = TuoguanToolService(store, platform="wecom_callback", user_id="teacher1", user_name="李老师")
+    denied = teacher_service.query_staff_conversation_activity(period="today")
+    assert denied["ok"] is False
+    assert denied["error"] == "permission_denied"
+
+    boss_service = TuoguanToolService(store, platform="wecom_callback", user_id="boss1", user_name="金总")
+    allowed = boss_service.query_staff_conversation_activity(period="today")
+    assert allowed["ok"] is True
+    assert allowed["data"]["report_type"] == "staff_conversation_activity_v1"
+
+    boss = UserIdentity("wecom_callback", "boss1", "boss1", "金总", "boss", "approved")
+    boss_context = plugin._role_layer_context(identity=boss, raw_text="今天有没有老师找你对话")
+    assert "tuoguan_query_staff_conversation_activity" in boss_context
+    assert "不得凭记忆回答“没有”" in boss_context
+
+
 def test_role_layer_context_keeps_teacher_supportive_and_boss_queries_radar():
     import plugins.tuoguan_core as plugin
     from plugins.tuoguan_core.models import UserIdentity

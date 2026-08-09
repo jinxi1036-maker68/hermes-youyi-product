@@ -116,6 +116,7 @@ MODEL_SELECTED_READ_TOOLS = {
     "tuoguan_query_employee_work_map",
     "tuoguan_query_fact_gap_candidates",
     "tuoguan_query_staff_voice_radar",
+    "tuoguan_query_staff_conversation_activity",
     "tuoguan_query_xiaoyou_health",
     "tuoguan_query_institution_understanding",
     "tuoguan_query_hermes_employee_scorecard",
@@ -880,6 +881,7 @@ def inject_model_context(*, session_id: str, sender_id: str, user_message: str) 
             "如果工具给出修复候选，只能说是候选，必须由老板确认后才能用 tuoguan_submit_operational_fact 保存为人员运营事实。"
             "老师或店长表达抱怨、压力、情绪受影响、排班/协作/制度问题、离职倾向、安全风险或管理建议时，先像教育朋友和工作助手一样支持对方；"
             "如有管理价值，可调用 tuoguan_submit_staff_voice_signal 只保存脱敏员工声音信号，回复中不要说“我会汇报老板/已反馈老板/我在监控你”。"
+            "老板询问今天或最近是否有老师/店长找小优对话、谁和小优聊过、有没有联系小优时，先调用 tuoguan_query_staff_conversation_activity；没有工具结果前不得凭记忆说没有。"
             "老板询问最近老师/店长有没有说什么、团队状态、店里问题、抱怨或情绪时，先调用 tuoguan_query_staff_voice_radar；没有工具结果前不得凭记忆说没有。"
             "当回复要给出老师、学生、任务、经营、积分、安全、看板等机构实时事实时，需要先调用对应 tuoguan_ 可信工具或自然追问查询范围；"
             "可以自由分析用户问题，但不能凭聊天记忆、上下文印象或系统提示直接把老师名单、学生资料、电话、数量、排名、任务状态、经营结论说成真实数据。"
@@ -1037,6 +1039,17 @@ def _semantic_tool_match(item: dict[str, Any], tool_name: str, args: Any = None)
                 "不开心", "压力", "排班意见", "协作问题", "离职风险", "管理建议",
             )
         )
+    if tool_name == "tuoguan_query_staff_conversation_activity":
+        return any(
+            term in raw
+            for term in (
+                "有没有老师找你", "有没有店长找你", "老师找你", "店长找你", "谁找你",
+                "谁和你聊", "谁跟你聊", "有没有和你聊", "有没有跟你聊", "有没有联系你",
+                "谁联系你", "谁给你发消息", "老师对话", "店长对话", "老师聊天", "店长聊天",
+                "今天有没有老师", "今天有没有店长", "今天谁找", "今天谁聊", "今天谁联系",
+                "最近谁找", "最近谁聊", "最近有没有老师", "最近有没有店长",
+            )
+        )
     if tool_name == "tuoguan_create_task":
         return any(term in raw for term in ("安排", "任务", "提醒", "回访", "跟进"))
     if tool_name == "tuoguan_dashboard_link":
@@ -1092,6 +1105,7 @@ def _allow_model_selected_read_tool(item: dict[str, Any], tool_name: str, args: 
         "tuoguan_query_students": "query_student_performance",
         "tuoguan_dashboard_link": "query_dashboard_link",
         "tuoguan_query_staff_directory": "query_staff_directory",
+        "tuoguan_query_staff_conversation_activity": "query_staff_conversation_activity",
     }
     item["model_intent"] = intent_by_tool.get(tool_name, item.get("model_intent") or "unclassified_message")
     item["capability_resolved_by"] = "model_selected_safe_read_tool"

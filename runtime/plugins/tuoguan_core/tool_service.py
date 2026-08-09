@@ -57,6 +57,7 @@ from .operational_facts import (
     submit_operational_fact_candidate,
 )
 from .staff_directory import query_staff_directory as build_staff_directory_report
+from .staff_conversation_activity import query_staff_conversation_activity as build_staff_conversation_activity
 from .self_evolution import query_self_evolution_ledger as build_self_evolution_ledger
 from .workstyle_profiles import (
     query_person_workstyle_profile as build_person_workstyle_profile,
@@ -3009,6 +3010,33 @@ class TuoguanToolService:
         if not result.get("ok"):
             return self._error(str(result.get("error") or "staff_voice_unavailable"), str(result.get("message") or "员工声音雷达查询失败。"))
         return self._ok("query_staff_voice_radar", data=result, message=str(result.get("rendered_text") or ""))
+
+    def query_staff_conversation_activity(
+        self,
+        *,
+        period: str = "today",
+        since_hours: int = 24,
+        include_latest_excerpt: bool = True,
+        now_at: str = "",
+        limit: int = 20,
+    ) -> dict[str, Any]:
+        denied = self._approved()
+        if denied:
+            return denied
+        if self.identity.role != "boss":
+            return self._error("permission_denied", "只有老板可以查看员工对话活动。")
+        result = build_staff_conversation_activity(
+            self.store,
+            identity=self.identity,
+            period=period,
+            since_hours=since_hours,
+            include_latest_excerpt=include_latest_excerpt,
+            now_at=now_at,
+            limit=limit,
+        )
+        if not result.get("ok"):
+            return self._error(str(result.get("error") or "staff_conversation_activity_unavailable"), str(result.get("message") or "员工对话活动查询失败。"))
+        return self._ok("query_staff_conversation_activity", data=result, message=str(result.get("rendered_text") or ""))
 
     def query_xiaoyou_health(self, *, now_at: str = "", limit: int = 20) -> dict[str, Any]:
         denied = self._approved()

@@ -1059,6 +1059,18 @@ TUOGUAN_QUERY_STAFF_VOICE_RADAR_SCHEMA = _schema(
     ["user_id"],
 )
 
+TUOGUAN_QUERY_STAFF_CONVERSATION_ACTIVITY_SCHEMA = _schema(
+    "老板只读查询员工与小优的对话活动摘要：按时间窗口汇总老师/店长是否联系过小优、最近时间、轮次数和最近一句摘要。它不是完整私聊导出，不外发、不派任务、不改绩效工资制度。",
+    _identity_props({
+        "period": {"type": "string", "enum": ["today", "yesterday", "last_24h"], "default": "today", "description": "查询窗口，默认今天。"},
+        "since_hours": {"type": "integer", "default": 24, "description": "period 为 last_24h 时使用。"},
+        "include_latest_excerpt": {"type": "boolean", "default": True, "description": "是否返回最近一句摘要。"},
+        "now_at": {"type": "string", "description": "可选，当前时间 ISO 字符串；默认系统当前时间。"},
+        "limit": {"type": "integer", "default": 20},
+    }),
+    ["user_id"],
+)
+
 TUOGUAN_QUERY_XIAOYOU_HEALTH_SCHEMA = _schema(
     "只读查询小优健康度：日报是否送达、主动问题是否卡住、任务提醒是否重复、工具失败候选、进化候选和事实缺口。它只返回维护/看板材料，不外发、不派任务、不改事实。",
     _identity_props({
@@ -1218,6 +1230,7 @@ TOOLS = (
     ("tuoguan_submit_fact_gap_candidate", TUOGUAN_SUBMIT_FACT_GAP_CANDIDATE_SCHEMA, _handler("submit_fact_gap_candidate")),
     ("tuoguan_submit_staff_voice_signal", TUOGUAN_SUBMIT_STAFF_VOICE_SIGNAL_SCHEMA, _handler("submit_staff_voice_signal")),
     ("tuoguan_query_staff_voice_radar", TUOGUAN_QUERY_STAFF_VOICE_RADAR_SCHEMA, _handler("query_staff_voice_radar")),
+    ("tuoguan_query_staff_conversation_activity", TUOGUAN_QUERY_STAFF_CONVERSATION_ACTIVITY_SCHEMA, _handler("query_staff_conversation_activity")),
     ("tuoguan_query_xiaoyou_health", TUOGUAN_QUERY_XIAOYOU_HEALTH_SCHEMA, _handler("query_xiaoyou_health")),
     ("tuoguan_query_self_evolution_ledger", TUOGUAN_QUERY_SELF_EVOLUTION_LEDGER_SCHEMA, _handler("query_self_evolution_ledger")),
     ("tuoguan_query_industry_learning_candidates", TUOGUAN_QUERY_INDUSTRY_LEARNING_CANDIDATES_SCHEMA, _handler("query_industry_learning_candidates")),
