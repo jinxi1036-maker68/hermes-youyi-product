@@ -1,0 +1,200 @@
+from __future__ import annotations
+
+from datetime import datetime, timedelta, timezone
+import json
+from pathlib import Path
+
+
+def _write_json(path: Path, name: str, payload) -> None:
+    path.mkdir(parents=True, exist_ok=True)
+    (path / name).write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
+
+
+def _append_jsonl(path: Path, name: str, rows: list[dict]) -> None:
+    path.mkdir(parents=True, exist_ok=True)
+    with (path / name).open("w", encoding="utf-8") as handle:
+        for row in rows:
+            handle.write(json.dumps(row, ensure_ascii=False, separators=(",", ":")) + "\n")
+
+
+def _seed_store(tmp_path: Path):
+    from plugins.tuoguan_core.store import TuoguanStore
+
+    _write_json(tmp_path, "write_guard_config.json", {"enabled": True})
+    _write_json(
+        tmp_path,
+        "wecom_whitelist.json",
+        {
+            "super_users": ["boss1"],
+            "allowed_users": ["manager1", "teacher1"],
+            "user_roles": {"boss1": "boss", "manager1": "manager", "teacher1": "teacher"},
+        },
+    )
+    _write_json(tmp_path, "teacher_wecom_map.json", {"金总": "boss1", "店长": "manager1", "李老师": "teacher1"})
+    _write_json(tmp_path, "staff.json", {"manager1": {"name": "店长", "role": "manager"}, "teacher1": {"name": "李老师", "role": "teacher"}})
+    _write_json(
+        tmp_path,
+        "notification_outbox.json",
+        [
+            {
+                "id": "autonomous_daily_report:20260809:morning",
+                "notification_type": "autonomous_daily_report",
+                "status": "sent",
+                "sent_at": "2026-08-09T08:02:00+08:00",
+                "created_at": "2026-08-09T08:00:00+08:00",
+            },
+            {
+                "id": "task1:teacher:task_due",
+                "status": "pending",
+                "action": "task_due",
+                "task_id": "task1",
+                "touser": "teacher1",
+                "created_at": "2026-08-09T09:00:00+08:00",
+            },
+            {
+                "id": "task1:teacher:task_due:dup",
+                "status": "pending",
+                "action": "task_due",
+                "task_id": "task1",
+                "touser": "teacher1",
+                "created_at": "2026-08-09T09:05:00+08:00",
+            },
+            {
+                "id": "owner_attention:failed",
+                "status": "result_unknown",
+                "notification_type": "autonomous_owner_attention",
+                "created_at": "2026-08-09T10:00:00+08:00",
+            },
+        ],
+    )
+    _append_jsonl(
+        tmp_path,
+        "daily_report_runs.jsonl",
+        [
+            {
+                "record_type": "daily_report_delivery_status",
+                "report_kind": "morning",
+                "notification_id": "autonomous_daily_report:20260809:morning",
+                "delivery_status": "sent",
+                "observed_at": "2026-08-09T08:02:05+08:00",
+            }
+        ],
+    )
+    _append_jsonl(
+        tmp_path,
+        "attention_threads.jsonl",
+        [
+            {
+                "attention_id": "att1",
+                "status": "sent",
+                "target_user_id": "boss1",
+                "question_text": "请确认日报是否还需要更短。",
+                "created_at": "2026-08-09T08:30:00+08:00",
+            }
+        ],
+    )
+    _append_jsonl(
+        tmp_path,
+        "institution_fact_gap_events.jsonl",
+        [
+            {
+                "gap_event_id": "gap1",
+                "tenant_id": "youyi_tuoguan",
+                "gap_key": "teacher_record_habit",
+                "gap_text": "缺少李老师记录作业完成情况的习惯。",
+                "ask_role": "teacher",
+                "urgency": "normal",
+                "created_at": "2026-08-09T09:30:00+08:00",
+            }
+        ],
+    )
+    _append_jsonl(
+        tmp_path,
+        "self_evolution_events.jsonl",
+        [
+            {
+                "record_type": "self_evolution_event",
+                "evolution_event_id": "evo1",
+                "tenant_id": "youyi_tuoguan",
+                "candidate_type": "self_correction",
+                "summary": "日报只说重点。",
+                "risk_level": "low",
+                "status": "ready_for_application",
+                "created_at": "2026-08-09T01:00:00+08:00",
+            },
+            {
+                "record_type": "self_evolution_event",
+                "evolution_event_id": "evo2",
+                "tenant_id": "youyi_tuoguan",
+                "candidate_type": "tool_failure_or_bug",
+                "summary": "人员问题未先查目录。",
+                "risk_level": "medium",
+                "status": "pending_review",
+                "created_at": "2026-08-09T01:10:00+08:00",
+            },
+        ],
+    )
+    _append_jsonl(
+        tmp_path,
+        "hermes_work_items.jsonl",
+        [
+            {
+                "record_type": "work_item",
+                "work_item_id": "work1",
+                "tenant_id": "youyi_tuoguan",
+                "focus_key": "goal:test",
+                "title": "目标推进",
+                "status": "waiting",
+                "focus_summary": "等待事实。",
+                "created_at": "2026-08-09T08:10:00+08:00",
+            }
+        ],
+    )
+    return TuoguanStore(tmp_path)
+
+
+def test_xiaoyou_health_summarizes_read_only_operating_signals(tmp_path):
+    from plugins.tuoguan_core.digital_employee_state import query_xiaoyou_health
+    from plugins.tuoguan_core.models import UserIdentity
+
+    store = _seed_store(tmp_path)
+    before_outbox = (tmp_path / "notification_outbox.json").read_text(encoding="utf-8")
+    identity = UserIdentity("wecom_callback", "boss1", "boss1", "金总", "boss", "approved")
+
+    result = query_xiaoyou_health(store, identity=identity, now_at="2026-08-09T11:00:00+08:00")
+
+    assert result["ok"] is True
+    assert result["read_only"] is True
+    assert result["status"] == "attention_needed"
+    assert result["daily_reports"]["sent_last_24h"] is True
+    assert result["proactive_work"]["outbox"]["failed_or_unknown_count"] == 1
+    assert result["proactive_work"]["outbox"]["repeated_task_reminder_candidate_count"] == 1
+    assert result["fact_gaps"]["candidate_count"] == 1
+    assert result["fact_gaps"]["by_ask_role"]["teacher"] == 1
+    assert result["evolution"]["next_day_context_count"] == 1
+    assert result["evolution"]["pending_review_count"] == 1
+    assert result["evolution"]["tool_failure_candidate_count"] == 1
+    assert result["actions_taken"] == []
+    assert result["boundary"]["sends_messages"] is False
+    assert (tmp_path / "notification_outbox.json").read_text(encoding="utf-8") == before_outbox
+
+
+def test_xiaoyou_health_tool_is_registered_and_permission_scoped(tmp_path):
+    from plugins.tuoguan_core.runtime_foundation import MODEL_SELECTED_READ_TOOLS
+    from plugins.tuoguan_core.tool_service import TuoguanToolService
+    from plugins.tuoguan_core.tools import TOOLS
+
+    store = _seed_store(tmp_path)
+    names = {name for name, _schema, _handler in TOOLS}
+    assert "tuoguan_query_xiaoyou_health" in names
+    assert "tuoguan_query_xiaoyou_health" in MODEL_SELECTED_READ_TOOLS
+
+    boss = TuoguanToolService(store, platform="wecom_callback", user_id="boss1", user_name="金总")
+    result = boss.query_xiaoyou_health(now_at="2026-08-09T11:00:00+08:00")
+    assert result["ok"] is True
+    assert result["data"]["report_type"] == "xiaoyou_health_v1"
+
+    teacher = TuoguanToolService(store, platform="wecom_callback", user_id="teacher1", user_name="李老师")
+    denied = teacher.query_xiaoyou_health(now_at="2026-08-09T11:00:00+08:00")
+    assert denied["ok"] is False
+    assert denied["error"] == "permission_denied"

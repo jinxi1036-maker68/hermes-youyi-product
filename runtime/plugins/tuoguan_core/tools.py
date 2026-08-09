@@ -1026,6 +1026,15 @@ TUOGUAN_SUBMIT_FACT_GAP_CANDIDATE_SCHEMA = _schema(
     ["user_id", "gap_key", "gap_text", "fact_owner_role", "operation_id"],
 )
 
+TUOGUAN_QUERY_XIAOYOU_HEALTH_SCHEMA = _schema(
+    "只读查询小优健康度：日报是否送达、主动问题是否卡住、任务提醒是否重复、工具失败候选、进化候选和事实缺口。它只返回维护/看板材料，不外发、不派任务、不改事实。",
+    _identity_props({
+        "now_at": {"type": "string", "description": "可选，当前时间 ISO 字符串；默认系统当前时间。"},
+        "limit": {"type": "integer", "default": 20, "description": "最多返回事实缺口候选数量。"},
+    }),
+    ["user_id"],
+)
+
 TUOGUAN_QUERY_SELF_EVOLUTION_LEDGER_SCHEMA = _schema(
     "只读查询小优自我进化账本：最近学到的工作方式、错误修正、工具失败、机构事实缺口、手册候选、明日重点和 multi-agent 建议采纳记录。它只提供经验和审核材料，不自动改变制度、权限、手册、家长外发或模型下一步。",
     _identity_props({
@@ -1174,6 +1183,7 @@ TOOLS = (
     ("tuoguan_query_employee_work_map", TUOGUAN_QUERY_EMPLOYEE_WORK_MAP_SCHEMA, _handler("query_employee_work_map")),
     ("tuoguan_query_fact_gap_candidates", TUOGUAN_QUERY_FACT_GAP_CANDIDATES_SCHEMA, _handler("query_fact_gap_candidates")),
     ("tuoguan_submit_fact_gap_candidate", TUOGUAN_SUBMIT_FACT_GAP_CANDIDATE_SCHEMA, _handler("submit_fact_gap_candidate")),
+    ("tuoguan_query_xiaoyou_health", TUOGUAN_QUERY_XIAOYOU_HEALTH_SCHEMA, _handler("query_xiaoyou_health")),
     ("tuoguan_query_self_evolution_ledger", TUOGUAN_QUERY_SELF_EVOLUTION_LEDGER_SCHEMA, _handler("query_self_evolution_ledger")),
     ("tuoguan_query_industry_learning_candidates", TUOGUAN_QUERY_INDUSTRY_LEARNING_CANDIDATES_SCHEMA, _handler("query_industry_learning_candidates")),
     ("tuoguan_query_external_research_runs", TUOGUAN_QUERY_EXTERNAL_RESEARCH_RUNS_SCHEMA, _handler("query_external_research_runs")),

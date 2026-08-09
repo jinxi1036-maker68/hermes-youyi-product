@@ -76,6 +76,7 @@ from .digital_employee_state import (
     query_gray_optimization_decisions,
     query_gray_observations,
     query_gray_rollout_decisions,
+    query_xiaoyou_health,
     query_parent_communication_coverage,
     query_performance_evidence_candidates,
     query_profile_candidates,
@@ -2942,6 +2943,15 @@ class TuoguanToolService:
             return result if not result.get("ok") else self._ok("submit_fact_gap_candidate", data=result, message=str(result.get("rendered_text") or ""))
 
         return self._operation(operation_id, "submit_fact_gap_candidate", execute)
+
+    def query_xiaoyou_health(self, *, now_at: str = "", limit: int = 20) -> dict[str, Any]:
+        denied = self._approved()
+        if denied:
+            return denied
+        if self.identity.role not in {"manager", "boss"}:
+            return self._error("permission_denied", "只有店长或老板可以查看小优健康度。")
+        result = query_xiaoyou_health(self.store, identity=self.identity, now_at=now_at, limit=limit)
+        return self._ok("query_xiaoyou_health", data=result, message=str(result.get("rendered_text") or ""))
 
     def query_self_evolution_ledger(self, *, candidate_type: str = "", status: str = "", limit: int = 30) -> dict[str, Any]:
         denied = self._approved()

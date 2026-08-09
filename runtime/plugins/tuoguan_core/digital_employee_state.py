@@ -4394,6 +4394,194 @@ def query_autonomous_work_brief(
     }
 
 
+def query_xiaoyou_health(
+    store: TuoguanStore,
+    *,
+    identity: UserIdentity,
+    now_at: str = "",
+    limit: int = 20,
+) -> dict[str, Any]:
+    if identity.role not in {"boss", "manager"} and identity.platform != "system":
+        return {"ok": False, "error": "permission_denied", "message": "只有老板、店长或系统巡检可以查看小优健康度。"}
+    now = _parse_time(now_at) or datetime.now().astimezone()
+    since_ts = now.timestamp() - 24 * 3600
+    outbox = store.read_json("notification_outbox.json", [])
+    outbox = outbox if isinstance(outbox, list) else []
+    daily_runs = _read_jsonl(store, "daily_report_runs.jsonl")
+    daily_reports = _xiaoyou_daily_report_health(outbox, daily_runs, since_ts)
+    outbox_health = _xiaoyou_outbox_health(outbox, since_ts)
+    attention = query_attention_threads(store, identity=identity, include_closed=False, limit=limit)
+    fact_gaps = query_fact_gap_candidates(store, identity=identity, limit=limit)
+    try:
+        from .self_evolution import build_self_evolution_brief
+
+        evolution = build_self_evolution_brief(store, identity=identity, limit=min(max(int(limit or 20), 5), 30))
+    except Exception:
+        evolution = {"ok": False, "error": "self_evolution_unavailable"}
+    work = query_hermes_work_items(store, identity=identity, include_closed=False, limit=limit)
+    issues: list[str] = []
+    if not daily_reports["sent_last_24h"]:
+        issues.append("过去24小时没有可验证的老板日报送达记录。")
+    if outbox_health["failed_or_unknown_count"]:
+        issues.append(f"有 {outbox_health['failed_or_unknown_count']} 条外发处于失败或结果未知状态。")
+    if outbox_health["repeated_task_reminder_candidate_count"]:
+        issues.append(f"发现 {outbox_health['repeated_task_reminder_candidate_count']} 组任务提醒重复候选。")
+    tool_failure_count = int(((evolution.get("health_signals") or {}).get("tool_failure_candidate_count") or 0)) if isinstance(evolution, dict) else 0
+    if tool_failure_count:
+        issues.append(f"有 {tool_failure_count} 条工具失败/能力缺口候选等待复盘。")
+    fact_gap_count = int(fact_gaps.get("candidate_count") or 0) if isinstance(fact_gaps, dict) else 0
+    if fact_gap_count:
+        issues.append(f"有 {fact_gap_count} 条机构事实缺口候选，需要小优按事实归属人择机补齐。")
+    pending_review = int(evolution.get("review_queue_count") or 0) if isinstance(evolution, dict) else 0
+    if pending_review:
+        issues.append(f"有 {pending_review} 条中高风险进化候选等待人工确认，未自动生效。")
+    status = "attention_needed" if issues else "healthy"
+    next_context = evolution.get("next_day_context") if isinstance(evolution, dict) and isinstance(evolution.get("next_day_context"), list) else []
+    health = {
+        "ok": True,
+        "tenant_id": current_tenant_id(),
+        "report_type": "xiaoyou_health_v1",
+        "generated_at": now.isoformat(timespec="seconds"),
+        "status": status,
+        "read_only": True,
+        "daily_reports": daily_reports,
+        "proactive_work": {
+            "open_attention_count": int(attention.get("attention_count") or 0) if isinstance(attention, dict) else 0,
+            "active_work_item_count": int(work.get("work_item_count") or 0) if isinstance(work, dict) else 0,
+            "waiting_work_item_count": int(work.get("waiting_count") or 0) if isinstance(work, dict) else 0,
+            "outbox": outbox_health,
+        },
+        "fact_gaps": {
+            "candidate_count": fact_gap_count,
+            "by_ask_role": deepcopy(fact_gaps.get("by_ask_role") or {}) if isinstance(fact_gaps, dict) else {},
+            "urgency_counts": deepcopy(fact_gaps.get("urgency_counts") or {}) if isinstance(fact_gaps, dict) else {},
+            "candidates": deepcopy((fact_gaps.get("candidates") or [])[: min(max(int(limit or 20), 1), 20)]) if isinstance(fact_gaps, dict) else [],
+        },
+        "evolution": {
+            "next_day_context_count": len(next_context),
+            "next_day_context": deepcopy(next_context[:5]),
+            "pending_review_count": pending_review,
+            "tool_failure_candidate_count": tool_failure_count,
+            "recent_workstyle_preference_count": len(evolution.get("recent_workstyle_preferences") or []) if isinstance(evolution, dict) else 0,
+        },
+        "issues": issues[:8],
+        "actions_taken": [],
+        "boundary": {
+            "sends_messages": False,
+            "creates_tasks": False,
+            "changes_business_facts": False,
+            "changes_router": False,
+            "model_decides_next_action": True,
+        },
+        "rendered_text": "",
+        "render_verified": True,
+    }
+    health["rendered_text"] = _render_xiaoyou_health(health)
+    return health
+
+
+def _xiaoyou_daily_report_health(outbox: list[Any], daily_runs: list[dict[str, Any]], since_ts: float) -> dict[str, Any]:
+    by_kind: dict[str, dict[str, Any]] = {"morning": {}, "evening": {}}
+    daily_outbox = [
+        item for item in outbox
+        if isinstance(item, dict) and str(item.get("notification_type") or "") == "autonomous_daily_report"
+    ]
+    for item in daily_outbox:
+        kind = _daily_report_kind(item)
+        if kind in by_kind:
+            by_kind[kind] = _newer_daily_report_item(by_kind[kind], item)
+    for row in daily_runs:
+        if not isinstance(row, dict):
+            continue
+        kind = str(row.get("report_kind") or "")
+        if kind in by_kind:
+            by_kind[kind] = _newer_daily_report_item(by_kind[kind], row)
+    sent_rows = []
+    for item in daily_outbox + daily_runs:
+        if not isinstance(item, dict):
+            continue
+        status = str(item.get("delivery_status") or item.get("status") or "")
+        if status == "sent" and _ts(item.get("sent_at") or item.get("observed_at") or item.get("created_at") or item.get("queued_at")) >= since_ts:
+            sent_rows.append(item)
+    return {
+        "sent_last_24h": bool(sent_rows),
+        "sent_count_last_24h": len(sent_rows),
+        "by_kind": {
+            kind: {
+                "status": str(item.get("delivery_status") or item.get("status") or ("queued" if item.get("queued_at") else "unknown")) if item else "missing",
+                "notification_id": str(item.get("notification_id") or item.get("id") or ""),
+                "last_at": str(item.get("sent_at") or item.get("observed_at") or item.get("queued_at") or item.get("created_at") or ""),
+            }
+            for kind, item in by_kind.items()
+        },
+    }
+
+
+def _xiaoyou_outbox_health(outbox: list[Any], since_ts: float) -> dict[str, Any]:
+    status_counts: dict[str, int] = {}
+    failed_or_unknown = []
+    pending = []
+    repeated: dict[str, int] = {}
+    for item in outbox:
+        if not isinstance(item, dict):
+            continue
+        status = str(item.get("status") or "unknown")
+        status_counts[status] = status_counts.get(status, 0) + 1
+        if status in {"failed", "result_unknown"}:
+            failed_or_unknown.append(item)
+        if status in {"pending", "retry_pending", "sending"}:
+            pending.append(item)
+        if str(item.get("action") or "") in {"task_created", "task_due", "manual_assignment"} and _ts(item.get("created_at")) >= since_ts:
+            key = "|".join(str(item.get(part) or "") for part in ("task_id", "action", "touser"))
+            repeated[key] = repeated.get(key, 0) + 1
+    repeated_count = len([key for key, count in repeated.items() if key and count > 1])
+    return {
+        "total_count": len([item for item in outbox if isinstance(item, dict)]),
+        "status_counts": status_counts,
+        "pending_count": len(pending),
+        "failed_or_unknown_count": len(failed_or_unknown),
+        "repeated_task_reminder_candidate_count": repeated_count,
+    }
+
+
+def _daily_report_kind(item: dict[str, Any]) -> str:
+    kind = str(item.get("report_kind") or "")
+    if kind in {"morning", "evening"}:
+        return kind
+    text = str(item.get("id") or item.get("notification_id") or item.get("action") or "")
+    if "morning" in text:
+        return "morning"
+    if "evening" in text:
+        return "evening"
+    return ""
+
+
+def _newer_daily_report_item(current: dict[str, Any], candidate: dict[str, Any]) -> dict[str, Any]:
+    if not current:
+        return deepcopy(candidate)
+    return deepcopy(candidate) if _ts(candidate.get("sent_at") or candidate.get("observed_at") or candidate.get("queued_at") or candidate.get("created_at")) >= _ts(current.get("sent_at") or current.get("observed_at") or current.get("queued_at") or current.get("created_at")) else current
+
+
+def _ts(value: Any) -> float:
+    parsed = _parse_time(value)
+    return parsed.timestamp() if parsed is not None else 0.0
+
+
+def _render_xiaoyou_health(health: dict[str, Any]) -> str:
+    lines = [
+        f"小优健康度：{health.get('status')}",
+        f"- 日报：过去24小时送达 {((health.get('daily_reports') or {}).get('sent_count_last_24h') or 0)} 次。",
+        f"- 主动工作：开放提醒 {((health.get('proactive_work') or {}).get('open_attention_count') or 0)} 条；等待事项 {((health.get('proactive_work') or {}).get('waiting_work_item_count') or 0)} 条。",
+        f"- 进化：今日可带入 {((health.get('evolution') or {}).get('next_day_context_count') or 0)} 条；待确认 {((health.get('evolution') or {}).get('pending_review_count') or 0)} 条；工具失败候选 {((health.get('evolution') or {}).get('tool_failure_candidate_count') or 0)} 条。",
+        f"- 事实缺口：{((health.get('fact_gaps') or {}).get('candidate_count') or 0)} 条。",
+    ]
+    issues = health.get("issues") if isinstance(health.get("issues"), list) else []
+    if issues:
+        lines.append("- 需要关注：" + "；".join(str(item) for item in issues[:3]))
+    lines.append("这只是只读健康材料，不会外发、派任务或改变业务事实。")
+    return "\n".join(lines)
+
+
 
 
 def submit_due_wakeup_candidate(
@@ -4745,6 +4933,7 @@ _AUTONOMOUS_LOG_TOOL_NAMES = {
     "tuoguan_query_self_evolution_ledger",
     "tuoguan_query_employee_work_map",
     "tuoguan_query_fact_gap_candidates",
+    "tuoguan_query_xiaoyou_health",
     "tuoguan_query_institution_understanding",
     "tuoguan_query_hermes_employee_scorecard",
     "tuoguan_query_industry_learning_candidates",
