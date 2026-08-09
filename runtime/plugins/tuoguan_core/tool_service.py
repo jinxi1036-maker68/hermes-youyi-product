@@ -83,6 +83,7 @@ from .digital_employee_state import (
     query_competitor_profiles,
     query_external_learning_brief,
     query_external_research_runs,
+    query_employee_work_map,
     query_industry_learning_candidates,
     query_market_research_candidates,
     query_proactive_work_radar,
@@ -2877,6 +2878,15 @@ class TuoguanToolService:
             return self._error("permission_denied", "只有店长或老板可以查看小优主动工作雷达。")
         result = query_proactive_work_radar(self.store, identity=self.identity, limit=limit)
         return self._ok("query_proactive_work_radar", data=result, message=str(result.get("rendered_text") or ""))
+
+    def query_employee_work_map(self, *, limit: int = 12) -> dict[str, Any]:
+        denied = self._approved()
+        if denied:
+            return denied
+        if self.identity.role not in {"manager", "boss"}:
+            return self._error("permission_denied", "只有店长或老板可以查看小优机构工作地图。")
+        result = query_employee_work_map(self.store, identity=self.identity, limit=limit)
+        return self._ok("query_employee_work_map", data=result, message=str(result.get("rendered_text") or ""))
 
     def query_self_evolution_ledger(self, *, candidate_type: str = "", status: str = "", limit: int = 30) -> dict[str, Any]:
         denied = self._approved()

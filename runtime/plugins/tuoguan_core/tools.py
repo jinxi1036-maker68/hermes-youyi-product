@@ -990,6 +990,12 @@ TUOGUAN_QUERY_PROACTIVE_WORK_RADAR_SCHEMA = _schema(
     ["user_id"],
 )
 
+TUOGUAN_QUERY_EMPLOYEE_WORK_MAP_SCHEMA = _schema(
+    "只读查询小优机构工作地图：汇总已知机构事实、未知缺口、事实归属人、开放工作项和下一步材料。它是员工入职认知地图，不发送消息、不创建任务、不写业务事实、不规定模型下一步。",
+    _identity_props({"limit": {"type": "integer", "description": "最多返回地图域、缺口和问题候选数量。"}}),
+    ["user_id"],
+)
+
 TUOGUAN_QUERY_SELF_EVOLUTION_LEDGER_SCHEMA = _schema(
     "只读查询小优自我进化账本：最近学到的工作方式、错误修正、工具失败、机构事实缺口、手册候选、明日重点和 multi-agent 建议采纳记录。它只提供经验和审核材料，不自动改变制度、权限、手册、家长外发或模型下一步。",
     _identity_props({
@@ -1135,6 +1141,7 @@ TOOLS = (
     ("tuoguan_submit_action_execution", TUOGUAN_SUBMIT_ACTION_EXECUTION_SCHEMA, _handler("submit_action_execution")),
     ("tuoguan_query_autonomous_work_brief", TUOGUAN_QUERY_AUTONOMOUS_WORK_BRIEF_SCHEMA, _handler("query_autonomous_work_brief")),
     ("tuoguan_query_proactive_work_radar", TUOGUAN_QUERY_PROACTIVE_WORK_RADAR_SCHEMA, _handler("query_proactive_work_radar")),
+    ("tuoguan_query_employee_work_map", TUOGUAN_QUERY_EMPLOYEE_WORK_MAP_SCHEMA, _handler("query_employee_work_map")),
     ("tuoguan_query_self_evolution_ledger", TUOGUAN_QUERY_SELF_EVOLUTION_LEDGER_SCHEMA, _handler("query_self_evolution_ledger")),
     ("tuoguan_query_industry_learning_candidates", TUOGUAN_QUERY_INDUSTRY_LEARNING_CANDIDATES_SCHEMA, _handler("query_industry_learning_candidates")),
     ("tuoguan_query_external_research_runs", TUOGUAN_QUERY_EXTERNAL_RESEARCH_RUNS_SCHEMA, _handler("query_external_research_runs")),

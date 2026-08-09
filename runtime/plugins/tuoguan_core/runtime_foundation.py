@@ -111,6 +111,7 @@ MODEL_SELECTED_READ_TOOLS = {
     "tuoguan_query_action_executions",
     "tuoguan_query_autonomous_work_brief",
     "tuoguan_query_self_evolution_ledger",
+    "tuoguan_query_employee_work_map",
     "tuoguan_query_institution_understanding",
     "tuoguan_query_hermes_employee_scorecard",
     "tuoguan_query_industry_learning_candidates",

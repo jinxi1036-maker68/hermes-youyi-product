@@ -1773,6 +1773,118 @@ def query_proactive_work_radar(
     }
 
 
+def query_employee_work_map(
+    store: TuoguanStore,
+    *,
+    identity: UserIdentity,
+    limit: int = 12,
+) -> dict[str, Any]:
+    """Read-only institution work map for Xiaoyou's employee understanding."""
+
+    if identity.role not in {"boss", "manager"}:
+        return {"ok": False, "error": "permission_denied", "message": "只有老板或店长可以查看小优机构工作地图。"}
+    limit = max(1, min(int(limit or 12), 30))
+    radar = query_proactive_work_radar(store, identity=identity, limit=limit)
+    understanding = query_institution_understanding(store, identity=identity)
+    work = query_hermes_work_items(store, identity=identity, include_closed=False, limit=limit)
+    domains = radar.get("domains") if isinstance(radar.get("domains"), list) else []
+    priority_gaps = radar.get("priority_gaps") if isinstance(radar.get("priority_gaps"), list) else []
+    questions = radar.get("question_candidates") if isinstance(radar.get("question_candidates"), list) else []
+    latest_gap_events = _read_jsonl(store, INSTITUTION_FACT_GAP_EVENTS_FILE)[-limit:]
+    sections = []
+    for domain in domains:
+        if not isinstance(domain, dict):
+            continue
+        missing = domain.get("missing") if isinstance(domain.get("missing"), list) else []
+        known = domain.get("known_signals") if isinstance(domain.get("known_signals"), list) else []
+        if missing:
+            confidence = "needs_confirmation"
+        elif len(known) >= 2:
+            confidence = "usable"
+        else:
+            confidence = "thin"
+        sections.append({
+            "domain_key": str(domain.get("domain_key") or ""),
+            "label": str(domain.get("label") or ""),
+            "confidence": confidence,
+            "known_signals": _strip_forbidden(known[:6]),
+            "missing": _strip_forbidden(missing[:6]),
+            "fact_owner_role": str(domain.get("suggested_fact_owner_role") or ""),
+            "handbook_basis": _limit_text(domain.get("handbook_basis"), 260),
+            "does_not_route_model": True,
+        })
+    fact_owner_queue: dict[str, list[dict[str, Any]]] = {"boss": [], "manager": [], "teacher": []}
+    for item in questions[:limit]:
+        if not isinstance(item, dict):
+            continue
+        role = str(item.get("ask_role") or "")
+        bucket = fact_owner_queue.setdefault(role or "unknown", [])
+        bucket.append({
+            "domain_key": str(item.get("domain_key") or ""),
+            "target_user_id": str(item.get("target_user_id") or ""),
+            "target_name": str(item.get("target_name") or ""),
+            "question": _limit_text(item.get("question"), 260),
+            "reason": _limit_text(item.get("reason"), 260),
+            "urgency": str(item.get("urgency") or "normal"),
+            "model_decides_whether_to_ask": True,
+        })
+    open_items = work.get("items") if isinstance(work.get("items"), list) else []
+    waiting_items = [item for item in open_items if str(item.get("status") or "") in {"waiting", "blocked"}]
+    health = {
+        "map_section_count": len(sections),
+        "needs_confirmation_section_count": len([item for item in sections if item.get("confidence") == "needs_confirmation"]),
+        "priority_gap_count": len(priority_gaps),
+        "question_candidate_count": len(questions),
+        "open_work_item_count": len(open_items),
+        "waiting_or_blocked_work_item_count": len(waiting_items),
+    }
+    lines = [
+        "# 小优机构工作地图 V1",
+        "",
+        "状态：只读员工认知材料。它告诉小优已知什么、缺什么、该找谁补事实，不规定模型下一步。",
+        "",
+        f"- 地图域：{health['map_section_count']} 个；待确认域：{health['needs_confirmation_section_count']} 个。",
+        f"- 优先事实缺口：{health['priority_gap_count']} 个；问题候选：{health['question_candidate_count']} 个。",
+        f"- 开放工作项：{health['open_work_item_count']} 个；等待/阻塞：{health['waiting_or_blocked_work_item_count']} 个。",
+        "",
+        "## 下一步材料",
+        "",
+    ]
+    if priority_gaps:
+        for gap in priority_gaps[:5]:
+            if isinstance(gap, dict):
+                lines.append(f"- {gap.get('gap_text')} 事实归属人：{gap.get('ask_role')}。")
+    else:
+        lines.append("- 当前没有高优先级事实缺口；小优仍应结合当天目标自主判断。")
+    return {
+        "ok": True,
+        "report_type": "employee_work_map_v1",
+        "tenant_id": current_tenant_id(),
+        "read_only": True,
+        "model_decides_next_action": True,
+        "sections": sections,
+        "priority_gaps": _strip_forbidden(priority_gaps[:limit]),
+        "fact_owner_question_queue": _strip_forbidden(fact_owner_queue),
+        "recent_fact_gap_events": _strip_forbidden(latest_gap_events),
+        "institution_understanding": _strip_forbidden(understanding),
+        "open_work_items": _strip_forbidden(open_items[:limit]),
+        "health": health,
+        "source_counts": radar.get("source_counts") if isinstance(radar.get("source_counts"), dict) else {},
+        "actions_taken": [],
+        "forbidden_actions_confirmed_absent": [
+            "no_messages_sent",
+            "no_tasks_created",
+            "no_business_data_written",
+            "no_policy_changed",
+            "no_router_changed",
+            "no_model_next_step_stored",
+        ],
+        "forbidden_context_keys_absent": ["intent", "next_tool", "workflow_step", "expected_reply", "model_intent"],
+        "rendered_text": "\n".join(lines).rstrip() + "\n",
+        "render_verified": True,
+    }
+
+
 def _radar_domain(
     domain_key: str,
     label: str,
@@ -4510,6 +4622,7 @@ _AUTONOMOUS_LOG_TOOL_NAMES = {
     "tuoguan_query_autonomous_work_brief",
     "tuoguan_query_proactive_work_radar",
     "tuoguan_query_self_evolution_ledger",
+    "tuoguan_query_employee_work_map",
     "tuoguan_query_institution_understanding",
     "tuoguan_query_hermes_employee_scorecard",
     "tuoguan_query_industry_learning_candidates",
