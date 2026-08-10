@@ -126,6 +126,7 @@ MODEL_SELECTED_READ_TOOLS = {
     "tuoguan_query_market_research_candidates",
     "tuoguan_query_competitor_profiles",
     "tuoguan_query_external_learning_brief",
+    "tuoguan_query_social_market_research",
     "tuoguan_query_value_progress_ledger",
     "tuoguan_query_agent_delegations",
     "tuoguan_query_agent_delegation_results",
@@ -1064,6 +1065,15 @@ def _semantic_tool_match(item: dict[str, Any], tool_name: str, args: Any = None)
                 "最近谁找", "最近谁聊", "最近有没有老师", "最近有没有店长",
             )
         )
+    if tool_name == "tuoguan_query_social_market_research":
+        return any(
+            term in raw
+            for term in (
+                "抖音", "小红书", "红书", "同行", "竞品", "本地市场", "市场观察",
+                "托管机构在做什么", "附近托管", "本地托管", "招生内容", "短视频",
+                "最近发什么", "账号", "市场学习", "社交平台",
+            )
+        )
     if tool_name == "tuoguan_query_person_workstyle_profile":
         return any(term in raw for term in ("工作方式", "偏好", "汇报格式", "服务方式", "提醒方式", "沟通方式", "怎么服务", "怎么回复"))
     if tool_name == "tuoguan_query_workstyle_adaptation_health":
@@ -1124,6 +1134,7 @@ def _allow_model_selected_read_tool(item: dict[str, Any], tool_name: str, args: 
         "tuoguan_dashboard_link": "query_dashboard_link",
         "tuoguan_query_staff_directory": "query_staff_directory",
         "tuoguan_query_staff_conversation_activity": "query_staff_conversation_activity",
+        "tuoguan_query_social_market_research": "query_social_market_research",
     }
     item["model_intent"] = intent_by_tool.get(tool_name, item.get("model_intent") or "unclassified_message")
     item["capability_resolved_by"] = "model_selected_safe_read_tool"

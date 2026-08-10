@@ -59,6 +59,7 @@ from .operational_facts import (
 from .staff_directory import query_staff_directory as build_staff_directory_report
 from .staff_conversation_activity import query_staff_conversation_activity as build_staff_conversation_activity
 from .self_evolution import query_self_evolution_ledger as build_self_evolution_ledger
+from .social_market_research import query_social_market_research as build_social_market_research
 from .workstyle_profiles import (
     query_person_workstyle_profile as build_person_workstyle_profile,
     query_workstyle_adaptation_health as build_workstyle_adaptation_health,
@@ -3122,6 +3123,17 @@ class TuoguanToolService:
             return denied
         result = query_external_learning_brief(self.store, identity=self.identity, limit=limit)
         return self._ok("query_external_learning_brief", data=result, message=str(result.get("rendered_text") or ""))
+
+    def query_social_market_research(self, *, platform: str = "", status: str = "", limit: int = 30) -> dict[str, Any]:
+        denied = self._approved()
+        if denied:
+            return denied
+        if self.identity.role not in {"manager", "boss"}:
+            return self._error("permission_denied", "只有店长或老板可以查看社交平台市场观察。")
+        result = build_social_market_research(self.store, identity=self.identity, platform=platform, status=status, limit=limit)
+        if not result.get("ok"):
+            return self._error(str(result.get("error") or "social_market_research_unavailable"), str(result.get("message") or "社交平台市场观察查询失败。"))
+        return self._ok("query_social_market_research", data=result, message=str(result.get("rendered_text") or ""))
 
     def submit_industry_learning_candidate(
         self,

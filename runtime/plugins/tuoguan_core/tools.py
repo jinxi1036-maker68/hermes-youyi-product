@@ -1142,6 +1142,16 @@ TUOGUAN_QUERY_EXTERNAL_LEARNING_BRIEF_SCHEMA = _schema(
     ["user_id"],
 )
 
+TUOGUAN_QUERY_SOCIAL_MARKET_RESEARCH_SCHEMA = _schema(
+    "只读查询小优收集的抖音/小红书本地托管市场观察候选。结果只是外部平台观察，不是优益已确认事实；本工具不发布、不评论、不点赞、不关注、不改机构事实。",
+    _identity_props({
+        "platform": {"type": "string", "enum": ["", "xiaohongshu", "douyin"], "default": ""},
+        "status": {"type": "string", "description": "可选：pending_review、source_failed、backend_unavailable。"},
+        "limit": {"type": "integer", "default": 30},
+    }),
+    ["user_id"],
+)
+
 TUOGUAN_SUBMIT_INDUSTRY_LEARNING_CANDIDATE_SCHEMA = _schema(
     "提交带来源的行业学习候选。老板审核前不会进入正式手册、长期记忆或优益机构事实；写入必须提供 operation_id。",
     _identity_props({
@@ -1252,6 +1262,7 @@ TOOLS = (
     ("tuoguan_query_market_research_candidates", TUOGUAN_QUERY_MARKET_RESEARCH_CANDIDATES_SCHEMA, _handler("query_market_research_candidates")),
     ("tuoguan_query_competitor_profiles", TUOGUAN_QUERY_COMPETITOR_PROFILES_SCHEMA, _handler("query_competitor_profiles")),
     ("tuoguan_query_external_learning_brief", TUOGUAN_QUERY_EXTERNAL_LEARNING_BRIEF_SCHEMA, _handler("query_external_learning_brief")),
+    ("tuoguan_query_social_market_research", TUOGUAN_QUERY_SOCIAL_MARKET_RESEARCH_SCHEMA, _handler("query_social_market_research")),
     ("tuoguan_submit_industry_learning_candidate", TUOGUAN_SUBMIT_INDUSTRY_LEARNING_CANDIDATE_SCHEMA, _handler("submit_industry_learning_candidate")),
     ("tuoguan_generate_autonomous_recovery_report", TUOGUAN_GENERATE_AUTONOMOUS_RECOVERY_REPORT_SCHEMA, _handler("generate_autonomous_recovery_report")),
     ("tuoguan_generate_due_wakeup_candidates", TUOGUAN_GENERATE_DUE_WAKEUP_CANDIDATES_SCHEMA, _handler("generate_due_wakeup_candidates")),

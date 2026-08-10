@@ -66,6 +66,7 @@ from .self_evolution import (
     normalize_evolution_candidate,
     submit_self_evolution_event,
 )
+from .social_market_research import query_social_market_research
 from .store import JSON_NO_CHANGE, TuoguanStore
 from .tool_service import TuoguanToolService
 from .write_guard import authorized_system_write
@@ -184,6 +185,7 @@ def build_employee_loop_materials(store: TuoguanStore, *, identity: UserIdentity
     employee_scorecard = query_hermes_employee_scorecard(store, identity=identity, limit=10)
     industry_learning = query_industry_learning_candidates(store, identity=identity, limit=10)
     external_learning = query_external_learning_brief(store, identity=identity, limit=5)
+    social_market = query_social_market_research(store, identity=identity, limit=10)
     value_progress = query_value_progress_ledger(store, identity=identity, limit=10)
     attention_threads = query_attention_threads(store, identity=identity, include_closed=False, limit=10)
     multi_agent = query_multi_agent_brief(store, identity=identity, limit=10)
@@ -226,6 +228,7 @@ def build_employee_loop_materials(store: TuoguanStore, *, identity: UserIdentity
             "At every wakeup, inspect proactive_work_radar as the handbook-based employee map: institution, organization, student service relations, operating rules, teacher work habits, goals, service evidence, risk, and reflection. It is material, not a Router.",
             "Public industry learning is advice material with sources; never treat it as confirmed institution fact before owner review.",
             "External learning and market research are evidence candidates. Use them to improve advice, but do not copy them into institution facts or long-term memory until the owner reviews them.",
+            "Social market research from Xiaohongshu/Douyin is only external platform observation. It may inform market awareness, but it is not a confirmed Youyi fact and never authorizes publishing, following, liking, or commenting.",
             "Self-evolution is Xiaoyou's employee growth loop: daytime work, evening review, night learning, next-day application. It is internal candidate material, not a Router.",
             "Low-risk personal service preferences and self-corrections may inform future context only after writeback evidence. Medium/high-risk policy, salary, permissions, parent outreach, handbook, or institution-rule changes remain pending review.",
             "If this wakeup is evening or night, inspect self_evolution_brief, employee_scorecard, business_events, action_executions, workstyle preferences, proactive_work_radar, and multi_agent_brief. Save concise evolution_candidates for what Xiaoyou learned, what it must not repeat, and what should guide tomorrow.",
@@ -258,6 +261,7 @@ def build_employee_loop_materials(store: TuoguanStore, *, identity: UserIdentity
         "employee_scorecard": _compact_for_model(employee_scorecard),
         "industry_learning_candidates": _compact_for_model(industry_learning),
         "external_learning_brief": _compact_for_model(external_learning),
+        "social_market_research": _compact_for_model(social_market),
         "value_progress_ledger": _compact_for_model(value_progress),
         "attention_threads": _compact_for_model(attention_threads),
         "multi_agent_brief": _compact_for_model(multi_agent),
@@ -288,6 +292,7 @@ def build_employee_loop_materials(store: TuoguanStore, *, identity: UserIdentity
         "employee_self_review_count": int(employee_scorecard.get("review_count") or 0) if isinstance(employee_scorecard, dict) else 0,
         "industry_learning_candidate_count": int(industry_learning.get("candidate_count") or 0) if isinstance(industry_learning, dict) else 0,
         "external_research_run_count": int(((external_learning.get("external_research_runs") or {}).get("run_count") or 0)) if isinstance(external_learning, dict) else 0,
+        "social_market_candidate_count": int(social_market.get("candidate_count") or 0) if isinstance(social_market, dict) else 0,
         "value_progress_entry_count": int(value_progress.get("entry_count") or 0) if isinstance(value_progress, dict) else 0,
         "work_mode": str(cadence.get("mode") or ""),
         "owner_attention_allowed": bool(cadence.get("owner_attention_allowed")),
@@ -1271,6 +1276,7 @@ def _model_payload(materials: dict[str, Any]) -> dict[str, Any]:
         "employee_scorecard": _compact_for_model(materials.get("employee_scorecard"), max_chars=3000),
         "industry_learning_candidates": _compact_for_model(materials.get("industry_learning_candidates"), max_chars=3000),
         "external_learning_brief": _compact_for_model(materials.get("external_learning_brief"), max_chars=3000),
+        "social_market_research": _compact_for_model(materials.get("social_market_research"), max_chars=4000),
         "value_progress_ledger": _compact_for_model(materials.get("value_progress_ledger"), max_chars=3000),
         "attention_threads": _compact_for_model(materials.get("attention_threads"), max_chars=3500),
         "multi_agent_brief": _compact_for_model(materials.get("multi_agent_brief"), max_chars=3500),
@@ -1682,6 +1688,8 @@ def _relationship_touch_external_allowed(
         return False
     if not target_user_id:
         return False
+    if not _relationship_target_user_allowed_by_policy(target_user_id, role_policy):
+        return False
     if not _relationship_touch_time_allowed(timestamp, role_policy):
         return False
     allowed_types = {str(item) for item in role_policy.get("allowed_types") or []}
@@ -1696,6 +1704,15 @@ def _relationship_touch_external_allowed(
     if _relationship_role_sent_count(outbox, day, role, target_user_id) + queued_count >= limit:
         return False
     return _relationship_target_role_allowed(store, target_user_id, role) and _relationship_staff_message_is_sendable(candidate, role=role)
+
+
+def _relationship_target_user_allowed_by_policy(target_user_id: str, role_policy: dict[str, Any]) -> bool:
+    allowed = {str(item).strip() for item in role_policy.get("allowed_target_user_ids") or [] if str(item).strip()}
+    blocked = {str(item).strip() for item in role_policy.get("blocked_target_user_ids") or [] if str(item).strip()}
+    target = str(target_user_id or "").strip()
+    if not target or target in blocked:
+        return False
+    return not allowed or target in allowed
 
 
 def _relationship_owner_sent_count(outbox: list[Any], day: str) -> int:
@@ -1747,7 +1764,7 @@ def _relationship_staff_message_is_sendable(candidate: dict[str, Any], *, role: 
     if _looks_like_parent_outreach_instruction(message):
         return False
     asks_for_fact = any(term in message for term in ("？", "?", "请", "麻烦", "帮我确认", "确认一下", "回我", "告诉我", "发我", "是否", "能不能"))
-    work_fact = any(term in message for term in ("任务", "进展", "结果", "记录", "沟通", "学生", "孩子", "家长", "截止", "安排", "反馈", "执行", "完成", "缺"))
+    work_fact = any(term in message for term in ("任务", "进展", "结果", "记录", "沟通", "学生", "孩子", "家长", "截止", "安排", "反馈", "执行", "完成", "缺", "事实", "工作方式", "时间偏好", "方便"))
     return asks_for_fact and work_fact
 
 

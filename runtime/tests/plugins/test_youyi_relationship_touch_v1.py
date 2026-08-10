@@ -59,6 +59,15 @@ def test_autonomous_loop_can_queue_boss_presence_but_not_teacher(tmp_path):
     _write_json(tmp_path, "notification_outbox.json", [])
     _write_json(tmp_path, "students.json", {})
     _write_json(tmp_path, "tasks.json", [])
+    _write_json(
+        tmp_path,
+        "relationship_touch_policy.json",
+        {
+            "teacher": {"mode": "direct", "allowed_start": "10:00", "allowed_end": "18:30", "daily_limit": 2, "allowed_target_user_ids": ["teacher1"]},
+            "manager": {"mode": "direct", "allowed_start": "10:00", "allowed_end": "18:30", "daily_limit": 1, "allowed_target_user_ids": ["manager1"]},
+            "parent": {"mode": "disabled"},
+        },
+    )
     _write_json(tmp_path, "academic_term_state.json", {"service_relation_policy": "defer_until_new_term"})
     store = TuoguanStore(tmp_path)
     cn_tz = timezone(timedelta(hours=8))
@@ -139,6 +148,15 @@ def test_autonomous_loop_can_queue_teacher_and_manager_fact_requests(tmp_path):
     _write_json(tmp_path, "notification_outbox.json", [])
     _write_json(tmp_path, "students.json", {})
     _write_json(tmp_path, "tasks.json", [])
+    _write_json(
+        tmp_path,
+        "relationship_touch_policy.json",
+        {
+            "teacher": {"mode": "direct", "allowed_start": "10:00", "allowed_end": "18:30", "daily_limit": 2, "allowed_target_user_ids": ["teacher1"]},
+            "manager": {"mode": "direct", "allowed_start": "10:00", "allowed_end": "18:30", "daily_limit": 1, "allowed_target_user_ids": ["manager1"]},
+            "parent": {"mode": "disabled"},
+        },
+    )
     _write_json(tmp_path, "academic_term_state.json", {"service_relation_policy": "defer_until_new_term"})
     store = TuoguanStore(tmp_path)
     cn_tz = timezone(timedelta(hours=8))
@@ -196,6 +214,100 @@ def test_autonomous_loop_can_queue_teacher_and_manager_fact_requests(tmp_path):
     assert all(item["auto_effects"]["sends_parent_messages"] is False for item in outbox)
     assert outbox[0]["auto_effects"]["sends_teacher_messages"] is True
     assert outbox[1]["auto_effects"]["sends_manager_messages"] is True
+
+
+def test_test_mode_policy_allows_only_boss_and_li_teacher(tmp_path):
+    from plugins.tuoguan_core.autonomous_employee_loop import run_autonomous_employee_loop
+    from plugins.tuoguan_core.store import TuoguanStore
+
+    _write_json(tmp_path, "write_guard_config.json", {"enabled": True})
+    _write_json(
+        tmp_path,
+        "wecom_whitelist.json",
+        {
+            "super_users": ["JinWenJie"],
+            "allowed_users": ["CeShi", "LiuLi", "manager1"],
+            "user_roles": {"JinWenJie": "boss", "CeShi": "teacher", "LiuLi": "teacher", "manager1": "manager"},
+        },
+    )
+    _write_json(tmp_path, "teacher_wecom_map.json", {"李老师": "CeShi", "刘老师": "LiuLi", "店长": "manager1"})
+    _write_json(
+        tmp_path,
+        "relationship_touch_policy.json",
+        {
+            "boss": {"mode": "direct", "allowed_start": "08:00", "allowed_end": "19:00", "daily_limit": 2, "allowed_target_user_ids": ["JinWenJie"]},
+            "teacher": {"mode": "direct", "allowed_start": "10:00", "allowed_end": "18:30", "daily_limit": 2, "allowed_target_user_ids": ["CeShi"]},
+            "manager": {"mode": "candidate", "allowed_target_user_ids": []},
+            "parent": {"mode": "disabled"},
+        },
+    )
+    _write_json(tmp_path, "notification_outbox.json", [])
+    _write_json(tmp_path, "students.json", {})
+    _write_json(tmp_path, "tasks.json", [])
+    store = TuoguanStore(tmp_path)
+    cn_tz = timezone(timedelta(hours=8))
+
+    def decision_provider(_materials):
+        return {
+            "employee_summary": "小优在测试期只允许问金总和李老师。",
+            "institution_understanding": "",
+            "goal_progress_view": "",
+            "observations": [],
+            "work_item_updates": [],
+            "questions_to_humans": [],
+            "boss_attention_candidates": [],
+            "relationship_touch_candidates": [
+                {
+                    "target_role": "teacher",
+                    "target_user_id": "CeShi",
+                    "target_name": "李老师",
+                    "touch_type": "record_relief",
+                    "message": "李老师，我在测试主动工作能力，请帮我确认一下今天你方便让我几点问你任务记录相关事实？",
+                    "reason": "测试期允许小优主动问李老师一个具体任务记录事实。",
+                    "value": "让小优自己学会按李老师的时间偏好工作。",
+                    "work_related": True,
+                    "external_send_allowed": True,
+                },
+                {
+                    "target_role": "teacher",
+                    "target_user_id": "LiuLi",
+                    "target_name": "刘老师",
+                    "touch_type": "record_relief",
+                    "message": "刘老师，请帮我确认一下今天学生记录有没有缺口？",
+                    "reason": "非测试白名单老师，不应主动发送。",
+                    "value": "不应发送。",
+                    "work_related": True,
+                    "external_send_allowed": True,
+                },
+                {
+                    "target_role": "manager",
+                    "target_user_id": "manager1",
+                    "target_name": "店长",
+                    "touch_type": "manager_assist",
+                    "message": "店长，请帮我确认一下今天现场有没有任务缺口？",
+                    "reason": "测试期暂不主动找店长。",
+                    "value": "不应发送。",
+                    "work_related": True,
+                    "external_send_allowed": True,
+                },
+            ],
+            "institution_fact_gaps": [],
+            "value_progress_entries": [],
+            "agent_delegation_decisions": [],
+            "self_review": {},
+            "external_actions": [],
+        }
+
+    result = run_autonomous_employee_loop(
+        store,
+        now=datetime(2026, 8, 10, 11, 0, tzinfo=cn_tz),
+        decision_provider=decision_provider,
+    )
+
+    assert result["ok"] is True
+    outbox = json.loads((tmp_path / "notification_outbox.json").read_text(encoding="utf-8"))
+    assert [item["touser"] for item in outbox] == ["CeShi"]
+    assert outbox[0]["auto_effects"]["sends_teacher_messages"] is True
 
 
 def test_teacher_fact_request_cannot_be_parent_outreach_instruction(tmp_path):
