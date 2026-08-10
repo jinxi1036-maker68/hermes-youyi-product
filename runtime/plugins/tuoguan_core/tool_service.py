@@ -61,6 +61,7 @@ from .staff_conversation_activity import query_staff_conversation_activity as bu
 from .self_evolution import query_self_evolution_ledger as build_self_evolution_ledger
 from .workstyle_profiles import (
     query_person_workstyle_profile as build_person_workstyle_profile,
+    query_workstyle_adaptation_health as build_workstyle_adaptation_health,
     submit_person_workstyle_preference as save_person_workstyle_preference,
 )
 from .digital_employee_state import (
@@ -2213,6 +2214,9 @@ class TuoguanToolService:
         target_name: str = "",
         target_role: str = "",
         source_text: str = "",
+        dimension_key: str = "",
+        confidence: float | str = 1.0,
+        source_turn_id: str = "",
     ) -> dict[str, Any]:
         denied = self._approved()
         if denied:
@@ -2232,6 +2236,9 @@ class TuoguanToolService:
                 target_name=target_name,
                 target_role=target_role,
                 source_text=source_text,
+                dimension_key=dimension_key,
+                confidence=confidence,
+                source_turn_id=source_turn_id,
                 operation_id=operation_id,
             )
             if not result.get("ok"):
@@ -2240,6 +2247,23 @@ class TuoguanToolService:
             return self._ok("submit_person_workstyle_preference", data=data, message=result.get("rendered_text", ""))
 
         return self._operation(operation_id, "submit_person_workstyle_preference", execute)
+
+    def query_workstyle_adaptation_health(self, *, target_user_id: str = "", scope: str = "", limit: int = 30) -> dict[str, Any]:
+        denied = self._approved()
+        if denied:
+            return denied
+        if self.identity.role not in {"manager", "boss"}:
+            return self._error("permission_denied", "只有店长或老板可以查看小优工作方式自适应健康度。")
+        result = build_workstyle_adaptation_health(
+            self.store,
+            identity=self.identity,
+            target_user_id=target_user_id,
+            scope=scope,
+            limit=limit,
+        )
+        if not result.get("ok"):
+            return self._error(str(result.get("error") or "workstyle_adaptation_health_unavailable"), str(result.get("message") or "工作方式自适应健康度查询失败。"))
+        return self._ok("query_workstyle_adaptation_health", data=result, message=str(result.get("rendered_text") or ""))
 
     def submit_operational_fact(
         self,

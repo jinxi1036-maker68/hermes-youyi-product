@@ -92,6 +92,7 @@ MODEL_SELECTED_READ_TOOLS = {
     "tuoguan_query_operational_facts",
     "tuoguan_query_staff_directory",
     "tuoguan_query_person_workstyle_profile",
+    "tuoguan_query_workstyle_adaptation_health",
     "tuoguan_query_student_service_relations",
     "tuoguan_query_parent_communication_coverage",
     "tuoguan_query_weekly_record_coverage",
@@ -420,6 +421,19 @@ def _tool_results_have_error(results: Any) -> bool:
             return True
         status = str(item.get("status") or "").lower()
         if status in {"failed", "error", "result_unknown", "blocked", "permission_denied"}:
+            return True
+    return False
+
+
+def _tool_results_have_verified_write(results: Any) -> bool:
+    values = results if isinstance(results, list) else [results]
+    for item in values:
+        if not isinstance(item, dict):
+            continue
+        data = item.get("data") if isinstance(item.get("data"), dict) else item
+        if item.get("ok") is True and isinstance(data, dict) and data.get("writeback_verified") is True:
+            return True
+        if isinstance(data, dict) and data.get("ok") is True and data.get("writeback_verified") is True:
             return True
     return False
 
@@ -1050,6 +1064,10 @@ def _semantic_tool_match(item: dict[str, Any], tool_name: str, args: Any = None)
                 "最近谁找", "最近谁聊", "最近有没有老师", "最近有没有店长",
             )
         )
+    if tool_name == "tuoguan_query_person_workstyle_profile":
+        return any(term in raw for term in ("工作方式", "偏好", "汇报格式", "服务方式", "提醒方式", "沟通方式", "怎么服务", "怎么回复"))
+    if tool_name == "tuoguan_query_workstyle_adaptation_health":
+        return any(term in raw for term in ("改没改", "有没有保存", "有没有记住", "工作方式", "嘴上答应", "实际执行", "有没有按", "为什么没改"))
     if tool_name == "tuoguan_create_task":
         return any(term in raw for term in ("安排", "任务", "提醒", "回访", "跟进"))
     if tool_name == "tuoguan_dashboard_link":
@@ -1238,6 +1256,8 @@ def ensure_outbound_reply_recorded(
                 except ValueError:
                     continue
     raw_model_final_reply = str(final_reply or "")
+    with _LOCK:
+        turn_item = deepcopy(_TURN_BY_SESSION.get(str(session_id or "")) or {})
     if session_id:
         transformed = transform_final_response(
             store=store,
@@ -1263,9 +1283,9 @@ def ensure_outbound_reply_recorded(
         "selected_capability_card": "",
         "used_manual_cards": [],
         "used_tool_registry_entry": "",
-        "tool_calls": [],
-        "tool_results": [],
-        "writeback_verified": None,
+        "tool_calls": deepcopy(turn_item.get("tool_calls") or []),
+        "tool_results": deepcopy(turn_item.get("tool_results") or []),
+        "writeback_verified": _tool_results_have_verified_write(turn_item.get("tool_results") or []) or None,
         "render_verified": True,
         "route_decision": route_decision or ("model_first" if entered_model else "deterministic_system_reply"),
         "legacy_handler_intercepted": (route_decision or ("model_first" if entered_model else "deterministic_system_reply")) == "legacy_router",
@@ -1282,6 +1302,19 @@ def ensure_outbound_reply_recorded(
         "model_reply_applied": owner == "model",
         "reply_sender_count": int(reply_sender_count),
     }
+    if turn_item:
+        for key in (
+            "used_tool_registry_entry",
+            "selected_capability_card",
+            "used_manual_cards",
+            "model_intent",
+            "model_confidence",
+            "effective_scope",
+            "result_count",
+            "data_version",
+        ):
+            if turn_item.get(key):
+                item[key] = deepcopy(turn_item.get(key))
     if entered_model:
         item["business_plan"] = _non_business_dialogue_plan(
             actor_user_id=user_id,
@@ -1289,6 +1322,32 @@ def ensure_outbound_reply_recorded(
             message_id=message_id,
             raw_text=raw_text,
         )
+    try:
+        from .models import UserIdentity
+        from .workstyle_profiles import observe_workstyle_after_reply
+
+        identity = UserIdentity(
+            platform="wecom_callback",
+            platform_user_id=str(user_id or ""),
+            canonical_user_id=str(user_id or ""),
+            person_name=str(user_id or ""),
+            role=str(role or "staff"),
+            approval_state="approved",
+        )
+        item["workstyle_adaptation"] = observe_workstyle_after_reply(
+            store,
+            identity=identity,
+            raw_text=raw_text,
+            final_reply=str(final_reply or ""),
+            raw_model_final_reply=raw_model_final_reply,
+            tool_calls=item.get("tool_calls") or [],
+            tool_results=item.get("tool_results") or [],
+            ledger_id=str(item.get("ledger_id") or ""),
+            message_id=message_id,
+            session_id=session_id,
+        )
+    except Exception:
+        item["workstyle_adaptation"] = {"ok": False, "error": "workstyle_observer_failed"}
     audit_id = _audit(store, item, "reply_completed", "success")
     item["audit_event_ids"] = [audit_id]
     _append_jsonl(store, "reply_ledger.jsonl", item)
@@ -1345,8 +1404,9 @@ def transform_final_response(*, store: TuoguanStore, session_id: str, response_t
             if str(tool_name or "").startswith("tuoguan_"):
                 used_trusted_tool = True
             if str(tool_name or "") in WRITE_TOOLS:
-                verified_state_change = True
-                break
+                verified_state_change = _tool_results_have_verified_write(item.get("tool_results") or [])
+                if verified_state_change:
+                    break
     return _sanitize_external_reply(
         response_text,
         verified_state_change=verified_state_change,

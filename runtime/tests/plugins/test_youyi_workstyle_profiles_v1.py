@@ -132,5 +132,7 @@ def test_workstyle_tools_are_registered_in_runtime_sets():
     names = {name for name, _schema, _handler in TOOLS}
     assert "tuoguan_query_person_workstyle_profile" in names
     assert "tuoguan_submit_person_workstyle_preference" in names
+    assert "tuoguan_query_workstyle_adaptation_health" in names
     assert "tuoguan_query_person_workstyle_profile" in MODEL_SELECTED_READ_TOOLS
+    assert "tuoguan_query_workstyle_adaptation_health" in MODEL_SELECTED_READ_TOOLS
     assert "tuoguan_submit_person_workstyle_preference" in WRITE_TOOLS

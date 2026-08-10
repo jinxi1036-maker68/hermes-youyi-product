@@ -385,6 +385,9 @@ TUOGUAN_SUBMIT_PERSON_WORKSTYLE_PREFERENCE_SCHEMA = _schema(
         "scope": {"type": "string", "enum": ["daily_report", "direct_reply", "task_followup", "proactive_question", "teacher_support", "manager_support", "all_communication"], "description": "偏好适用场景。"},
         "preference_text": {"type": "string", "description": "用户明确表达的偏好内容，保留原意。"},
         "normalized_rule": {"type": "string", "description": "可选，将偏好整理成简短规则；不得加入用户没有表达的事实。"},
+        "dimension_key": {"type": "string", "enum": ["", "length", "layout", "structure", "tone", "timing", "detail", "avoidance", "followup_method", "other"], "default": "", "description": "可选，偏好影响的工作方式维度；留空由系统按文本推断。"},
+        "confidence": {"type": "number", "default": 1.0, "description": "模型对这条低风险工作方式偏好的置信度，0-1。"},
+        "source_turn_id": {"type": "string", "description": "可选，当前会话轮次 id。"},
         "target_user_id": {"type": "string", "description": "可选，默认保存到当前会话人员。"},
         "target_name": {"type": "string", "description": "可选，目标人员显示名。"},
         "target_role": {"type": "string", "enum": ["", "boss", "manager", "teacher", "staff"], "default": "", "description": "可选，目标人员角色。"},
@@ -392,6 +395,16 @@ TUOGUAN_SUBMIT_PERSON_WORKSTYLE_PREFERENCE_SCHEMA = _schema(
         "operation_id": {"type": "string", "description": "使用当前消息 id 作为幂等键。"},
     }),
     ["user_id", "preference_type", "scope", "preference_text", "operation_id"],
+)
+
+TUOGUAN_QUERY_WORKSTYLE_ADAPTATION_HEALTH_SCHEMA = _schema(
+    "只读查询小优是否真的把工作方式反馈保存、应用和复盘，包括漏保存、未验证承诺、应用失败。它不发消息、不改偏好、不改变制度权限。老板/店长用于核验小优有没有从嘴上答应变成实际执行。",
+    _identity_props({
+        "target_user_id": {"type": "string", "description": "可选，只看某个人的工作方式自适应情况。"},
+        "scope": {"type": "string", "enum": ["", "daily_report", "direct_reply", "task_followup", "proactive_question", "teacher_support", "manager_support", "all_communication"], "default": "", "description": "可选，只看某个场景。"},
+        "limit": {"type": "integer", "default": 30, "description": "最多返回最近记录条数。"},
+    }),
+    ["user_id"],
 )
 
 TUOGUAN_SUBMIT_OPERATIONAL_FACT_SCHEMA = _schema(
@@ -1193,6 +1206,7 @@ TOOLS = (
     ("tuoguan_query_staff_directory", TUOGUAN_QUERY_STAFF_DIRECTORY_SCHEMA, _handler("query_staff_directory")),
     ("tuoguan_query_person_workstyle_profile", TUOGUAN_QUERY_PERSON_WORKSTYLE_PROFILE_SCHEMA, _handler("query_person_workstyle_profile")),
     ("tuoguan_submit_person_workstyle_preference", TUOGUAN_SUBMIT_PERSON_WORKSTYLE_PREFERENCE_SCHEMA, _handler("submit_person_workstyle_preference")),
+    ("tuoguan_query_workstyle_adaptation_health", TUOGUAN_QUERY_WORKSTYLE_ADAPTATION_HEALTH_SCHEMA, _handler("query_workstyle_adaptation_health")),
     ("tuoguan_submit_operational_fact", TUOGUAN_SUBMIT_OPERATIONAL_FACT_SCHEMA, _handler("submit_operational_fact")),
     ("tuoguan_confirm_operational_fact", TUOGUAN_CONFIRM_OPERATIONAL_FACT_SCHEMA, _handler("confirm_operational_fact")),
     ("tuoguan_query_student_service_relations", TUOGUAN_QUERY_STUDENT_SERVICE_RELATIONS_SCHEMA, _handler("query_student_service_relations")),

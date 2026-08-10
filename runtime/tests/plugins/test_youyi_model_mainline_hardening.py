@@ -202,7 +202,7 @@ def test_pre_llm_call_injects_workstyle_feedback_contract(tmp_path, monkeypatch)
 
     assert result is not None
     assert "小优服务方式档案" in result["context"]
-    assert "日报/汇报长短：晚报只说重点。" in result["context"]
+    assert "日报/汇报长短/长短：晚报只说重点。" in result["context"]
     assert "tuoguan_submit_person_workstyle_preference" in result["context"]
     assert "未看到工具 ok=true 且 writeback_verified=true 前，不得说" in result["context"]
     assert write_authorization_for("boss1", "submit_person_workstyle_preference") is not None

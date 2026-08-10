@@ -200,12 +200,14 @@ def test_daily_report_keeps_concise_rule_when_spacing_feedback_arrives_later(tmp
 
     assert first["ok"] is True
     assert second["ok"] is True
-    assert first["preference"]["preference_id"] in second["preference"]["supersedes"]
+    assert first["preference"]["preference_id"] not in second["preference"]["supersedes"]
+    assert first["preference"]["dimension_key"] == "length"
+    assert second["preference"]["dimension_key"] == "layout"
 
     style = daily_report_style_for_owner(store, "boss1")
     assert style["report_length"] == "ultra_concise"
     assert style["layout"] == "spaced_sections"
-    assert len(style["active_preferences"]) == 1
+    assert len(style["active_preferences"]) == 2
     assert len(style["applied_preferences"]) == 2
 
     cn_tz = timezone(timedelta(hours=8))
