@@ -24,6 +24,13 @@ from .programs import REGULAR_PROGRAM_ID, SUMMER_PROGRAM_ID, user_program_ids
 from .store import TuoguanStore
 
 
+_NO_CACHE_HEADERS = {
+    "Cache-Control": "no-store, no-cache, max-age=0, must-revalidate",
+    "Pragma": "no-cache",
+    "Expires": "0",
+}
+
+
 def dashboard_enabled() -> bool:
     return str(os.getenv("HERMES_TUOGUAN_DASHBOARD_ENABLED") or "").lower() in {
         "1",
@@ -69,6 +76,7 @@ class TuoguanDashboardHttp:
             text=_DASHBOARD_HTML.replace("__TOKEN__", token),
             content_type="text/html",
             charset="utf-8",
+            headers=_NO_CACHE_HEADERS,
         )
 
     async def handle_parent_report_page(self, request: web.Request) -> web.Response:
