@@ -8,6 +8,7 @@ VNC_PORT="${VNC_PORT:-5902}"
 NOVNC_PORT="${NOVNC_PORT:-6082}"
 GEOMETRY="${GEOMETRY:-1280x900x24}"
 CHROMIUM="${CHROMIUM:-/usr/bin/chromium-browser}"
+OPENCLI_EXTENSION_DIR="${OPENCLI_EXTENSION_DIR:-${SOCIAL_ROOT}/opencli-extension}"
 
 run_as_user() {
   if command -v runuser >/dev/null 2>&1; then
@@ -34,12 +35,21 @@ sleep 1
 x11vnc -display ":${DISPLAY_ID}" -localhost -nopw -forever -shared -rfbport "${VNC_PORT}" >"${SOCIAL_ROOT}/logs/x11vnc-login.log" 2>&1 &
 websockify --web=/usr/share/novnc "127.0.0.1:${NOVNC_PORT}" "127.0.0.1:${VNC_PORT}" >"${SOCIAL_ROOT}/logs/novnc-login.log" 2>&1 &
 
+extension_args=()
+if [[ -f "${OPENCLI_EXTENSION_DIR}/manifest.json" ]]; then
+  extension_args=(
+    "--disable-extensions-except=${OPENCLI_EXTENSION_DIR}"
+    "--load-extension=${OPENCLI_EXTENSION_DIR}"
+  )
+fi
+
 run_as_user env DISPLAY=":${DISPLAY_ID}" \
   "${CHROMIUM}" \
   --user-data-dir="${SOCIAL_ROOT}/chromium-profile" \
   --no-first-run \
   --no-default-browser-check \
   --disable-dev-shm-usage \
+  "${extension_args[@]}" \
   "https://www.xiaohongshu.com" "https://www.douyin.com" "chrome://extensions" \
   >"${SOCIAL_ROOT}/logs/chromium-login.log" 2>&1 &
 
@@ -50,6 +60,8 @@ SSH tunnel from your computer:
   ssh -L ${NOVNC_PORT}:127.0.0.1:${NOVNC_PORT} hermes-aliyun
 Open:
   http://127.0.0.1:${NOVNC_PORT}/vnc.html
+OpenCLI extension:
+  ${OPENCLI_EXTENSION_DIR}
 After login, stop this temporary session with:
   pkill -f "Xvfb :${DISPLAY_ID}" || true
   pkill -f "x11vnc.*${VNC_PORT}" || true
