@@ -270,7 +270,8 @@ def _call_browser_fallback(platform: str, command: str, query: str, *, limit: in
     node = shutil.which("node") or ""
     if not node and runner is None:
         return {"ok": False, "error": "node_missing", "message": "Node.js 不可用，无法运行浏览器兜底采集。", "error_code": "NODE_MISSING"}
-    profile = os.environ.get("HERMES_SOCIAL_CHROMIUM_PROFILE", "/opt/hermes-youyi/social-research/chromium-profile")
+    social_root = os.environ.get("HERMES_SOCIAL_RESEARCH_ROOT", "/opt/hermes-youyi/social-research")
+    profile = os.environ.get("HERMES_SOCIAL_CHROMIUM_PROFILE", f"{social_root}/chromium-profile")
     executable = os.environ.get("HERMES_SOCIAL_CHROMIUM", shutil.which("chromium-browser") or shutil.which("chromium") or "")
     command_line = [
         node or "node",
@@ -286,12 +287,17 @@ def _call_browser_fallback(platform: str, command: str, query: str, *, limit: in
     if runner is None and xvfb and os.environ.get("DISPLAY", "") == "":
         command_line = [xvfb, "-a", "--server-args=-screen 0 1280x900x24", *command_line]
     try:
+        child_env = os.environ.copy()
+        child_env.setdefault("HERMES_SOCIAL_RESEARCH_ROOT", social_root)
+        child_env.setdefault("HERMES_SOCIAL_CHROMIUM_PROFILE", profile)
+        child_env.setdefault("NODE_PATH", f"{social_root}/node_modules")
         completed = (runner or subprocess.run)(
             command_line,
             capture_output=True,
             text=True,
             encoding="utf-8",
             errors="replace",
+            env=child_env,
             timeout=90,
             check=False,
         )

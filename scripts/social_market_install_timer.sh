@@ -27,6 +27,7 @@ Environment=HERMES_SOCIAL_RESEARCH_ROOT=${SOCIAL_ROOT}
 Environment=HERMES_SOCIAL_CHROMIUM_PROFILE=${SOCIAL_ROOT}/chromium-profile
 Environment=HERMES_SOCIAL_CHROMIUM=/usr/bin/chromium-browser
 Environment=HERMES_SOCIAL_BROWSER_SCRIPT=${PROJECT_ROOT}/scripts/social_market_browser_fallback.js
+Environment=NODE_PATH=${SOCIAL_ROOT}/node_modules
 Environment=PATH=${SOCIAL_ROOT}/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin
 ExecStart=${PROJECT_ROOT}/.venv/bin/python ${PROJECT_ROOT}/scripts/social_market_research_runner.py --all --sleep-between --data-dir ${DATA_DIR}
 NoNewPrivileges=true

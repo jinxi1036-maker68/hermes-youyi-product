@@ -1,6 +1,10 @@
 #!/usr/bin/env node
 "use strict";
 
+if (process.env.NODE_PATH) {
+  require("module").Module._initPaths();
+}
+
 function readArgs(argv) {
   const result = {};
   for (let i = 2; i < argv.length; i += 1) {

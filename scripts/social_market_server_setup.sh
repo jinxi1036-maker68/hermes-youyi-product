@@ -37,6 +37,7 @@ cat > "${SOCIAL_ROOT}/env.sh" <<EOF
 export HERMES_SOCIAL_RESEARCH_ROOT="${SOCIAL_ROOT}"
 export HERMES_SOCIAL_CHROMIUM_PROFILE="${SOCIAL_ROOT}/chromium-profile"
 export HERMES_SOCIAL_CHROMIUM="/usr/bin/chromium-browser"
+export NODE_PATH="${SOCIAL_ROOT}/node_modules"
 export PATH="${SOCIAL_ROOT}/bin:\$PATH"
 EOF
 chown "${RUN_USER}:${RUN_USER}" "${SOCIAL_ROOT}/env.sh"
