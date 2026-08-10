@@ -31,7 +31,7 @@ chown -R "${RUN_USER}:${RUN_USER}" "${SOCIAL_ROOT}/chromium-profile" "${SOCIAL_R
 pkill -f "Xvfb :${DISPLAY_ID}" 2>/dev/null || true
 pkill -f "x11vnc.*${VNC_PORT}" 2>/dev/null || true
 pkill -f "websockify.*${NOVNC_PORT}" 2>/dev/null || true
-pkill -f "${SOCIAL_ROOT}/chromium-profile" 2>/dev/null || true
+pkill -u "${RUN_USER}" -f "chromium.*--user-data-dir=${SOCIAL_ROOT}/chromium-profile" 2>/dev/null || true
 
 Xvfb ":${DISPLAY_ID}" -screen 0 "${GEOMETRY}" -nolisten tcp >"${SOCIAL_ROOT}/logs/xvfb-login.log" 2>&1 &
 sleep 1
