@@ -293,6 +293,7 @@ def _render_morning_report(
             waiting_items=waiting_items,
             open_attention=open_attention,
             candidate_lines=candidate_lines,
+            source_counts=source_counts,
             proactivity_health=proactivity_health,
             workstyle=workstyle,
         )
@@ -378,19 +379,20 @@ def _render_ultra_morning_report(
     waiting_items: list[dict[str, Any]],
     open_attention: list[dict[str, Any]],
     candidate_lines: list[str],
+    source_counts: dict[str, int],
     proactivity_health: list[str],
     workstyle: dict[str, Any],
 ) -> str:
-    status = _first_safe_report_text(candidate_lines, "正常巡检中，暂无新的可确认结果。", limit=72)
+    status = _ultra_morning_status(source_counts)
     confirmation = _first_safe_report_text(
         _waiting_lines(waiting_items, open_attention),
         "无新增老板确认点。",
-        limit=88,
+        limit=58,
     )
     focus = _first_safe_report_text(
         _work_item_lines(items, purpose="morning") or candidate_lines[1:],
         "继续巡检活跃目标、事实缺口和记录覆盖。",
-        limit=82,
+        limit=58,
     )
     rows = [
         "金总，早上好，小优今日重点：",
@@ -399,7 +401,7 @@ def _render_ultra_morning_report(
         f"今日重点：{_strip_report_prefix(focus)}",
     ]
     if proactivity_health:
-        rows.append(f"异常：{_strip_report_prefix(_limit_text(proactivity_health[0], 78))}")
+        rows.append(f"异常：{_strip_report_prefix(_limit_text(proactivity_health[0], 54))}")
     rows.append(_style_closing_line(workstyle))
     return _limit_message(_join_style_lines(rows, workstyle), _style_limit(workstyle))
 
@@ -783,6 +785,22 @@ def _style_is_ultra_concise(workstyle: dict[str, Any]) -> bool:
     except (TypeError, ValueError):
         max_items = 5
     return str(workstyle.get("report_length") or "") == "ultra_concise" or max_items <= 3
+
+
+def _ultra_morning_status(source_counts: dict[str, int]) -> str:
+    work_count = int(source_counts.get("work_item_count") or 0)
+    waiting_count = int(source_counts.get("waiting_count") or 0)
+    attention_count = int(source_counts.get("open_attention_count") or 0)
+    parts: list[str] = []
+    if work_count:
+        parts.append(f"{work_count}个事项在跟进")
+    if waiting_count:
+        parts.append(f"{waiting_count}个事项待确认")
+    if attention_count:
+        parts.append(f"{attention_count}个老板提醒待处理")
+    if not parts:
+        return "正常巡检中，暂无新增确认点。"
+    return "，".join(parts) + "。"
 
 
 def _join_style_lines(lines: list[str], workstyle: dict[str, Any]) -> str:
