@@ -67,19 +67,6 @@ async function extractRows(page, platform, limit) {
       });
       if (rows.length >= limit) break;
     }
-    if (!rows.length) {
-      const body = compact(document.body ? document.body.innerText : "");
-      if (body) {
-        rows.push({
-          id: location.href,
-          url: location.href,
-          title: document.title || "platform_search_page",
-          content: body.slice(0, 700),
-          author: "",
-          platform,
-        });
-      }
-    }
     return rows;
   }, { platform, limit });
 }
