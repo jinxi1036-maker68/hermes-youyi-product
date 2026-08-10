@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 import json
+import os
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -153,6 +154,73 @@ def test_social_market_falls_back_to_browser_backend(tmp_path):
     assert result["run"]["status"] == "completed"
     assert result["run"]["backend"] == "browser"
     assert result["candidates"][0]["author"] == "本地托管账号"
+
+
+def test_social_market_filters_platform_agreement_pages(tmp_path):
+    from plugins.tuoguan_core.social_market_research import run_social_market_research
+    from plugins.tuoguan_core.store import TuoguanStore
+
+    def browser_runner(_command, **_kwargs):
+        return SimpleNamespace(
+            returncode=0,
+            stdout=json.dumps({
+                "ok": True,
+                "items": [
+                    {
+                        "id": "https://agree.xiaohongshu.com/h5/terms/ZXXY20220331001/-1",
+                        "title": "《用户协议》",
+                        "content": "我已阅读并同意《用户协议》《隐私政策》《儿童/青少年个人信息保护规则》",
+                        "url": "https://agree.xiaohongshu.com/h5/terms/ZXXY20220331001/-1",
+                    },
+                    {
+                        "id": "https://agree.xiaohongshu.com/h5/terms/ZXXY20220509001/-1",
+                        "title": "《隐私政策》",
+                        "content": "我已阅读并同意《用户协议》《隐私政策》《儿童/青少年个人信息保护规则》",
+                        "url": "https://agree.xiaohongshu.com/h5/terms/ZXXY20220509001/-1",
+                    },
+                ],
+            }, ensure_ascii=False),
+            stderr="",
+        )
+
+    result = run_social_market_research(
+        "xiaohongshu",
+        store=TuoguanStore(tmp_path),
+        query="项城托管招生",
+        dry_run=True,
+        backend_order=["browser"],
+        browser_runner=browser_runner,
+        now=datetime(2026, 8, 10, 10, 0, tzinfo=timezone.utc),
+    )
+
+    assert result["ok"] is True
+    assert result["run"]["status"] == "source_failed"
+    assert result["candidates"] == []
+
+
+def test_social_market_resolves_server_opencli_path(tmp_path):
+    from plugins.tuoguan_core import social_market_research
+
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    opencli = bin_dir / "opencli"
+    opencli.write_text("#!/usr/bin/env bash\n", encoding="utf-8")
+
+    previous_root = os.environ.get("HERMES_SOCIAL_RESEARCH_ROOT")
+    previous_opencli = os.environ.get("HERMES_OPENCLI")
+    try:
+        os.environ.pop("HERMES_OPENCLI", None)
+        os.environ["HERMES_SOCIAL_RESEARCH_ROOT"] = str(tmp_path)
+        assert Path(social_market_research._resolve_opencli_executable()) == opencli
+    finally:
+        if previous_root is None:
+            os.environ.pop("HERMES_SOCIAL_RESEARCH_ROOT", None)
+        else:
+            os.environ["HERMES_SOCIAL_RESEARCH_ROOT"] = previous_root
+        if previous_opencli is None:
+            os.environ.pop("HERMES_OPENCLI", None)
+        else:
+            os.environ["HERMES_OPENCLI"] = previous_opencli
 
 
 def test_social_market_batch_uses_configured_queries(tmp_path):

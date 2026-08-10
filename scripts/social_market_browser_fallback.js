@@ -37,19 +37,66 @@ function normalizeSpace(value) {
   return String(value || "").replace(/\s+/g, " ").trim();
 }
 
-async function extractRows(page, platform, limit) {
-  return await page.evaluate(({ platform, limit }) => {
+function relevanceHints(query) {
+  const text = normalizeSpace(query);
+  const dictionary = [
+    "项城", "托管", "晚托", "作业", "辅导", "小饭桌", "招生",
+    "开学", "收心", "暑假", "寒假", "托班", "自习", "接送",
+  ];
+  const hints = dictionary.filter((item) => text.includes(item));
+  if (text.length >= 2 && !hints.includes(text)) hints.push(text);
+  return hints;
+}
+
+async function extractRows(page, platform, limit, query) {
+  return await page.evaluate(({ platform, limit, query }) => {
     function compact(value) {
       return String(value || "").replace(/\s+/g, " ").trim();
     }
+    function relevanceHints(queryText) {
+      const text = compact(queryText);
+      const dictionary = [
+        "项城", "托管", "晚托", "作业", "辅导", "小饭桌", "招生",
+        "开学", "收心", "暑假", "寒假", "托班", "自习", "接送",
+      ];
+      const hints = dictionary.filter((item) => text.includes(item));
+      if (text.length >= 2 && !hints.includes(text)) hints.push(text);
+      return hints;
+    }
     function allowedUrl(url) {
       if (!url) return false;
-      if (platform === "xiaohongshu") return /xiaohongshu\.com/.test(url);
-      if (platform === "douyin") return /douyin\.com/.test(url);
+      let parsed;
+      try {
+        parsed = new URL(url);
+      } catch (_error) {
+        return false;
+      }
+      const hostname = parsed.hostname.toLowerCase();
+      const path = parsed.pathname.toLowerCase();
+      const lower = url.toLowerCase();
+      if (/(agree|terms|privacy|protocol|login|passport|help|legal|policy|download|creator)/.test(lower)) {
+        return false;
+      }
+      if (platform === "xiaohongshu") {
+        return hostname.endsWith("xiaohongshu.com") && (
+          path.startsWith("/explore/") || path.startsWith("/user/profile/")
+        );
+      }
+      if (platform === "douyin") {
+        return hostname.endsWith("douyin.com") && (
+          path.startsWith("/video/") || path.startsWith("/note/") || path.startsWith("/user/")
+        );
+      }
       return false;
+    }
+    function relevantToQuery(url, text, hints) {
+      if (!hints.length) return true;
+      const haystack = `${url} ${text}`.toLowerCase();
+      return hints.some((hint) => haystack.includes(String(hint).toLowerCase()));
     }
     const rows = [];
     const seen = new Set();
+    const hints = relevanceHints(query);
     for (const anchor of Array.from(document.querySelectorAll("a[href]"))) {
       const url = anchor.href || "";
       if (!allowedUrl(url)) continue;
@@ -58,6 +105,7 @@ async function extractRows(page, platform, limit) {
       const text = compact(card.innerText || card.textContent || title);
       if (!title && !text) continue;
       if (text.length < 6) continue;
+      if (!relevantToQuery(url, text, hints)) continue;
       const key = `${url}|${title}`.slice(0, 300);
       if (seen.has(key)) continue;
       seen.add(key);
@@ -121,7 +169,20 @@ async function main() {
       await page.mouse.wheel(0, 700);
       await page.waitForTimeout(1500);
     }
-    const items = await extractRows(page, platform, limit);
+    const items = await extractRows(page, platform, limit, query);
+    const bodyText = normalizeSpace(await page.locator("body").innerText({ timeout: 5000 }).catch(() => ""));
+    if (!items.length && /我已阅读并同意|用户协议|隐私政策|登录后|扫码登录|验证码/.test(bodyText)) {
+      console.log(JSON.stringify({
+        ok: false,
+        platform,
+        query,
+        error: "login_required_or_blocked",
+        error_code: "AUTH_REQUIRED",
+        message: "平台页面未进入可读搜索结果，可能需要在服务器 Chromium profile 中登录或处理平台验证。",
+        page_url: page.url(),
+      }));
+      return;
+    }
     console.log(JSON.stringify({
       ok: true,
       platform,

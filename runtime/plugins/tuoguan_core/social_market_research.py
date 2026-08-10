@@ -31,6 +31,14 @@ WRITE_COMMAND_WORDS = {
     "publish", "delete", "follow", "unfollow", "comment", "like",
     "draft", "drafts", "stats", "update", "login",
 }
+NON_MARKET_URL_MARKERS = (
+    "agree.", "terms", "privacy", "protocol", "login", "passport",
+    "help", "legal", "policy", "download", "creator",
+)
+NON_MARKET_TEXT_MARKERS = (
+    "用户协议", "隐私政策", "儿童/青少年", "我已阅读并同意", "扫码登录",
+    "验证码", "登录后查看更多", "请先登录",
+)
 DEFAULT_SOCIAL_MARKET_CONFIG = {
     "platforms": ["xiaohongshu", "douyin"],
     "queries": ["项城托管", "项城晚托", "项城作业辅导", "项城小饭桌", "项城托管招生", "开学收心班", "暑假托管"],
@@ -363,12 +371,25 @@ def _infer_opencli_error_code(stdout: str, stderr: str) -> str:
 
 
 def _resolve_opencli_executable() -> str:
-    return (
-        shutil.which("opencli.cmd")
-        or shutil.which("opencli")
-        or shutil.which("opencli.ps1")
-        or ""
-    )
+    social_root = os.environ.get("HERMES_SOCIAL_RESEARCH_ROOT", "/opt/hermes-youyi/social-research")
+    candidates = [
+        os.environ.get("HERMES_OPENCLI", ""),
+        f"{social_root}/bin/opencli",
+        f"{social_root}/node_modules/.bin/opencli",
+        shutil.which("opencli.cmd") or "",
+        shutil.which("opencli") or "",
+        shutil.which("opencli.ps1") or "",
+    ]
+    for candidate in candidates:
+        value = str(candidate or "").strip()
+        if not value:
+            continue
+        if shutil.which(value):
+            return value
+        path = Path(value)
+        if path.exists():
+            return str(path)
+    return ""
 
 
 def _resolve_browser_fallback_script() -> Path | None:
@@ -408,6 +429,8 @@ def _normalize_opencli_rows(payload: Any, *, platform: str, query: str, timestam
         metrics = {key: raw.get(key) for key in ("liked_count", "collected_count", "comment_count", "share_count", "digg_count", "play_count") if key in raw}
         if not title and not excerpt and not item_id:
             continue
+        if _is_non_market_row(platform=platform, url=url, title=title, excerpt=excerpt, query=query):
+            continue
         rows.append({
             "platform": platform,
             "query": query,
@@ -424,6 +447,42 @@ def _normalize_opencli_rows(payload: Any, *, platform: str, query: str, timestam
         if len(rows) >= max(1, min(int(limit or 5), 20)):
             break
     return rows
+
+
+def _is_non_market_row(*, platform: str, url: str, title: str, excerpt: str, query: str) -> bool:
+    url_lower = str(url or "").lower()
+    text = f"{title} {excerpt}".strip()
+    if any(marker in url_lower for marker in NON_MARKET_URL_MARKERS):
+        return True
+    if any(marker in text for marker in NON_MARKET_TEXT_MARKERS):
+        return True
+    if platform == "xiaohongshu" and url_lower:
+        if "xiaohongshu.com" not in url_lower:
+            return False
+        if "/explore/" not in url_lower and "/user/profile/" not in url_lower:
+            return True
+    if platform == "douyin" and url_lower:
+        if "douyin.com" not in url_lower:
+            return False
+        if not any(marker in url_lower for marker in ("/video/", "/note/", "/user/")):
+            return True
+    hints = _query_relevance_hints(query)
+    if hints and text:
+        if not any(hint.lower() in f"{url_lower} {text.lower()}" for hint in hints):
+            return True
+    return False
+
+
+def _query_relevance_hints(query: str) -> list[str]:
+    text = " ".join(str(query or "").split())
+    dictionary = (
+        "项城", "托管", "晚托", "作业", "辅导", "小饭桌", "招生",
+        "开学", "收心", "暑假", "寒假", "托班", "自习", "接送",
+    )
+    hints = [item for item in dictionary if item in text]
+    if len(text) >= 2 and text not in hints:
+        hints.append(text)
+    return hints
 
 
 def _extract_rows(payload: Any) -> list[Any]:
