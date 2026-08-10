@@ -2206,10 +2206,11 @@ class TuoguanToolService:
     def submit_person_workstyle_preference(
         self,
         *,
-        preference_type: str,
-        scope: str,
-        preference_text: str,
-        operation_id: str,
+        preference_type: str = "other_low_risk",
+        scope: str = "all_communication",
+        preference_text: str = "",
+        operation_id: str = "",
+        preference: str = "",
         normalized_rule: str = "",
         target_user_id: str = "",
         target_name: str = "",
@@ -2224,6 +2225,7 @@ class TuoguanToolService:
             return denied
         if self.identity.role not in {"teacher", "manager", "boss"}:
             return self._error("permission_denied", "当前账号不能提交服务方式偏好。")
+        actual_preference_text = preference_text or preference
 
         def execute() -> dict[str, Any]:
             result = save_person_workstyle_preference(
@@ -2231,7 +2233,7 @@ class TuoguanToolService:
                 identity=self.identity,
                 preference_type=preference_type,
                 scope=scope,
-                preference_text=preference_text,
+                preference_text=actual_preference_text,
                 normalized_rule=normalized_rule,
                 target_user_id=target_user_id,
                 target_name=target_name,

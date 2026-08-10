@@ -384,6 +384,7 @@ TUOGUAN_SUBMIT_PERSON_WORKSTYLE_PREFERENCE_SCHEMA = _schema(
         "preference_type": {"type": "string", "enum": ["report_length", "tone", "reminder_time", "followup_style", "detail_level", "format", "avoidance", "positive_preference", "other_low_risk"], "description": "偏好类型。"},
         "scope": {"type": "string", "enum": ["daily_report", "direct_reply", "task_followup", "proactive_question", "teacher_support", "manager_support", "all_communication"], "description": "偏好适用场景。"},
         "preference_text": {"type": "string", "description": "用户明确表达的偏好内容，保留原意。"},
+        "preference": {"type": "string", "description": "可选兼容字段；等同于 preference_text，仍只允许低风险工作方式偏好。"},
         "normalized_rule": {"type": "string", "description": "可选，将偏好整理成简短规则；不得加入用户没有表达的事实。"},
         "dimension_key": {"type": "string", "enum": ["", "length", "layout", "structure", "tone", "timing", "detail", "avoidance", "followup_method", "other"], "default": "", "description": "可选，偏好影响的工作方式维度；留空由系统按文本推断。"},
         "confidence": {"type": "number", "default": 1.0, "description": "模型对这条低风险工作方式偏好的置信度，0-1。"},

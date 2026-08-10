@@ -51,6 +51,25 @@ def test_low_risk_owner_daily_report_preference_is_saved_and_verified(tmp_path):
     assert profile["data"]["preferences"][0]["preference_type"] == "report_length"
 
 
+def test_workstyle_preference_alias_is_saved_and_verified(tmp_path):
+    from plugins.tuoguan_core.tool_service import TuoguanToolService
+
+    store = _seed_store(tmp_path)
+    service = TuoguanToolService(store, platform="wecom_callback", user_id="boss1", user_name="金总")
+
+    result = service.submit_person_workstyle_preference(
+        preference_type="format",
+        scope="daily_report",
+        preference="以后汇报先说结论，再列三条重点。",
+        normalized_rule="日报先说结论，再列三条重点。",
+        operation_id="workstyle-boss-format-alias-1",
+    )
+
+    assert result["ok"] is True
+    assert result["data"]["writeback_verified"] is True
+    assert result["data"]["preference"]["preference_text"] == "以后汇报先说结论，再列三条重点。"
+
+
 def test_teacher_reminder_time_preference_is_personal_not_institution_policy(tmp_path):
     from plugins.tuoguan_core.tool_service import TuoguanToolService
 
