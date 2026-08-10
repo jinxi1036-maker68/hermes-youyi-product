@@ -229,6 +229,37 @@ def test_social_market_browser_auth_required_is_backend_unavailable(tmp_path):
     assert result["candidates"] == []
 
 
+def test_social_market_browser_profile_in_use_is_backend_unavailable(tmp_path):
+    from plugins.tuoguan_core.social_market_research import run_social_market_research
+    from plugins.tuoguan_core.store import TuoguanStore
+
+    def browser_runner(_command, **_kwargs):
+        return SimpleNamespace(
+            returncode=1,
+            stdout=json.dumps({
+                "ok": False,
+                "error": "browser_profile_in_use",
+                "error_code": "PROFILE_IN_USE",
+                "message": "Opening in existing browser session. This usually means that the profile is already in use.",
+            }, ensure_ascii=False),
+            stderr="",
+        )
+
+    result = run_social_market_research(
+        "douyin",
+        store=TuoguanStore(tmp_path),
+        query="项城托管招生",
+        dry_run=True,
+        backend_order=["browser"],
+        browser_runner=browser_runner,
+        now=datetime(2026, 8, 10, 10, 0, tzinfo=timezone.utc),
+    )
+
+    assert result["ok"] is True
+    assert result["run"]["status"] == "backend_unavailable"
+    assert result["candidates"] == []
+
+
 def test_social_market_resolves_server_opencli_path(tmp_path):
     from plugins.tuoguan_core import social_market_research
 

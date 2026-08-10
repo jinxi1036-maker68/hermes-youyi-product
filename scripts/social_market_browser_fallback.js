@@ -196,7 +196,14 @@ async function main() {
       })),
     }));
   } catch (error) {
-    console.log(JSON.stringify({ ok: false, error: "browser_extract_failed", error_code: "BROWSER_EXTRACT_FAILED", message: String(error && error.message || error).slice(0, 1000) }));
+    const message = String(error && error.message || error);
+    const profileInUse = /existing browser session|profile.*in use|singletonlock/i.test(message);
+    console.log(JSON.stringify({
+      ok: false,
+      error: profileInUse ? "browser_profile_in_use" : "browser_extract_failed",
+      error_code: profileInUse ? "PROFILE_IN_USE" : "BROWSER_EXTRACT_FAILED",
+      message: message.slice(0, 1000),
+    }));
     process.exitCode = 1;
   } finally {
     if (context) await context.close();
