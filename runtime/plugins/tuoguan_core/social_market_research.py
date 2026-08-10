@@ -47,6 +47,11 @@ DEFAULT_SOCIAL_MARKET_CONFIG = {
     "sleep_seconds_min": 3,
     "sleep_seconds_max": 8,
 }
+BACKEND_UNAVAILABLE_ERROR_CODES = {
+    "AUTH_REQUIRED", "BROWSER_BACKEND_MISSING", "BROWSER_CONNECT",
+    "BROWSER_SCRIPT_MISSING", "CAPTCHA_REQUIRED", "NODE_MISSING",
+    "OPENCLI_MISSING", "PLAYWRIGHT_MISSING",
+}
 
 
 def run_social_market_research(
@@ -99,7 +104,7 @@ def run_social_market_research(
                 continue
             status = "completed"
             break
-        status = "backend_unavailable" if str(result.get("error_code") or "") in {"BROWSER_CONNECT", "OPENCLI_MISSING", "PLAYWRIGHT_MISSING", "BROWSER_SCRIPT_MISSING"} else "source_failed"
+        status = "backend_unavailable" if str(result.get("error_code") or "") in BACKEND_UNAVAILABLE_ERROR_CODES else "source_failed"
         errors.append(str(result.get("message") or result.get("error") or f"{backend} social search failed"))
     if not rows and not errors:
         status = "backend_unavailable"
