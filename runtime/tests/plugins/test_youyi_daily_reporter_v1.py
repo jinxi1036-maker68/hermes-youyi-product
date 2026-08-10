@@ -221,6 +221,7 @@ def test_daily_report_keeps_concise_rule_when_spacing_feedback_arrives_later(tmp
     assert "status waiting" not in report["content"]
     assert "状态 waiting" not in report["content"]
     assert "2026-08-" not in report["content"]
+    assert "等待 " not in report["content"]
     assert len(report["content"]) <= 520
 
 

@@ -381,14 +381,16 @@ def _render_ultra_morning_report(
     proactivity_health: list[str],
     workstyle: dict[str, Any],
 ) -> str:
-    status = _first_safe_report_text(candidate_lines, "正常巡检中，暂无新的可确认结果。")
+    status = _first_safe_report_text(candidate_lines, "正常巡检中，暂无新的可确认结果。", limit=72)
     confirmation = _first_safe_report_text(
         _waiting_lines(waiting_items, open_attention),
         "无新增老板确认点。",
+        limit=88,
     )
     focus = _first_safe_report_text(
         _work_item_lines(items, purpose="morning") or candidate_lines[1:],
         "继续巡检活跃目标、事实缺口和记录覆盖。",
+        limit=82,
     )
     rows = [
         "金总，早上好，小优今日重点：",
@@ -397,7 +399,7 @@ def _render_ultra_morning_report(
         f"今日重点：{_strip_report_prefix(focus)}",
     ]
     if proactivity_health:
-        rows.append(f"异常：{_strip_report_prefix(_limit_text(proactivity_health[0], 90))}")
+        rows.append(f"异常：{_strip_report_prefix(_limit_text(proactivity_health[0], 78))}")
     rows.append(_style_closing_line(workstyle))
     return _limit_message(_join_style_lines(rows, workstyle), _style_limit(workstyle))
 
@@ -415,14 +417,17 @@ def _render_ultra_evening_report(
     completed = _first_safe_report_text(
         _value_lines(value_entries, {}) or candidate_lines,
         "无新的可确认完成项；没有把等待状态写成完成。",
+        limit=82,
     )
     issue = _first_safe_report_text(
         [proactivity_health[0]] if proactivity_health else _waiting_lines(waiting_items, open_attention),
         "无新增异常。",
+        limit=78,
     )
     tomorrow = _first_safe_report_text(
         _tomorrow_lines(items, {}) or _work_item_lines(items, purpose="morning"),
         "继续巡检活跃目标、事实缺口和记录覆盖。",
+        limit=82,
     )
     rows = [
         "金总，今晚小优汇报：",
@@ -798,6 +803,7 @@ def _strip_report_prefix(text: str) -> str:
     prefixes = (
         "目标进展：", "当前卡点：", "今天先盯：", "目标推进：", "工作状态：",
         "价值证据：", "明天先看：", "下一步：", "异常：", "完成：", "需确认：", "今日重点：",
+        "今天带入：", "复盘进化：", "未解决老板提醒：",
     )
     changed = True
     while changed:
