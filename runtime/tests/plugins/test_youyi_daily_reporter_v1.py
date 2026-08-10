@@ -166,6 +166,64 @@ def test_owner_daily_report_applies_saved_concise_workstyle(tmp_path):
     assert len(result["content"]) <= 520
 
 
+def test_daily_report_keeps_concise_rule_when_spacing_feedback_arrives_later(tmp_path):
+    from plugins.tuoguan_core.daily_reporter import build_daily_boss_report
+    from plugins.tuoguan_core.models import UserIdentity
+    from plugins.tuoguan_core.workstyle_profiles import daily_report_style_for_owner, submit_person_workstyle_preference
+    from plugins.tuoguan_core.write_guard import authorized_system_write
+
+    store = _seed_store(tmp_path)
+    identity = UserIdentity("wecom", "boss1", "boss1", "金总", "boss", "approved")
+    with authorized_system_write(
+        store.data_dir,
+        job_name="test_owner_report_format_feedback",
+        allowed_files={"person_workstyle_events.jsonl"},
+    ):
+        first = submit_person_workstyle_preference(
+            store,
+            identity=identity,
+            preference_type="format",
+            scope="daily_report",
+            preference_text="早晚报精简为3-5行，每条一行。早上：正常/异常+需确认+今日重点。晚上：完成X件+异常有/无+明日计划。不出现内部术语。",
+            normalized_rule="早晚报精简为3-5行，每条一行。早上：正常/异常+需确认+今日重点。晚上：完成X件+异常有/无+明日计划。不出现内部术语。",
+            operation_id="daily-style-format-1",
+        )
+        second = submit_person_workstyle_preference(
+            store,
+            identity=identity,
+            preference_type="format",
+            scope="daily_report",
+            preference_text="汇报要段落分明、每条之间留空行，文字不要拥挤堆叠在一起。",
+            normalized_rule="汇报要段落分明、每条之间留空行，文字不要拥挤堆叠在一起。",
+            operation_id="daily-style-format-2",
+        )
+
+    assert first["ok"] is True
+    assert second["ok"] is True
+    assert first["preference"]["preference_id"] in second["preference"]["supersedes"]
+
+    style = daily_report_style_for_owner(store, "boss1")
+    assert style["report_length"] == "ultra_concise"
+    assert style["layout"] == "spaced_sections"
+    assert len(style["active_preferences"]) == 1
+    assert len(style["applied_preferences"]) == 2
+
+    cn_tz = timezone(timedelta(hours=8))
+    report = build_daily_boss_report("morning", store=store, now=datetime(2026, 8, 10, 8, 30, tzinfo=cn_tz))
+
+    assert report["ok"] is True
+    assert "状态：" in report["content"]
+    assert "需确认：" in report["content"]
+    assert "今日重点：" in report["content"]
+    assert "\n\n需确认：" in report["content"]
+    assert "[{" not in report["content"]
+    assert "goal_id" not in report["content"]
+    assert "status waiting" not in report["content"]
+    assert "状态 waiting" not in report["content"]
+    assert "2026-08-" not in report["content"]
+    assert len(report["content"]) <= 520
+
+
 def test_daily_report_applies_next_day_self_evolution_context(tmp_path):
     from plugins.tuoguan_core.daily_reporter import build_daily_boss_report
     from plugins.tuoguan_core.models import UserIdentity

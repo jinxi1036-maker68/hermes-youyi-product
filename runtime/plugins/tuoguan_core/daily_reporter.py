@@ -8,7 +8,7 @@ institution data.
 from __future__ import annotations
 
 from copy import deepcopy
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 import argparse
 import asyncio
 import json
@@ -287,6 +287,15 @@ def _render_morning_report(
     staff_voice_line = _staff_voice_report_line(staff_voice, purpose="morning")
     if staff_voice_line:
         candidate_lines.insert(2, staff_voice_line)
+    if _style_is_ultra_concise(workstyle):
+        return _render_ultra_morning_report(
+            items=items,
+            waiting_items=waiting_items,
+            open_attention=open_attention,
+            candidate_lines=candidate_lines,
+            proactivity_health=proactivity_health,
+            workstyle=workstyle,
+        )
     report_items = _concise_report_items(
         candidate_lines,
         proactivity_health=proactivity_health,
@@ -340,6 +349,16 @@ def _render_evening_report(
     staff_voice_line = _staff_voice_report_line(staff_voice, purpose="evening")
     if staff_voice_line:
         candidate_lines.insert(2, staff_voice_line)
+    if _style_is_ultra_concise(workstyle):
+        return _render_ultra_evening_report(
+            items=items,
+            waiting_items=waiting_items,
+            open_attention=open_attention,
+            value_entries=value_entries,
+            candidate_lines=candidate_lines,
+            proactivity_health=proactivity_health,
+            workstyle=workstyle,
+        )
     report_items = _concise_report_items(
         candidate_lines,
         proactivity_health=proactivity_health,
@@ -351,6 +370,68 @@ def _render_evening_report(
         _style_closing_line(workstyle),
     ]
     return _limit_message("\n".join(lines), _style_limit(workstyle))
+
+
+def _render_ultra_morning_report(
+    *,
+    items: list[dict[str, Any]],
+    waiting_items: list[dict[str, Any]],
+    open_attention: list[dict[str, Any]],
+    candidate_lines: list[str],
+    proactivity_health: list[str],
+    workstyle: dict[str, Any],
+) -> str:
+    status = _first_safe_report_text(candidate_lines, "正常巡检中，暂无新的可确认结果。")
+    confirmation = _first_safe_report_text(
+        _waiting_lines(waiting_items, open_attention),
+        "无新增老板确认点。",
+    )
+    focus = _first_safe_report_text(
+        _work_item_lines(items, purpose="morning") or candidate_lines[1:],
+        "继续巡检活跃目标、事实缺口和记录覆盖。",
+    )
+    rows = [
+        "金总，早上好，小优今日重点：",
+        f"状态：{_strip_report_prefix(status)}",
+        f"需确认：{_strip_report_prefix(confirmation)}",
+        f"今日重点：{_strip_report_prefix(focus)}",
+    ]
+    if proactivity_health:
+        rows.append(f"异常：{_strip_report_prefix(_limit_text(proactivity_health[0], 90))}")
+    rows.append(_style_closing_line(workstyle))
+    return _limit_message(_join_style_lines(rows, workstyle), _style_limit(workstyle))
+
+
+def _render_ultra_evening_report(
+    *,
+    items: list[dict[str, Any]],
+    waiting_items: list[dict[str, Any]],
+    open_attention: list[dict[str, Any]],
+    value_entries: list[dict[str, Any]],
+    candidate_lines: list[str],
+    proactivity_health: list[str],
+    workstyle: dict[str, Any],
+) -> str:
+    completed = _first_safe_report_text(
+        _value_lines(value_entries, {}) or candidate_lines,
+        "无新的可确认完成项；没有把等待状态写成完成。",
+    )
+    issue = _first_safe_report_text(
+        [proactivity_health[0]] if proactivity_health else _waiting_lines(waiting_items, open_attention),
+        "无新增异常。",
+    )
+    tomorrow = _first_safe_report_text(
+        _tomorrow_lines(items, {}) or _work_item_lines(items, purpose="morning"),
+        "继续巡检活跃目标、事实缺口和记录覆盖。",
+    )
+    rows = [
+        "金总，今晚小优汇报：",
+        f"完成：{_strip_report_prefix(completed)}",
+        f"异常：{_strip_report_prefix(issue)}",
+        f"明日计划：{_strip_report_prefix(tomorrow)}",
+        _style_closing_line(workstyle),
+    ]
+    return _limit_message(_join_style_lines(rows, workstyle), _style_limit(workstyle))
 
 
 def _proactivity_health(store: TuoguanStore, timestamp: datetime) -> list[str]:
@@ -496,7 +577,7 @@ def _work_item_lines(items: list[dict[str, Any]], *, purpose: str) -> list[str]:
     lines: list[str] = []
     for item in items[:4]:
         title = _pick_text(item, "title", "focus_summary", "focus_key")
-        status = _pick_text(item, "status") or "active"
+        status = _public_status_label(_pick_text(item, "status") or "active")
         phase = _text_from_any(item.get("current_phase"))
         next_action = _first_text(item.get("next_actions"))
         waiting = _text_from_any(item.get("current_waiting"))
@@ -504,9 +585,9 @@ def _work_item_lines(items: list[dict[str, Any]], *, purpose: str) -> list[str]:
         if not title:
             continue
         if purpose == "morning":
-            lines.append(f"{title}：状态 {status}；今天先看 {detail or '是否有新事实和下一关注时间'}。")
+            lines.append(f"{title}：{status}；今天先看 {detail or '是否有新事实和下一关注时间'}。")
         else:
-            lines.append(f"{title}：状态 {status}；当前记录为 {detail or '暂无新的可确认变化'}。")
+            lines.append(f"{title}：{status}；当前记录为 {detail or '暂无新的可确认变化'}。")
     return lines
 
 
@@ -514,14 +595,57 @@ def _waiting_lines(waiting_items: list[dict[str, Any]], open_attention: list[dic
     lines: list[str] = []
     for item in waiting_items[:3]:
         title = _pick_text(item, "title", "focus_key")
-        waiting = _text_from_any(item.get("current_waiting")) or _first_text(item.get("blocked_by"))
-        next_at = _pick_text(item, "next_attention_at", "next_contact_after")
-        lines.append(f"{title or '未命名工作项'}：等待 {waiting or '新事实'}；下一关注时间 {next_at or '待状态更新'}。")
+        waiting = _clean_waiting_detail(_text_from_any(item.get("current_waiting")) or _first_text(item.get("blocked_by")))
+        next_at = _public_time_label(_pick_text(item, "next_attention_at", "next_contact_after"))
+        lines.append(f"{title or '未命名工作项'}：等待{waiting or '新事实'}；下一关注时间 {next_at or '待状态更新'}。")
     for thread in open_attention[:2]:
         question = _pick_text(thread, "question_text")
-        status = _pick_text(thread, "status") or "open"
+        status = _public_status_label(_pick_text(thread, "status") or "open")
         lines.append(f"未解决老板提醒：{question or '问题内容未记录'}；当前状态 {status}。")
     return lines
+
+
+def _public_status_label(status: str) -> str:
+    value = str(status or "").strip().lower()
+    mapping = {
+        "active": "进行中",
+        "open": "待处理",
+        "waiting": "等待确认",
+        "pending": "待处理",
+        "retry_pending": "待重试",
+        "sending": "发送中",
+        "sent": "已发送",
+        "done": "已完成",
+        "completed": "已完成",
+        "closed": "已关闭",
+        "failed": "异常",
+        "result_unknown": "结果待核验",
+        "suppressed": "已抑制",
+        "superseded": "已更新",
+    }
+    return mapping.get(value, str(status or "").strip() or "进行中")
+
+
+def _clean_waiting_detail(value: str) -> str:
+    text = str(value or "").strip()
+    for prefix in ("等待", "待", "等"):
+        if text.startswith(prefix):
+            cleaned = text[len(prefix):].strip(" ：:，,；;")
+            return cleaned or text
+    return text
+
+
+def _public_time_label(value: str) -> str:
+    text = str(value or "").strip()
+    if not text:
+        return ""
+    try:
+        parsed = datetime.fromisoformat(text.replace("Z", "+00:00"))
+    except ValueError:
+        return text
+    if parsed.tzinfo is not None:
+        parsed = parsed.astimezone(timezone(timedelta(hours=8)))
+    return f"{parsed.month}月{parsed.day}日{parsed.hour:02d}:{parsed.minute:02d}"
 
 
 def _value_lines(value_entries: list[dict[str, Any]], latest_review: dict[str, Any]) -> list[str]:
@@ -646,6 +770,48 @@ def _style_limit(workstyle: dict[str, Any]) -> int:
 def _style_closing_line(workstyle: dict[str, Any]) -> str:
     closing = str(workstyle.get("closing_line") or "").strip()
     return closing or "细节我已留档，需要我展开哪一项你直接说。"
+
+
+def _style_is_ultra_concise(workstyle: dict[str, Any]) -> bool:
+    try:
+        max_items = int(workstyle.get("max_items") or 5)
+    except (TypeError, ValueError):
+        max_items = 5
+    return str(workstyle.get("report_length") or "") == "ultra_concise" or max_items <= 3
+
+
+def _join_style_lines(lines: list[str], workstyle: dict[str, Any]) -> str:
+    separator = "\n\n" if str(workstyle.get("layout") or "") == "spaced_sections" else "\n"
+    return separator.join(line for line in lines if str(line or "").strip())
+
+
+def _first_safe_report_text(lines: list[str], fallback: str, *, limit: int = 110) -> str:
+    for line in lines:
+        text = _limit_text(str(line or ""), limit)
+        if text and not _looks_like_internal_structured_text(text):
+            return text
+    return fallback
+
+
+def _strip_report_prefix(text: str) -> str:
+    value = str(text or "").strip()
+    prefixes = (
+        "目标进展：", "当前卡点：", "今天先盯：", "目标推进：", "工作状态：",
+        "价值证据：", "明天先看：", "下一步：", "异常：", "完成：", "需确认：", "今日重点：",
+    )
+    changed = True
+    while changed:
+        changed = False
+        for prefix in prefixes:
+            if value.startswith(prefix):
+                value = value[len(prefix):].strip()
+                changed = True
+    return value
+
+
+def _looks_like_internal_structured_text(text: str) -> bool:
+    compact = "".join(str(text or "").split())
+    return any(term in compact for term in ("[{'", "[{", "'goal_id'", "\"goal_id\"", "'current_phase'", "\"current_phase\""))
 
 
 def _outbox_row(

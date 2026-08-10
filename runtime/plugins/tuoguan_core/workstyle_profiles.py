@@ -71,6 +71,7 @@ DEFAULT_DAILY_REPORT_STYLE = {
     "report_length": "concise",
     "detail_level": "key_points_only",
     "format": "3_to_5_one_line_items",
+    "layout": "one_line_items",
     "max_items": 5,
     "max_chars": 700,
     "closing_line": "细节我已留档，需要我展开哪一项你直接说。",
@@ -410,21 +411,58 @@ def daily_report_style_for_owner(store: TuoguanStore, owner_id: str) -> dict[str
         scope="daily_report",
         limit=20,
     )
-    for pref in profile.get("preferences") or []:
-        ptype = str(pref.get("preference_type") or "")
-        text = str(pref.get("normalized_rule") or pref.get("preference_text") or "")
-        compact = "".join(text.split())
-        if ptype in {"report_length", "detail_level", "format"}:
-            if any(term in compact for term in ("更短", "简单", "简短", "少说", "只说重点", "极简", "三条", "3条", "三项", "3项")):
-                style["report_length"] = "ultra_concise"
-                style["max_items"] = 3
-                style["max_chars"] = 520
-            elif any(term in compact for term in ("详细", "展开", "多说", "细节")):
-                style["report_length"] = "expanded"
-                style["max_items"] = 5
-                style["max_chars"] = 1000
+    applied_preferences = _daily_report_preferences_for_style(store, owner_id)
+    for pref in applied_preferences:
+        _apply_daily_report_preference(style, pref)
     style["active_preferences"] = profile.get("preferences") or []
+    style["applied_preferences"] = applied_preferences
     return style
+
+
+def _daily_report_preferences_for_style(store: TuoguanStore, owner_id: str) -> list[dict[str, Any]]:
+    """Return recent daily-report preferences as additive style dimensions.
+
+    Workstyle events deliberately supersede same-type preferences for a compact
+    profile view. Daily report rendering needs a slightly richer interpretation:
+    "leave blank lines" is an additive formatting refinement, not a replacement
+    for "only three key lines".
+    """
+
+    events = [
+        deepcopy(item)
+        for item in _read_events(store)
+        if str(item.get("record_type") or "") == "person_workstyle_preference"
+        and str(item.get("target_user_id") or "") == str(owner_id)
+        and str(item.get("scope") or "") == "daily_report"
+        and str(item.get("status") or "active") == "active"
+    ]
+    return events[-20:]
+
+
+def _apply_daily_report_preference(style: dict[str, Any], pref: dict[str, Any]) -> None:
+    ptype = str(pref.get("preference_type") or "")
+    if ptype not in {"report_length", "detail_level", "format"}:
+        return
+    text = str(pref.get("normalized_rule") or pref.get("preference_text") or "")
+    compact = "".join(text.split()).lower()
+    if any(
+        term in compact
+        for term in (
+            "更短", "简单", "简短", "少说", "只说重点", "极简", "三条", "3条", "三项", "3项",
+            "3-5", "3到5", "三到五", "每条一行", "快速浏览", "扫一眼", "一句话带过",
+        )
+    ):
+        style["report_length"] = "ultra_concise"
+        style["max_items"] = 3
+        style["max_chars"] = 520
+    elif any(term in compact for term in ("详细", "展开", "多说", "细节")):
+        style["report_length"] = "expanded"
+        style["max_items"] = 5
+        style["max_chars"] = 1000
+    if any(term in compact for term in ("段落分明", "留空行", "空一行", "不要拥挤", "不拥挤", "别挤", "堆叠", "不堆")):
+        style["layout"] = "spaced_sections"
+    if any(term in compact for term in ("正常/异常", "需确认", "今日重点", "完成x件", "明日计划", "异常有/无")):
+        style["format"] = "status_confirm_focus"
 
 
 def _looks_like_workstyle_feedback(text: str) -> bool:
