@@ -25,6 +25,7 @@ install -d -o "${RUN_USER}" -g "${RUN_USER}" -m 700 "${SOCIAL_ROOT}"
 install -d -o "${RUN_USER}" -g "${RUN_USER}" -m 700 "${SOCIAL_ROOT}/chromium-profile"
 install -d -o "${RUN_USER}" -g "${RUN_USER}" -m 700 "${SOCIAL_ROOT}/logs"
 install -d -o "${RUN_USER}" -g "${RUN_USER}" -m 755 "${SOCIAL_ROOT}/bin"
+chown -R "${RUN_USER}:${RUN_USER}" "${SOCIAL_ROOT}/chromium-profile" "${SOCIAL_ROOT}/logs"
 
 if [[ ! -f "${SOCIAL_ROOT}/package.json" ]]; then
   run_as_user "cd '${SOCIAL_ROOT}' && npm init -y >/dev/null"

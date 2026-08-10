@@ -25,6 +25,8 @@ fi
 
 install -d -o "${RUN_USER}" -g "${RUN_USER}" -m 700 "${SOCIAL_ROOT}/logs"
 install -d -o "${RUN_USER}" -g "${RUN_USER}" -m 700 "${SOCIAL_ROOT}/chromium-profile"
+install -d -o "${RUN_USER}" -g "${RUN_USER}" -m 700 "/tmp/${RUN_USER}-runtime"
+chown -R "${RUN_USER}:${RUN_USER}" "${SOCIAL_ROOT}/chromium-profile" "${SOCIAL_ROOT}/logs"
 
 pkill -f "Xvfb :${DISPLAY_ID}" 2>/dev/null || true
 pkill -f "x11vnc.*${VNC_PORT}" 2>/dev/null || true
@@ -44,11 +46,13 @@ if [[ -f "${OPENCLI_EXTENSION_DIR}/manifest.json" ]]; then
 fi
 
 run_as_user env DISPLAY=":${DISPLAY_ID}" \
+  XDG_RUNTIME_DIR="/tmp/${RUN_USER}-runtime" \
   "${CHROMIUM}" \
   --user-data-dir="${SOCIAL_ROOT}/chromium-profile" \
   --no-first-run \
   --no-default-browser-check \
   --disable-dev-shm-usage \
+  --disable-gpu \
   "${extension_args[@]}" \
   "https://www.xiaohongshu.com" "https://www.douyin.com" "chrome://extensions" \
   >"${SOCIAL_ROOT}/logs/chromium-login.log" 2>&1 &
