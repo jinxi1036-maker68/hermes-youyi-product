@@ -104,3 +104,78 @@ def test_social_market_success_persists_source_candidates(tmp_path):
     queried = query_social_market_research(store, identity=identity, platform="xiaohongshu")
     assert queried["candidate_count"] == 1
     assert "不是优益已确认事实" in queried["rendered_text"]
+
+
+def test_social_market_falls_back_to_browser_backend(tmp_path):
+    from plugins.tuoguan_core.social_market_research import run_social_market_research
+    from plugins.tuoguan_core.store import TuoguanStore
+
+    def opencli_runner(command, **_kwargs):
+        if "whoami" in command:
+            return SimpleNamespace(
+                returncode=69,
+                stdout=json.dumps({"ok": False, "error": {"code": "BROWSER_CONNECT", "message": "Browser Bridge extension not connected"}}, ensure_ascii=False),
+                stderr="",
+            )
+        raise AssertionError("search should not call OpenCLI after failed preflight")
+
+    def browser_runner(command, **_kwargs):
+        assert "social_market_browser_fallback.js" in command[1]
+        assert "--platform" in command
+        return SimpleNamespace(
+            returncode=0,
+            stdout=json.dumps({
+                "ok": True,
+                "items": [
+                    {
+                        "id": "browser-1",
+                        "title": "项城晚托招生视频",
+                        "content": "同行主打作业辅导、接送省心和开学收心。",
+                        "url": "https://example.test/browser-1",
+                        "author": "本地托管账号",
+                    }
+                ],
+            }, ensure_ascii=False),
+            stderr="",
+        )
+
+    result = run_social_market_research(
+        "xiaohongshu",
+        store=TuoguanStore(tmp_path),
+        query="项城晚托",
+        dry_run=True,
+        runner=opencli_runner,
+        browser_runner=browser_runner,
+        now=datetime(2026, 8, 10, 10, 0, tzinfo=timezone.utc),
+    )
+
+    assert result["ok"] is True
+    assert result["run"]["status"] == "completed"
+    assert result["run"]["backend"] == "browser"
+    assert result["candidates"][0]["author"] == "本地托管账号"
+
+
+def test_social_market_batch_uses_configured_queries(tmp_path):
+    from plugins.tuoguan_core.social_market_research import run_social_market_batch
+    from plugins.tuoguan_core.store import TuoguanStore
+
+    _write_json(
+        tmp_path,
+        "social_market_research_config.json",
+        {
+            "platforms": ["xiaohongshu"],
+            "queries": ["项城托管", "项城晚托"],
+            "backend_order": ["browser"],
+            "limit_per_query": 1,
+        },
+    )
+
+    result = run_social_market_batch(
+        store=TuoguanStore(tmp_path),
+        dry_run=True,
+        now=datetime(2026, 8, 10, 10, 0, tzinfo=timezone.utc),
+    )
+
+    assert result["ok"] is True
+    assert result["run_count"] == 2
+    assert result["platforms"] == ["xiaohongshu"]

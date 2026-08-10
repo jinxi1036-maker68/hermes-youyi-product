@@ -4,8 +4,12 @@ from __future__ import annotations
 
 from datetime import datetime
 import json
+import os
+from pathlib import Path
+import random
 import shutil
 import subprocess
+import time
 import uuid
 from typing import Any
 
@@ -16,6 +20,7 @@ from .write_guard import authorized_system_write
 
 
 SOCIAL_MARKET_RESEARCH_CANDIDATES_FILE = "social_market_research_candidates.jsonl"
+SOCIAL_MARKET_RESEARCH_CONFIG_FILE = "social_market_research_config.json"
 SOCIAL_MARKET_RESEARCH_RUNS_FILE = "social_market_research_runs.jsonl"
 VALID_PLATFORMS = {"xiaohongshu", "douyin"}
 READ_ONLY_COMMANDS = {
@@ -25,6 +30,14 @@ READ_ONLY_COMMANDS = {
 WRITE_COMMAND_WORDS = {
     "publish", "delete", "follow", "unfollow", "comment", "like",
     "draft", "drafts", "stats", "update", "login",
+}
+DEFAULT_SOCIAL_MARKET_CONFIG = {
+    "platforms": ["xiaohongshu", "douyin"],
+    "queries": ["项城托管", "项城晚托", "项城作业辅导", "项城小饭桌", "项城托管招生", "开学收心班", "暑假托管"],
+    "limit_per_query": 10,
+    "backend_order": ["opencli", "browser"],
+    "sleep_seconds_min": 3,
+    "sleep_seconds_max": 8,
 }
 
 
@@ -36,8 +49,10 @@ def run_social_market_research(
     command: str = "search",
     dry_run: bool = False,
     limit: int = 5,
+    backend_order: list[str] | tuple[str, ...] | None = None,
     now: datetime | None = None,
     runner: Any | None = None,
+    browser_runner: Any | None = None,
 ) -> dict[str, Any]:
     actual_store = store or TuoguanStore()
     timestamp = now or datetime.now().astimezone()
@@ -50,24 +65,37 @@ def run_social_market_research(
     if not allowed:
         return _blocked_result(run_id, normalized_platform, normalized_command, normalized_query, timestamp, dry_run=dry_run)
 
-    preflight = _opencli_preflight(normalized_platform, runner=runner)
     rows: list[dict[str, Any]] = []
     errors: list[str] = []
     status = "dry_run" if dry_run else "completed"
+    used_backend = ""
 
-    if not preflight.get("ok"):
-        status = "backend_unavailable"
-        errors.append(str(preflight.get("message") or "OpenCLI browser bridge unavailable"))
-    else:
-        result = _call_opencli(normalized_platform, normalized_command, normalized_query, limit=limit, runner=runner)
+    preflight: dict[str, Any] = {"ok": False, "backend": "not_attempted"}
+    for backend in _normalize_backend_order(backend_order or social_market_research_config(actual_store).get("backend_order")):
+        if backend == "opencli":
+            preflight = _opencli_preflight(normalized_platform, runner=runner)
+            if not preflight.get("ok"):
+                errors.append(str(preflight.get("message") or "OpenCLI browser bridge unavailable"))
+                continue
+            result = _call_opencli(normalized_platform, normalized_command, normalized_query, limit=limit, runner=runner)
+        elif backend == "browser":
+            result = _call_browser_fallback(normalized_platform, normalized_command, normalized_query, limit=limit, runner=browser_runner)
+        else:
+            continue
         if result.get("ok"):
+            used_backend = backend
             rows = _normalize_opencli_rows(result.get("payload"), platform=normalized_platform, query=normalized_query, timestamp=timestamp, limit=limit)
             if not rows:
                 status = "source_failed"
-                errors.append("opencli returned no usable social market rows")
-        else:
-            status = "backend_unavailable" if str(result.get("error_code") or "") == "BROWSER_CONNECT" else "source_failed"
-            errors.append(str(result.get("message") or result.get("error") or "opencli social search failed"))
+                errors.append(f"{backend} returned no usable social market rows")
+                continue
+            status = "completed"
+            break
+        status = "backend_unavailable" if str(result.get("error_code") or "") in {"BROWSER_CONNECT", "OPENCLI_MISSING", "PLAYWRIGHT_MISSING", "BROWSER_SCRIPT_MISSING"} else "source_failed"
+        errors.append(str(result.get("message") or result.get("error") or f"{backend} social search failed"))
+    if not rows and not errors:
+        status = "backend_unavailable"
+        errors.append("No social market backend was available.")
 
     run_row = {
         "run_id": run_id,
@@ -76,6 +104,7 @@ def run_social_market_research(
         "command": normalized_command,
         "query": normalized_query,
         "status": status,
+        "backend": used_backend,
         "dry_run": bool(dry_run),
         "evidence_count": len(rows),
         "errors": errors[:20],
@@ -97,6 +126,63 @@ def run_social_market_research(
             _append_jsonl(actual_store, SOCIAL_MARKET_RESEARCH_CANDIDATES_FILE, {**row, "operation_id": auth.operation_id, "ledger_id": auth.ledger_id, "audit_id": auth.audit_id})
 
     return {"ok": True, "dry_run": False, "run": run_row, "candidate_count": len(candidate_rows), "writeback_verified": True}
+
+
+def run_social_market_batch(
+    *,
+    store: TuoguanStore | None = None,
+    dry_run: bool = False,
+    platforms: list[str] | None = None,
+    queries: list[str] | None = None,
+    limit: int | None = None,
+    sleep_between: bool = False,
+    now: datetime | None = None,
+) -> dict[str, Any]:
+    actual_store = store or TuoguanStore()
+    config = social_market_research_config(actual_store)
+    selected_platforms = [_normalize_platform(item) for item in (platforms or config.get("platforms") or []) if str(item or "").strip()]
+    selected_platforms = [item for item in selected_platforms if item in VALID_PLATFORMS] or list(DEFAULT_SOCIAL_MARKET_CONFIG["platforms"])
+    selected_queries = [str(item).strip() for item in (queries or config.get("queries") or []) if str(item or "").strip()]
+    selected_queries = selected_queries or list(DEFAULT_SOCIAL_MARKET_CONFIG["queries"])
+    per_query_limit = int(limit or config.get("limit_per_query") or DEFAULT_SOCIAL_MARKET_CONFIG["limit_per_query"])
+    backend_order = _normalize_backend_order(config.get("backend_order"))
+    min_sleep = max(0, int(config.get("sleep_seconds_min") or 0))
+    max_sleep = max(min_sleep, int(config.get("sleep_seconds_max") or min_sleep))
+    runs: list[dict[str, Any]] = []
+    for platform in selected_platforms:
+        for query in selected_queries[:8]:
+            result = run_social_market_research(
+                platform,
+                store=actual_store,
+                query=query,
+                command="search",
+                dry_run=dry_run,
+                limit=per_query_limit,
+                backend_order=backend_order,
+                now=now,
+            )
+            runs.append(result)
+            if sleep_between and not dry_run and max_sleep > 0:
+                time.sleep(random.randint(min_sleep, max_sleep))
+    return {
+        "ok": True,
+        "dry_run": bool(dry_run),
+        "platforms": selected_platforms,
+        "query_count": len(selected_queries[:8]),
+        "run_count": len(runs),
+        "candidate_count": sum(int(item.get("candidate_count") or len(item.get("candidates") or [])) for item in runs if isinstance(item, dict)),
+        "runs": runs,
+    }
+
+
+def social_market_research_config(store: TuoguanStore) -> dict[str, Any]:
+    payload = store.read_json(SOCIAL_MARKET_RESEARCH_CONFIG_FILE, {})
+    payload = payload if isinstance(payload, dict) else {}
+    merged = {**DEFAULT_SOCIAL_MARKET_CONFIG, **payload}
+    merged["platforms"] = [item for item in merged.get("platforms") or [] if _normalize_platform(item) in VALID_PLATFORMS]
+    merged["queries"] = [str(item).strip() for item in merged.get("queries") or [] if str(item).strip()]
+    merged["backend_order"] = _normalize_backend_order(merged.get("backend_order"))
+    return merged
 
 
 def query_social_market_research(
@@ -152,6 +238,16 @@ def _command_allowed(platform: str, command: str) -> bool:
     return normalized in READ_ONLY_COMMANDS.get(platform, set())
 
 
+def _normalize_backend_order(value: Any) -> list[str]:
+    raw = value if isinstance(value, (list, tuple)) else []
+    order: list[str] = []
+    for item in raw:
+        backend = str(item or "").strip().lower()
+        if backend in {"opencli", "browser"} and backend not in order:
+            order.append(backend)
+    return order or ["opencli", "browser"]
+
+
 def _opencli_preflight(platform: str, *, runner: Any | None = None) -> dict[str, Any]:
     probe = "whoami"
     result = _run_opencli([platform, probe, "-f", "json", "--window", "background", "--site-session", "persistent"], runner=runner)
@@ -163,6 +259,57 @@ def _opencli_preflight(platform: str, *, runner: Any | None = None) -> dict[str,
 def _call_opencli(platform: str, command: str, query: str, *, limit: int, runner: Any | None = None) -> dict[str, Any]:
     args = [platform, command, query, "-f", "json", "--window", "background", "--site-session", "persistent"]
     return _run_opencli(args, runner=runner)
+
+
+def _call_browser_fallback(platform: str, command: str, query: str, *, limit: int, runner: Any | None = None) -> dict[str, Any]:
+    if command != "search":
+        return {"ok": False, "error": "browser_backend_command_unsupported", "message": "浏览器兜底后端当前只支持只读搜索。", "error_code": "UNSUPPORTED_COMMAND"}
+    script = _resolve_browser_fallback_script()
+    if not script and runner is None:
+        return {"ok": False, "error": "browser_script_missing", "message": "服务器浏览器兜底脚本不存在。", "error_code": "BROWSER_SCRIPT_MISSING"}
+    node = shutil.which("node") or ""
+    if not node and runner is None:
+        return {"ok": False, "error": "node_missing", "message": "Node.js 不可用，无法运行浏览器兜底采集。", "error_code": "NODE_MISSING"}
+    profile = os.environ.get("HERMES_SOCIAL_CHROMIUM_PROFILE", "/opt/hermes-youyi/social-research/chromium-profile")
+    executable = os.environ.get("HERMES_SOCIAL_CHROMIUM", shutil.which("chromium-browser") or shutil.which("chromium") or "")
+    command_line = [
+        node or "node",
+        str(script or "social_market_browser_fallback.js"),
+        "--platform", platform,
+        "--query", query,
+        "--limit", str(max(1, min(int(limit or 5), 20))),
+        "--profile-dir", profile,
+    ]
+    if executable:
+        command_line.extend(["--executable", executable])
+    xvfb = shutil.which("xvfb-run")
+    if runner is None and xvfb and os.environ.get("DISPLAY", "") == "":
+        command_line = [xvfb, "-a", "--server-args=-screen 0 1280x900x24", *command_line]
+    try:
+        completed = (runner or subprocess.run)(
+            command_line,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=90,
+            check=False,
+        )
+    except FileNotFoundError:
+        return {"ok": False, "error": "browser_backend_missing", "message": "浏览器兜底后端不可用。", "error_code": "BROWSER_BACKEND_MISSING"}
+    except subprocess.TimeoutExpired:
+        return {"ok": False, "error": "browser_backend_timeout", "message": "浏览器兜底采集超时。", "error_code": "TIMEOUT"}
+    stdout = str(getattr(completed, "stdout", "") or "")
+    stderr = str(getattr(completed, "stderr", "") or "")
+    payload = _parse_json(stdout) or _parse_json(stderr) or {}
+    if int(getattr(completed, "returncode", 1) or 0) != 0 or not (isinstance(payload, dict) and payload.get("ok")):
+        return {
+            "ok": False,
+            "error": str(payload.get("error") or "browser_backend_failed") if isinstance(payload, dict) else "browser_backend_failed",
+            "error_code": str(payload.get("error_code") or "") if isinstance(payload, dict) else "",
+            "message": str(payload.get("message") or stderr or stdout or "浏览器兜底采集失败。")[:1000] if isinstance(payload, dict) else str(stderr or stdout)[:1000],
+        }
+    return {"ok": True, "payload": payload}
 
 
 def _run_opencli(args: list[str], *, runner: Any | None = None) -> dict[str, Any]:
@@ -218,6 +365,21 @@ def _resolve_opencli_executable() -> str:
     )
 
 
+def _resolve_browser_fallback_script() -> Path | None:
+    env_path = os.environ.get("HERMES_SOCIAL_BROWSER_SCRIPT", "")
+    candidates = [Path(env_path)] if env_path else []
+    cwd = Path.cwd()
+    candidates.extend([
+        cwd / "scripts" / "social_market_browser_fallback.js",
+        cwd.parent / "scripts" / "social_market_browser_fallback.js",
+        Path("/opt/hermes-youyi-upgrade-0.19.0/scripts/social_market_browser_fallback.js"),
+    ])
+    for path in candidates:
+        if path and path.exists():
+            return path
+    return None
+
+
 def _parse_json(text: str) -> Any:
     try:
         return json.loads(str(text or "").strip())
@@ -235,6 +397,8 @@ def _normalize_opencli_rows(payload: Any, *, platform: str, query: str, timestam
         url = _first_text(raw, ("url", "share_url", "link", "note_url", "video_url"))
         item_id = _first_text(raw, ("id", "note_id", "aweme_id", "sec_uid", "user_id"))
         excerpt = _first_text(raw, ("text", "content", "desc", "description", "aweme_desc", "caption"), limit=700)
+        author = _first_text(raw, ("author", "nickname", "user_name", "creator", "name"), limit=120)
+        published_at = _first_text(raw, ("published_at", "publish_time", "create_time", "time"), limit=120)
         metrics = {key: raw.get(key) for key in ("liked_count", "collected_count", "comment_count", "share_count", "digg_count", "play_count") if key in raw}
         if not title and not excerpt and not item_id:
             continue
@@ -245,6 +409,8 @@ def _normalize_opencli_rows(payload: Any, *, platform: str, query: str, timestam
             "url": url,
             "title": title or excerpt[:80],
             "text_excerpt": excerpt,
+            "author": author,
+            "published_at": published_at,
             "metrics": metrics,
             "collected_at": timestamp.isoformat(timespec="seconds"),
             "evidence_level": "platform_observation",
@@ -291,6 +457,8 @@ def _candidate_from_row(run_id: str, row: dict[str, Any], timestamp: datetime, *
         "url": row.get("url"),
         "title": row.get("title"),
         "text_excerpt": row.get("text_excerpt"),
+        "author": row.get("author"),
+        "published_at": row.get("published_at"),
         "metrics": row.get("metrics") or {},
         "status": "pending_review" if status == "completed" else status,
         "evidence_level": row.get("evidence_level") or "platform_observation",
