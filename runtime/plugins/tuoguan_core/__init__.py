@@ -195,6 +195,42 @@ _PROACTIVE_OUTBOUND_ANCHOR_TYPES = {
 }
 
 
+def _looks_like_recent_outbound_follow_up(current_message: str) -> bool:
+    compact = "".join(str(current_message or "").split())
+    if not compact:
+        return False
+    explicit_anchor_terms = (
+        "刚才", "刚刚", "上面", "上一条", "那条", "这条", "这几个", "这些",
+        "你发", "发的", "你推", "推的", "主动推", "刚推", "刚发",
+        "汇报", "周报", "日报", "报告", "外部学习", "市场调研",
+    )
+    deictic_terms = (
+        "它", "这个", "这", "那个", "那", "这里", "这里边", "这里面",
+        "里面", "这边", "其中", "这些", "这几个", "链接", "网址", "新闻",
+        "资料", "文章", "页面", "网页",
+    )
+    query_terms = (
+        "讲讲", "讲一下", "说说", "说一下", "解释", "总结", "展开",
+        "内容", "具体", "什么意思", "啥意思", "什么情况", "没懂", "没看懂",
+        "不懂", "怎么看", "怎么用", "有什么用", "有用吗", "价值", "重点",
+        "结论", "哪几个", "哪条", "哪个", "谁",
+    )
+    short_follow_up = len(compact) <= 28 and (
+        any(term in compact for term in deictic_terms)
+        or any(term in compact for term in query_terms)
+        or "?" in compact
+        or "？" in compact
+    )
+    return (
+        any(term in compact for term in explicit_anchor_terms)
+        or (
+            any(term in compact for term in deictic_terms)
+            and any(term in compact for term in query_terms)
+        )
+        or short_follow_up
+    )
+
+
 def _recent_owner_outbound_context(store: TuoguanStore, *, identity: Any, current_message: str = "") -> str:
     """Recall recent proactive messages as conversation anchors for staff replies.
 
@@ -209,19 +245,8 @@ def _recent_owner_outbound_context(store: TuoguanStore, *, identity: Any, curren
     compact = "".join(str(current_message or "").split())
     if not compact:
         return ""
-    anchor_terms = (
-        "这里边", "这里面", "这里", "刚才", "上面", "那条", "这条",
-        "你发", "发的", "推的", "汇报", "周报", "日报", "报告",
-        "内容", "总结", "参考", "资料", "外部学习", "市场调研",
-        "什么意思", "啥意思", "什么情况", "没懂", "没看懂", "不懂",
-        "说清楚", "解释一下", "哪两个", "哪个", "指谁", "怎么回事",
-    )
-    short_follow_up = len(compact) <= 24 and (
-        any(term in compact for term in ("总结", "内容", "这个", "这", "那", "嗯", "好", "什么意思", "啥意思", "什么", "不懂", "没懂", "解释", "哪个", "谁"))
-        or "?" in compact
-        or "？" in compact
-    )
-    if not any(term in compact for term in anchor_terms) and not short_follow_up:
+    strong_follow_up = _looks_like_recent_outbound_follow_up(compact)
+    if not strong_follow_up:
         return ""
 
     outbox = store.read_json("notification_outbox.json", [])
@@ -271,10 +296,12 @@ def _recent_owner_outbound_context(store: TuoguanStore, *, identity: Any, curren
     role_label = {"boss": "老板", "manager": "店长", "teacher": "老师"}.get(role, "当前用户")
     lines = [
         "【优益最近主动外发消息锚点】",
-        f"下面是小优最近主动发给{role_label}的消息。它们只是当前对话衔接材料，不是 Router，也不替模型判断用户意图。",
+        f"下面是小优最近主动发给{role_label}的消息。它们形成短时临时会话线程，只是衔接材料，不是 Router，也不替模型判断用户意图。",
         f"{role_label}本轮原话：{' '.join(str(current_message or '').split())[:800]}",
-        "如果用户说“什么意思/啥意思/没懂/刚才/上面/你发的/这条/内容/总结/日报/任务/哪个/谁”，请优先判断是否在追问下面最近一条主动消息。",
-        "如果相关：先围绕对应外发消息解释清楚，不要跳回旧会话、旧偏好或旧工作项；如果需要查更完整来源，再由模型自主决定是否调用可信工具。",
+        "强衔接规则：用户说“它/里面/这个/这些/链接/网址/内容/讲讲/解释/总结/什么意思/你发的/你推的”时，优先把本轮理解为追问最近一条主动外发消息。",
+        "除非用户本轮明确点名其他对象（例如明确说看板、某个老师、某项任务编号），不要把模糊代词接到更早的旧会话、旧看板链接、旧偏好或旧工作项。",
+        "如果相关：先围绕对应外发消息解释清楚；如果这是外部学习/市场报告，要解释资料讲了什么、对优益有什么用、哪些只是外部资料不能当成机构事实。",
+        "如果需要查更完整来源，再由模型自主决定是否调用可信只读工具；不要在没有核验时说已经浏览了网页全文。",
         "如果无关：把这些当背景材料，自然回答当前问题。",
     ]
     seen: set[str] = set()
@@ -288,6 +315,7 @@ def _recent_owner_outbound_context(store: TuoguanStore, *, identity: Any, curren
             f"- notification_id: {item.get('id', '')}",
             f"  notification_type: {item.get('notification_type') or item.get('action') or item.get('source') or ''}",
             f"  action: {item.get('action', '')}",
+            f"  anchor_priority: {'latest_active_outbound_thread' if len(seen) == 1 else 'recent_outbound_background'}",
             f"  sent_at: {sent_at.isoformat(timespec='seconds')}",
             f"  summary: {str(item.get('summary') or '')[:300]}",
             f"  content_excerpt: {content[:1200]}",
@@ -317,6 +345,8 @@ def _recent_outbound_history_candidates(
                 if not isinstance(item, dict):
                     continue
                 if str(item.get("direction") or "") != "outbound":
+                    continue
+                if str(item.get("source") or "") != "system_push":
                     continue
                 candidate_user_ids = {
                     str(item.get("canonical_user_id") or ""),
@@ -1343,11 +1373,17 @@ def _on_pre_llm_call(**kwargs: Any) -> dict[str, str] | None:
                 session_id,
                 raw_text[:80],
             )
-        owner_attention_context = _open_owner_attention_context(
-            _router().store,
-            identity=identity,
-            current_message=raw_text,
-        ) if "identity" in locals() else ""
+        recent_outbound_follow_up = bool(
+            recent_outbound_context
+            and _looks_like_recent_outbound_follow_up(raw_text)
+        )
+        owner_attention_context = ""
+        if "identity" in locals() and not recent_outbound_follow_up:
+            owner_attention_context = _open_owner_attention_context(
+                _router().store,
+                identity=identity,
+                current_message=raw_text,
+            )
         if owner_attention_context:
             context_parts.append(owner_attention_context)
             logger.warning(

@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 from types import SimpleNamespace
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 
 def _write_json(path: Path, name: str, payload) -> None:
@@ -98,7 +98,8 @@ def test_recent_outbound_context_anchors_owner_what_does_it_mean(tmp_path):
     from plugins.tuoguan_core.__init__ import _recent_owner_outbound_context
     from plugins.tuoguan_core.store import TuoguanStore
 
-    now = datetime.now(timezone.utc).isoformat(timespec="seconds")
+    now_dt = datetime.now(timezone.utc)
+    now = now_dt.isoformat(timespec="seconds")
     _write_json(
         tmp_path,
         "notification_outbox.json",
@@ -124,7 +125,62 @@ def test_recent_outbound_context_anchors_owner_what_does_it_mean(tmp_path):
     assert "【优益最近主动外发消息锚点】" in context
     assert "老板本轮原话：什么意思" in context
     assert "两个进度卡在同一个点" in context
-    assert "不要跳回旧会话" in context
+    assert "不要把模糊代词接到更早的旧会话" in context
+
+
+def test_recent_external_learning_anchor_wins_for_it_inside_follow_up(tmp_path):
+    from plugins.tuoguan_core.__init__ import _recent_owner_outbound_context
+    from plugins.tuoguan_core.store import TuoguanStore
+
+    now_dt = datetime.now(timezone.utc)
+    now = now_dt.isoformat(timespec="seconds")
+    _write_json(
+        tmp_path,
+        "notification_outbox.json",
+        [
+            {
+                "id": "external_learning_report:20260810:weekly_industry",
+                "notification_type": "external_learning_report",
+                "action": "external_learning_weekly_industry",
+                "status": "sent",
+                "recipient_user_id": "JinWenJie",
+                "sent_at": now,
+                "summary": "小优托管行业学习周报",
+                "content": (
+                    "金总，我做了一轮托管/教培行业公开学习。"
+                    "我看到的公开资料：1. 托管管理学术语 2. 托管综合服务平台。"
+                    "我的判断：优先把外部方法转成续费证据、家校沟通话术、老师减负素材。"
+                ),
+            }
+        ],
+    )
+    _append_jsonl(
+        tmp_path,
+        "message_history.jsonl",
+        [
+            {
+                "direction": "outbound",
+                "canonical_user_id": "JinWenJie",
+                "source": "model",
+                "message_text": "金总，看板链接给您：https://example.test/dashboard",
+                "created_at": (now_dt - timedelta(hours=8)).isoformat(timespec="seconds"),
+            }
+        ],
+    )
+
+    context = _recent_owner_outbound_context(
+        TuoguanStore(tmp_path),
+        identity=SimpleNamespace(role="boss", canonical_user_id="JinWenJie", platform_user_id="JinWenJie"),
+        current_message="你给讲讲，它里面都具体讲了什么内容",
+    )
+
+    assert "【优益最近主动外发消息锚点】" in context
+    assert "anchor_priority: latest_active_outbound_thread" in context
+    assert "external_learning_report:20260810:weekly_industry" in context
+    assert "它/里面/这个/这些/链接/网址/内容/讲讲" in context
+    assert "不要把模糊代词接到更早的旧会话、旧看板链接" in context
+    assert "托管/教培行业公开学习" in context
+    assert "看板链接给您" not in context
 
 
 def test_recent_outbound_context_anchors_teacher_task_created_short_question(tmp_path):

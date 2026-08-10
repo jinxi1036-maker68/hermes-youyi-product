@@ -260,7 +260,9 @@ def test_pre_llm_does_not_attach_owner_attention_to_unrelated_query(_isolated_tu
         session_id="wwcorp:boss1",
     )
 
-    assert result is None
+    context = (result or {}).get("context", "")
+    assert "优益最近主动外发消息锚点" not in context
+    assert "autonomous_owner_attention:today:goal-renewal" not in context
 
 
 def test_pre_llm_recalls_recent_external_learning_report_for_follow_up(_isolated_tuoguan_home):
@@ -298,9 +300,62 @@ def test_pre_llm_recalls_recent_external_learning_report_for_follow_up(_isolated
     assert "优益最近主动外发消息锚点" in context
     assert "external_learning_report:20260803:weekly_industry" in context
     assert "托管/教培行业公开学习" in context
-    assert "优先判断是否在追问下面最近一条主动消息" in context
+    assert "强衔接规则" in context
     assert "next_tool" not in context
     assert "workflow_step" not in context
+
+
+def test_pre_llm_recent_external_learning_follow_up_suppresses_old_attention(_isolated_tuoguan_home):
+    import plugins.tuoguan_core as plugin
+
+    plugin._ROUTER = None
+    _seed_payroll_users(_isolated_tuoguan_home)
+    now = datetime.now().astimezone().isoformat(timespec="seconds")
+    _write_json(
+        _isolated_tuoguan_home / "notification_outbox.json",
+        json.dumps([
+            {
+                "id": "external_learning_report:20260810:weekly_industry",
+                "status": "sent",
+                "notification_type": "external_learning_report",
+                "action": "external_learning_weekly_industry",
+                "touser": "boss1",
+                "target_user_id": "boss1",
+                "summary": "小优托管行业学习周报",
+                "content": "金总，我做了一轮托管/教培行业公开学习。我的判断：转成续费证据、家校沟通话术、老师减负素材。",
+                "sent_at": now,
+            }
+        ], ensure_ascii=False),
+    )
+    _append_jsonl(
+        _isolated_tuoguan_home / "attention_threads.jsonl",
+        [
+            {
+                "record_type": "attention_thread",
+                "attention_id": "attention:old",
+                "focus_key": "goal:old",
+                "target_user_id": "boss1",
+                "status": "sent",
+                "question_text": "旧问题：她是冯老师还是李老师？",
+                "created_at": "2026-08-09T11:30:51+08:00",
+                "updated_at": "2026-08-09T11:30:51+08:00",
+            }
+        ],
+    )
+
+    result = plugin._on_pre_llm_call(
+        platform=Platform.WECOM_CALLBACK,
+        sender_id="boss1",
+        user_message="你给讲讲，它里面都具体讲了什么内容",
+        session_id="wwcorp:boss1",
+    )
+
+    assert result is not None
+    context = result["context"]
+    assert "优益最近主动外发消息锚点" in context
+    assert "external_learning_report:20260810:weekly_industry" in context
+    assert "优益主动提问回复锚点" not in context
+    assert "她是冯老师还是李老师" not in context
 
 
 def test_pre_llm_does_not_attach_recent_external_report_to_unrelated_query(_isolated_tuoguan_home):
@@ -333,7 +388,9 @@ def test_pre_llm_does_not_attach_recent_external_report_to_unrelated_query(_isol
         session_id="wwcorp:boss1",
     )
 
-    assert result is None
+    context = (result or {}).get("context", "")
+    assert "优益最近主动外发消息锚点" not in context
+    assert "external_learning_report:20260803:weekly_industry" not in context
 
 
 def test_pre_llm_injects_term_boundary_for_related_goal_chat(_isolated_tuoguan_home):
