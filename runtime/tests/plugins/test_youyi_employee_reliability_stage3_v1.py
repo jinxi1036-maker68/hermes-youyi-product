@@ -144,17 +144,24 @@ def test_global_user_memory_migrates_to_isolated_profiles(tmp_path: Path):
     memory.parent.mkdir(parents=True)
     memory.write_text(
         "金总沟通偏好直接简洁，先给结论和重点。\n§\n"
-        "李老师（CeShi）做任务时不喜欢反复追问，事实完整时直接闭环。\n§\n"
+        "李老师（CeShi）做任务时不喜欢反复追问。\n§\n"
+        "李老师（CeShi）提供完整事实时直接闭环当前任务。\n§\n"
         "无论是谁都不能伪造业务成功。",
         encoding="utf-8",
     )
     dry_run = run(memory_file=memory, data_dir=tmp_path, apply=False)
-    assert dry_run["candidate_count"] == 2
+    assert dry_run["candidate_count"] == 3
+    teacher_dimensions = {
+        item["dimension_key"]
+        for item in dry_run["candidates"]
+        if item["target_user_id"] == "CeShi"
+    }
+    assert teacher_dimensions == {"avoidance", "followup_method"}
     assert memory.read_text(encoding="utf-8").startswith("金总")
 
     applied = run(memory_file=memory, data_dir=tmp_path, apply=True)
     assert applied["writeback_verified"] is True
-    assert applied["saved_count"] == 2
+    assert applied["saved_count"] == 3
     assert memory.read_text(encoding="utf-8").strip() == NEUTRAL_MEMORY.strip()
     assert Path(applied["backup_file"]).exists()
 
@@ -172,7 +179,8 @@ def test_global_user_memory_migrates_to_isolated_profiles(tmp_path: Path):
         target_role="teacher",
     )
     assert boss_profile["preference_count"] == 1
-    assert teacher_profile["preference_count"] == 1
+    assert teacher_profile["preference_count"] == 2
+    assert set(teacher_profile["applied_dimensions"]) == {"avoidance", "followup_method"}
     assert "李老师" not in boss_profile["rendered_text"]
 
 

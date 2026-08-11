@@ -55,12 +55,21 @@ def migration_candidates(text: str) -> list[dict[str, str]]:
         user_id, name, role = target
         task_related = any(term in rule for term in ("任务", "闭环", "完成了"))
         report_related = any(term in rule for term in ("汇报", "简洁", "重点", "结论"))
+        if any(term in rule for term in ("不要重复", "不要反复", "不喜欢反复", "避免重复")):
+            dimension_key = "avoidance"
+        elif task_related:
+            dimension_key = "followup_method"
+        elif report_related:
+            dimension_key = "length"
+        else:
+            dimension_key = "structure"
         candidates.append({
             "target_user_id": user_id,
             "target_name": name,
             "target_role": role,
             "scope": "task_followup" if task_related else "all_communication",
             "preference_type": "followup_style" if task_related else ("report_length" if report_related else "other_low_risk"),
+            "dimension_key": dimension_key,
             "preference_text": rule,
             "source_text": f"从全局 USER.md 迁移：{rule}",
         })
@@ -128,6 +137,7 @@ def run(*, memory_file: Path, data_dir: Path, apply: bool) -> dict:
                 target_name=candidate["target_name"],
                 target_role=candidate["target_role"],
                 source_text=candidate["source_text"],
+                dimension_key=candidate["dimension_key"],
                 source_turn_id="global_USER.md",
                 operation_id=f"global-user-memory-migration-v1:{index}",
             )
