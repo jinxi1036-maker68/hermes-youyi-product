@@ -30,7 +30,7 @@ Environment=HERMES_SOCIAL_BROWSER_SCRIPT=${PROJECT_ROOT}/scripts/social_market_b
 Environment=HERMES_OPENCLI=${SOCIAL_ROOT}/bin/opencli
 Environment=NODE_PATH=${SOCIAL_ROOT}/node_modules
 Environment=PATH=${SOCIAL_ROOT}/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin
-ExecStart=${PROJECT_ROOT}/.venv/bin/python ${PROJECT_ROOT}/scripts/social_market_research_runner.py --all --sleep-between --data-dir ${DATA_DIR}
+ExecStart=/usr/bin/xvfb-run -a ${PROJECT_ROOT}/.venv/bin/python ${PROJECT_ROOT}/scripts/social_market_research_runner.py --all --sleep-between --data-dir ${DATA_DIR}
 NoNewPrivileges=true
 PrivateTmp=true
 ProtectSystem=full
