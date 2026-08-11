@@ -84,6 +84,7 @@ def run_social_market_research(
     used_backend = ""
 
     preflight: dict[str, Any] = {"ok": False, "backend": "not_attempted"}
+    effective_browser_runner = browser_runner if browser_runner is not None else runner
     for backend in _normalize_backend_order(backend_order or social_market_research_config(actual_store).get("backend_order")):
         if backend == "opencli":
             preflight = _opencli_preflight(normalized_platform, runner=runner)
@@ -92,7 +93,13 @@ def run_social_market_research(
                 continue
             result = _call_opencli(normalized_platform, normalized_command, normalized_query, limit=limit, runner=runner)
         elif backend == "browser":
-            result = _call_browser_fallback(normalized_platform, normalized_command, normalized_query, limit=limit, runner=browser_runner)
+            result = _call_browser_fallback(
+                normalized_platform,
+                normalized_command,
+                normalized_query,
+                limit=limit,
+                runner=effective_browser_runner,
+            )
         else:
             continue
         if result.get("ok"):
@@ -324,11 +331,13 @@ def _call_browser_fallback(platform: str, command: str, query: str, *, limit: in
     stderr = str(getattr(completed, "stderr", "") or "")
     payload = _parse_json(stdout) or _parse_json(stderr) or {}
     if int(getattr(completed, "returncode", 1) or 0) != 0 or not (isinstance(payload, dict) and payload.get("ok")):
+        nested_error = payload.get("error") if isinstance(payload, dict) and isinstance(payload.get("error"), dict) else {}
+        error_code = str(payload.get("error_code") or nested_error.get("code") or "") if isinstance(payload, dict) else ""
         return {
             "ok": False,
-            "error": str(payload.get("error") or "browser_backend_failed") if isinstance(payload, dict) else "browser_backend_failed",
-            "error_code": str(payload.get("error_code") or "") if isinstance(payload, dict) else "",
-            "message": str(payload.get("message") or stderr or stdout or "浏览器兜底采集失败。")[:1000] if isinstance(payload, dict) else str(stderr or stdout)[:1000],
+            "error": error_code or str(payload.get("error") or "browser_backend_failed") if isinstance(payload, dict) else "browser_backend_failed",
+            "error_code": error_code,
+            "message": str(payload.get("message") or nested_error.get("message") or stderr or stdout or "浏览器兜底采集失败。")[:1000] if isinstance(payload, dict) else str(stderr or stdout)[:1000],
         }
     return {"ok": True, "payload": payload}
 
