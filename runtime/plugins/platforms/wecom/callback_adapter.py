@@ -13,7 +13,10 @@ Supports multiple self-built apps under one gateway instance, scoped by
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import logging
+import os
+from pathlib import Path
 import socket as _socket
 import time
 from typing import Any, Dict, List, Optional
@@ -47,6 +50,8 @@ except ImportError:
 
 from gateway.config import Platform, PlatformConfig
 from gateway.platforms.base import BasePlatformAdapter, MessageEvent, MessageType, SendResult
+from hermes_constants import get_hermes_home
+from plugins.platforms.wecom.inbound_receipts import WecomInboundReceiptStore
 from plugins.platforms.wecom.wecom_crypto import WXBizMsgCrypt, WeComCryptoError
 
 logger = logging.getLogger(__name__)
@@ -60,7 +65,6 @@ DEFAULT_PATH = "/wecom/callback"
 # unauthenticated POST can force before signature verification.
 _MAX_BODY = 65_536
 ACCESS_TOKEN_TTL_SECONDS = 7200
-MESSAGE_DEDUP_TTL_SECONDS = 300
 
 
 def check_wecom_callback_requirements() -> bool:
@@ -81,7 +85,10 @@ class WecomCallbackAdapter(BasePlatformAdapter):
         self._http_client: Optional[httpx.AsyncClient] = None
         self._message_queue: asyncio.Queue[MessageEvent] = asyncio.Queue()
         self._poll_task: Optional[asyncio.Task] = None
-        self._seen_messages: Dict[str, float] = {}
+        dedupe_path = str(extra.get("dedupe_db_path") or os.getenv("HERMES_WECOM_DEDUPE_DB") or "").strip()
+        if not dedupe_path:
+            dedupe_path = str(Path(get_hermes_home()) / "state" / "wecom_callback_receipts.sqlite3")
+        self._inbound_receipts = WecomInboundReceiptStore(dedupe_path)
         self._user_app_map: Dict[str, str] = {}
         self._access_tokens: Dict[str, Dict[str, Any]] = {}
 
@@ -349,27 +356,31 @@ class WecomCallbackAdapter(BasePlatformAdapter):
                 )
                 event = self._build_event(app, decrypted)
                 if event is not None:
-                    # Deduplicate: WeCom retries callbacks on timeout,
-                    # producing duplicate inbound messages (#10305).
-                    if event.message_id:
-                        now = time.time()
-                        if event.message_id in self._seen_messages:
-                            if now - self._seen_messages[event.message_id] < MESSAGE_DEDUP_TTL_SECONDS:
-                                logger.debug("[WecomCallback] Duplicate MsgId %s, skipping", event.message_id)
-                                return web.Response(text="success", content_type="text/plain")
-                            del self._seen_messages[event.message_id]
-                        self._seen_messages[event.message_id] = now
-                        # Prune expired entries when cache grows large
-                        if len(self._seen_messages) > 2000:
-                            cutoff = now - MESSAGE_DEDUP_TTL_SECONDS
-                            self._seen_messages = {k: v for k, v in self._seen_messages.items() if v > cutoff}
+                    app_name = str(app.get("name") or app.get("agent_id") or "default")
+                    receipt = self._inbound_receipts.claim(
+                        app_name=app_name,
+                        message_id=event.message_id,
+                        user_id=str(getattr(event.source, "user_id", "") or ""),
+                        session_id=str(getattr(event.source, "chat_id", "") or ""),
+                    )
+                    if not receipt["accepted"]:
+                        logger.info("[WecomCallback] Durable duplicate MsgId %s, skipping", event.message_id)
+                        return web.Response(text="success", content_type="text/plain")
                     # Record which app this user belongs to.
                     if event.source and event.source.user_id:
                         map_key = self._user_app_key(
                             str(app.get("corp_id") or ""), event.source.user_id,
                         )
                         self._user_app_map[map_key] = app["name"]
-                    await self._message_queue.put(event)
+                    try:
+                        await self._message_queue.put(event)
+                        self._inbound_receipts.mark_processed(
+                            str(receipt["receipt_key"]),
+                            session_id=str(getattr(event.source, "chat_id", "") or ""),
+                        )
+                    except Exception as exc:
+                        self._inbound_receipts.mark_failed(str(receipt["receipt_key"]), type(exc).__name__)
+                        raise
                 # Immediately acknowledge — the agent's reply will arrive
                 # later via the proactive message/send API.
                 return web.Response(text="success", content_type="text/plain")
@@ -421,10 +432,18 @@ class WecomCallbackAdapter(BasePlatformAdapter):
         content = root.findtext("Content", default="").strip()
         if not content and msg_type == "event":
             content = "/start"
-        msg_id = (
-            root.findtext("MsgId")
-            or f"{user_id}:{root.findtext('CreateTime', default='0')}"
-        )
+        msg_id = root.findtext("MsgId")
+        if not msg_id:
+            fallback_material = "\n".join(
+                (
+                    str(corp_id),
+                    str(user_id),
+                    str(root.findtext("CreateTime", default="0")),
+                    str(msg_type),
+                    str(content),
+                )
+            )
+            msg_id = "fallback:" + hashlib.sha256(fallback_material.encode("utf-8")).hexdigest()
         source = self.build_source(
             chat_id=scoped_chat_id,
             chat_name=user_id,
@@ -432,6 +451,12 @@ class WecomCallbackAdapter(BasePlatformAdapter):
             user_id=user_id,
             user_name=user_id,
         )
+        # Hermes session persistence reads the platform id from the source on
+        # supported runtimes. Keep it on both source and event for compatibility.
+        try:
+            source.message_id = msg_id
+        except (AttributeError, TypeError):
+            pass
         return MessageEvent(
             text=content,
             message_type=MessageType.TEXT,

@@ -1492,10 +1492,24 @@ def _on_pre_llm_call(**kwargs: Any) -> dict[str, str] | None:
     ) and not asks_how_to_confirm
     write_like = write_like or (task_completion_like and not asks_how_to_confirm)
     if ambiguous_retry:
-        context_parts.append(
-            "【优益当前轮写入边界】用户本轮没有重新说明明确的写入对象、动作和内容，"
-            "不得沿用历史对话执行真实写入；请自然追问用户把要记录或修改的内容说完整。"
-        )
+        try:
+            from .active_work_context import query_active_work_context, render_active_work_context
+
+            active_result = query_active_work_context(_router().store, identity=identity, limit=5)
+            active_context = render_active_work_context(active_result)
+        except Exception:
+            logger.exception("tuoguan_core failed to build active work context")
+            active_context = ""
+        if active_context:
+            context_parts.append(active_context)
+            context_parts.append(
+                "【短回复衔接规则】短回复本身不是拒绝执行的理由。先结合本轮原话、最近主动外发和上述活动线程判断指向；"
+                "相关时自然衔接，并在真实写入前调用对应可信工具。若多个线程同样可能或没有任何证据，只追问一个最关键的区分问题。"
+            )
+        else:
+            context_parts.append(
+                "【短回复衔接规则】当前没有可验证的活动线程。不要猜测历史对象；只追问一个最关键的区分问题。"
+            )
         return {"context": "\n\n".join(context_parts)}
     if write_like:
         context_parts.append(

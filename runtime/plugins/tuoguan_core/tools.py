@@ -1016,6 +1016,12 @@ TUOGUAN_QUERY_PROACTIVE_WORK_RADAR_SCHEMA = _schema(
     ["user_id"],
 )
 
+TUOGUAN_QUERY_ACTIVE_WORK_CONTEXT_SCHEMA = _schema(
+    "只读查询当前人的活动工作线程，包括当前任务、最近主动提醒、关系触达和有权限查看的市场观察。结果只提供衔接证据，不判断用户意图、不规定下一工具。",
+    _identity_props({"limit": {"type": "integer", "default": 5}}),
+    ["user_id"],
+)
+
 TUOGUAN_QUERY_ATTENTION_THREADS_SCHEMA = _schema(
     "只读查询老板主动提醒线程。老板回复“什么意思/刚才那个/这个不用了/已处理”时，模型应先查最近提醒线程再判断是否更新状态；查询结果只是上下文材料，不替模型判断老板回复是否相关。",
     _identity_props({
@@ -1324,6 +1330,7 @@ TOOLS = (
     ("tuoguan_submit_action_execution", TUOGUAN_SUBMIT_ACTION_EXECUTION_SCHEMA, _handler("submit_action_execution")),
     ("tuoguan_query_autonomous_work_brief", TUOGUAN_QUERY_AUTONOMOUS_WORK_BRIEF_SCHEMA, _handler("query_autonomous_work_brief")),
     ("tuoguan_query_proactive_work_radar", TUOGUAN_QUERY_PROACTIVE_WORK_RADAR_SCHEMA, _handler("query_proactive_work_radar")),
+    ("tuoguan_query_active_work_context", TUOGUAN_QUERY_ACTIVE_WORK_CONTEXT_SCHEMA, _handler("query_active_work_context")),
     ("tuoguan_query_attention_threads", TUOGUAN_QUERY_ATTENTION_THREADS_SCHEMA, _handler("query_attention_threads")),
     ("tuoguan_update_attention_thread", TUOGUAN_UPDATE_ATTENTION_THREAD_SCHEMA, _handler("update_attention_thread")),
     ("tuoguan_query_relationship_touch_candidates", TUOGUAN_QUERY_RELATIONSHIP_TOUCH_CANDIDATES_SCHEMA, _handler("query_relationship_touch_candidates")),

@@ -202,13 +202,14 @@ def test_pre_llm_call_injects_workstyle_feedback_contract(tmp_path, monkeypatch)
 
     assert result is not None
     assert "小优服务方式档案" in result["context"]
-    assert "日报/汇报长短/长短：晚报只说重点。" in result["context"]
+    assert "长短" in result["context"]
+    assert "晚报只说重点。" in result["context"]
     assert "tuoguan_submit_person_workstyle_preference" in result["context"]
     assert "未看到工具 ok=true 且 writeback_verified=true 前，不得说" in result["context"]
     assert write_authorization_for("boss1", "submit_person_workstyle_preference") is not None
 
 
-def test_pre_llm_call_injects_boundary_for_ambiguous_retry(tmp_path, monkeypatch):
+def test_pre_llm_call_asks_one_question_when_short_reply_has_no_active_context(tmp_path, monkeypatch):
     import plugins.tuoguan_core as plugin
     from plugins.tuoguan_core.models import UserIdentity
     from plugins.tuoguan_core.runtime_foundation import clear_runtime_state
@@ -251,7 +252,8 @@ def test_pre_llm_call_injects_boundary_for_ambiguous_retry(tmp_path, monkeypatch
     )
 
     assert result is not None
-    assert "不得沿用历史对话执行真实写入" in result["context"]
+    assert "当前没有可验证的活动线程" in result["context"]
+    assert "只追问一个最关键的区分问题" in result["context"]
 
 
 def test_retired_pre_gateway_dispatch_is_noop_even_if_called(tmp_path, monkeypatch):

@@ -57,6 +57,7 @@ from .operational_facts import (
     submit_operational_fact_candidate,
 )
 from .staff_directory import query_staff_directory as build_staff_directory_report
+from .active_work_context import query_active_work_context as build_active_work_context
 from .staff_conversation_activity import query_staff_conversation_activity as build_staff_conversation_activity
 from .self_evolution import query_self_evolution_ledger as build_self_evolution_ledger
 from .social_market_research import query_social_market_research as build_social_market_research
@@ -3180,6 +3181,13 @@ class TuoguanToolService:
             return self._error("permission_denied", "只有店长或老板可以查看小优主动工作雷达。")
         result = query_proactive_work_radar(self.store, identity=self.identity, limit=limit)
         return self._ok("query_proactive_work_radar", data=result, message=str(result.get("rendered_text") or ""))
+
+    def query_active_work_context(self, *, limit: int = 5) -> dict[str, Any]:
+        denied = self._approved()
+        if denied:
+            return denied
+        result = build_active_work_context(self.store, identity=self.identity, limit=limit)
+        return self._ok("query_active_work_context", data=result, message=str(result.get("rendered_text") or ""))
 
     def query_attention_threads(
         self,

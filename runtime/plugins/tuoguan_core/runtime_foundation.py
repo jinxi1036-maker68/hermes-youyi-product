@@ -113,6 +113,7 @@ MODEL_SELECTED_READ_TOOLS = {
     "tuoguan_query_business_events",
     "tuoguan_query_action_executions",
     "tuoguan_query_autonomous_work_brief",
+    "tuoguan_query_active_work_context",
     "tuoguan_query_self_evolution_ledger",
     "tuoguan_query_employee_work_map",
     "tuoguan_query_fact_gap_candidates",
