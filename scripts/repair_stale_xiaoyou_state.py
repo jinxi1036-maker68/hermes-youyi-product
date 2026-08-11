@@ -130,7 +130,10 @@ def repair(data_dir: Path, *, cutoff: datetime, apply: bool) -> dict[str, Any]:
         text = _text(row)
         if not _is_before_cutoff(row, cutoff):
             continue
-        if str(row.get("focus_key") or "") in STALE_FOCUS_KEYS or any(term in text for term in STALE_TERMS):
+        # Work items can be long-running goals whose history contains stale
+        # wording. Only close the explicit legacy report focus, not a broader
+        # goal item that merely mentions an old question.
+        if str(row.get("focus_key") or "") in STALE_FOCUS_KEYS:
             work_seen.add(work_item_id)
             work_matches.append(row)
 
