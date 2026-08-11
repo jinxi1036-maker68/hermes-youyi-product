@@ -54,6 +54,8 @@ def run_autonomous_wakeup_once(
     employee_loop = None
 
     summary = {
+        "ok": True,
+        "status": "ok",
         "schema_version": 1,
         "tenant_id": current_tenant_id(),
         "report_type": "autonomous_wakeup_runner_v1",
@@ -119,6 +121,11 @@ def run_autonomous_wakeup_once(
         summary["sections"]["employee_loop"] = employee_loop
         summary["source_counts"]["employee_loop_ran"] = 1 if employee_loop.get("ok") else 0
         summary["source_counts"]["employee_loop_write_count"] = len(employee_loop.get("writes") or [])
+        if not employee_loop.get("ok"):
+            summary["ok"] = False
+            summary["status"] = "degraded"
+            summary["failure_stage"] = str(employee_loop.get("error") or "employee_loop_failed")
+            summary["failure_message"] = str(employee_loop.get("message") or "")
     rendered = render_autonomous_wakeup_report(summary)
     summary["rendered_text"] = rendered
     summary["render_verified"] = True
@@ -202,7 +209,7 @@ def main() -> int:
     print(result.get("rendered_text") or "")
     if result.get("report_path"):
         print(f"REPORT:{result['report_path']}")
-    return 0 if result.get("ok", True) is not False else 1
+    return 0 if result.get("ok") is True else 1
 
 
 if __name__ == "__main__":

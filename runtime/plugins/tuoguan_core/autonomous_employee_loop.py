@@ -22,6 +22,8 @@ import yaml
 
 from .digital_employee_state import (
     ACTION_EXECUTIONS_FILE,
+    AGENT_DELEGATIONS_FILE,
+    AGENT_DELEGATION_RESULTS_FILE,
     ATTENTION_THREADS_FILE,
     BUSINESS_EVENTS_FILE,
     HERMES_WORK_ITEMS_FILE,
@@ -110,6 +112,8 @@ _ALLOWED_FILES = {
     ATTENTION_THREADS_FILE,
     RELATIONSHIP_TOUCH_CANDIDATES_FILE,
     SELF_EVOLUTION_EVENTS_FILE,
+    AGENT_DELEGATIONS_FILE,
+    AGENT_DELEGATION_RESULTS_FILE,
 }
 
 
@@ -519,10 +523,6 @@ def normalize_employee_decision_for_materials(decision: dict[str, Any], material
     )
     normalized = deepcopy(decision)
     latest_owner_contact_at = _latest_owner_contact_at(materials)
-    if service_relations_deferred:
-        for field in ("employee_summary", "institution_understanding", "goal_progress_view"):
-            if isinstance(normalized.get(field), str):
-                normalized[field] = _rewrite_deferred_relation_text(normalized[field])
     for update in normalized.get("work_item_updates") or []:
         if not isinstance(update, dict):
             continue
@@ -550,27 +550,6 @@ def normalize_employee_decision_for_materials(decision: dict[str, Any], material
             materials,
             service_relations_deferred=service_relations_deferred,
         )
-    if not normalized.get("boss_attention_candidates"):
-        for field in ("employee_summary", "institution_understanding", "goal_progress_view"):
-            if isinstance(normalized.get(field), str):
-                normalized[field] = _rewrite_unmaterialized_owner_reply(normalized[field])
-        for update in normalized.get("work_item_updates") or []:
-            if not isinstance(update, dict):
-                continue
-            for field in ("focus_summary", "update_text", "owner_escalation_reason", "value_progress_note"):
-                if isinstance(update.get(field), str):
-                    update[field] = _rewrite_unmaterialized_owner_reply(update[field])
-            if isinstance(update.get("next_actions"), list):
-                update["next_actions"] = [
-                    _rewrite_unmaterialized_owner_reply(str(item)) if isinstance(item, str) else item
-                    for item in update.get("next_actions") or []
-                ][:8]
-        for entry in normalized.get("value_progress_entries") or []:
-            if not isinstance(entry, dict):
-                continue
-            for field in ("discovered", "hermes_action", "human_action", "outcome"):
-                if isinstance(entry.get(field), str):
-                    entry[field] = _rewrite_unmaterialized_owner_reply(entry[field])
     return normalized
 
 
@@ -1040,101 +1019,157 @@ def render_employee_loop_report(result: dict[str, Any]) -> str:
 
 def _call_model_for_decision(materials: dict[str, Any]) -> dict[str, Any]:
     payload = _model_payload(materials)
-    messages = [{"role": "system", "content": _SYSTEM_PROMPT}, {"role": "user", "content": json.dumps(payload, ensure_ascii=False)}]
+    diagnosis_input = {
+        key: payload.get(key)
+        for key in (
+            "timestamp", "identity", "mission", "principles", "materials_summary", "work_cadence",
+            "onboarding", "goals", "work", "institution_understanding_state", "proactive_work_radar",
+            "recent_owner_messages", "operating_evidence", "term_state", "deferred_items",
+        )
+    }
+    diagnosis = _request_model_phase(
+        "diagnosis",
+        _DIAGNOSIS_PROMPT,
+        diagnosis_input,
+        max_tokens=1500,
+    )
+    actions_input = {
+        "timestamp": payload.get("timestamp"),
+        "identity": payload.get("identity"),
+        "work_cadence": payload.get("work_cadence"),
+        "owner_attention_policy": payload.get("owner_attention_policy"),
+        "diagnosis": diagnosis,
+        "goals": payload.get("goals"),
+        "work": payload.get("work"),
+        "attention_threads": payload.get("attention_threads"),
+        "relationship_touch_policy": payload.get("relationship_touch_policy"),
+        "relationship_touch_candidates": payload.get("relationship_touch_candidates"),
+        "multi_agent_brief": payload.get("multi_agent_brief"),
+        "operating_evidence": payload.get("operating_evidence"),
+        "term_state": payload.get("term_state"),
+    }
+    actions = _request_model_phase(
+        "actions",
+        _ACTIONS_PROMPT,
+        actions_input,
+        max_tokens=1800,
+    )
+    cadence = str((payload.get("work_cadence") or {}).get("mode") or "")
+    if cadence in {"evening_review", "night_read_only_review"}:
+        review = _request_model_phase(
+            "review",
+            _REVIEW_PROMPT,
+            {
+                "timestamp": payload.get("timestamp"),
+                "identity": payload.get("identity"),
+                "work_cadence": payload.get("work_cadence"),
+                "diagnosis": diagnosis,
+                "actions": actions,
+                "employee_scorecard": payload.get("employee_scorecard"),
+                "self_evolution_brief": payload.get("self_evolution_brief"),
+                "action_executions": payload.get("action_executions"),
+                "value_progress_ledger": payload.get("value_progress_ledger"),
+            },
+            max_tokens=1400,
+        )
+    else:
+        review = {"evolution_candidates": [], "self_review": {}}
+    return {
+        "employee_summary": diagnosis.get("employee_summary") or "",
+        "institution_understanding": diagnosis.get("institution_understanding") or "",
+        "goal_progress_view": diagnosis.get("goal_progress_view") or "",
+        "observations": diagnosis.get("observations") or [],
+        "institution_fact_gaps": diagnosis.get("institution_fact_gaps") or [],
+        "questions_to_humans": diagnosis.get("questions_to_humans") or [],
+        "work_item_updates": actions.get("work_item_updates") or [],
+        "boss_attention_candidates": actions.get("boss_attention_candidates") or [],
+        "relationship_touch_candidates": actions.get("relationship_touch_candidates") or [],
+        "value_progress_entries": actions.get("value_progress_entries") or [],
+        "agent_delegation_decisions": actions.get("agent_delegation_decisions") or [],
+        "evolution_candidates": review.get("evolution_candidates") or [],
+        "self_review": review.get("self_review") or {},
+        "external_actions": [],
+    }
+
+
+def _request_model_phase(
+    phase: str,
+    system_prompt: str,
+    phase_payload: dict[str, Any],
+    *,
+    max_tokens: int,
+) -> dict[str, Any]:
+    messages = [
+        {"role": "system", "content": system_prompt},
+        {"role": "user", "content": json.dumps(phase_payload, ensure_ascii=False)},
+    ]
     errors: list[str] = []
-
-    def request(cfg: dict[str, Any], active_messages: list[dict[str, str]], max_tokens: int) -> str:
-        for attempt in range(2):
-            response = httpx.post(
-                f"{cfg['base_url'].rstrip('/')}/chat/completions",
-                headers={"Authorization": f"Bearer {cfg['api_key']}", "Content-Type": "application/json"},
-                json={
-                    "model": cfg["model"],
-                    "temperature": 0.2,
-                    "max_tokens": max_tokens,
-                    "response_format": {"type": "json_object"},
-                    "messages": active_messages,
-                },
-                timeout=float(cfg.get("timeout") or 60),
-            )
-            if response.status_code == 429 and attempt == 0:
-                retry_after = response.headers.get("Retry-After")
-                try:
-                    delay = max(2.0, min(float(retry_after or 8), 15.0))
-                except ValueError:
-                    delay = 8.0
-                time.sleep(delay)
-                continue
-            response.raise_for_status()
-            return str(response.json()["choices"][0]["message"]["content"] or "")
-        raise RuntimeError("model_request_exhausted")
-
     for cfg in _load_model_configs()[:2]:
         try:
-            content = request(cfg, messages, 4000)
-            try:
-                return json.loads(_json_text(content))
-            except json.JSONDecodeError as first_exc:
-                retry_messages = [
-                    messages[0],
-                    messages[1],
-                    {
+            for json_attempt in range(2):
+                active_messages = list(messages)
+                if json_attempt:
+                    active_messages.append({
                         "role": "user",
-                        "content": (
-                            "Your prior JSON was truncated. Return a fresh compact JSON object under 2200 Chinese characters. "
-                            "Use empty arrays for unchanged sections. Include at most one work_item_update, two gaps, "
-                            "one owner candidate, and no copied student lists or historical prose."
-                        ),
-                    },
-                ]
-                retry_content = request(cfg, retry_messages, 2500)
+                        "content": "上次输出不是完整 JSON。重新返回更短的单个 JSON 对象；没有变化的字段用空数组或空对象。",
+                    })
+                content = _request_model_content(cfg, active_messages, max_tokens if not json_attempt else max(900, max_tokens - 300))
                 try:
-                    return json.loads(_json_text(retry_content))
+                    value = json.loads(_json_text(content))
                 except json.JSONDecodeError as exc:
-                    raise ValueError(
-                        "model_returned_invalid_json:"
-                        + str(first_exc)[:60]
-                        + ";retry:"
-                        + str(exc)[:60]
-                    ) from exc
-        except (httpx.HTTPError, KeyError, ValueError) as exc:
-            errors.append(_safe_error(exc))
-    raise RuntimeError("all_model_providers_failed:" + "|".join(errors[-2:]))
+                    errors.append(f"{phase}:invalid_json:{str(exc)[:80]}")
+                    continue
+                if not isinstance(value, dict):
+                    errors.append(f"{phase}:response_not_object")
+                    continue
+                return value
+        except (httpx.HTTPError, KeyError, ValueError, RuntimeError) as exc:
+            errors.append(f"{phase}:{_safe_error(exc)}")
+    raise RuntimeError(f"all_model_providers_failed:{phase}:" + "|".join(errors[-4:]))
 
 
-_SYSTEM_PROMPT = """You are Xiaoyou (小优), the public-facing digital employee for a tutoring institution; Hermes is only the internal product/architecture name. You were woken by a clock tick.
-When writing owner/manager/teacher-facing messages, self-identify as 小优. Use Hermes only when discussing internal architecture, code, or technical implementation.
-Think like an employee: understand the institution, inspect goals, notice missing facts, decide whether to continue, wait, ask a human, or stop.
-The handbook is guidance, not a fixed workflow. Do not claim an external action happened.
-You cannot contact parents, assign new teacher tasks, change salary, delete data, close safety events, or change permissions in this wakeup.
-proactive_work_radar is the handbook-based employee map. Use it before deciding that there is nothing to do: it tells you what Xiaoyou should understand about the institution, organization, student service relations, operating rules, teacher work habits, goals, service evidence, risk, business opportunity, and reflection. It is read-only material, not a Router, and does not force you to ask every listed question.
-If owner_attention_policy.allowed_now is true and a real goal is blocked by missing owner facts, propose one boss_attention_candidate. If you write that the next stage is waiting for owner confirmation, boss confirmation, or next-step instruction, you must also put one concrete boss_attention_candidate. This is only a candidate for the owner/boss, not teachers or parents. If you put an owner/boss question in questions_to_humans, also put the same concrete question in boss_attention_candidates unless it is unsafe or deferred by term policy.
-Do not answer or record that Hermes "cannot proactively ask" as a general rule. Correct boundary: Hermes may ask the current conversation participant for clarification; the autonomous scheduler may queue daytime low-frequency owner attention; and it may queue manager/teacher questions when the missing fact belongs to that staff member, the person is whitelisted, and the message is work-related. Parents remain out of scope.
-Hermes also has employee responsibilities: complete institution understanding, push owner goals, support teachers, protect student service evidence, detect risks, find business opportunities, and keep learning.
-Public internet learning is only advice material with sources. Never turn it into confirmed institution fact without owner review.
-term_state, deferred_items, roster confidence, recent_owner_messages, and attention_threads are current evidence materials. If service_relation_policy is defer_until_new_term, the historical roster is not a confirmed new-term roster. Treat service type, main teacher, and new-term roster as deferred future confirmation material, not as a current blocker for historical renewal analysis, communication coverage analysis, risk framing, or owner summary preparation. You may analyze and prepare questions, but do not propose another proactive roster/service-relation reminder before the confirmation window unless a recent owner message explicitly asks to handle it early.
-Process the latest owner messages, not only the first few in the window. If the owner provides missing facts, says a safety item was only test data, asks Hermes to check tomorrow morning, or authorizes boss-only reminders while forbidding teacher/parent outreach, reflect that as current work-item material when state changes.
-operating_evidence contains compact read-only business evidence available at this wakeup. Use it to do concrete analysis when sufficient. Do not write "started analysis" or "will analyze" as progress evidence unless you actually derived a finding from supplied evidence. Missing source data is a fact gap, not completed work.
-An owner message is only a raw fact. Decide yourself whether it answers an attention thread, whether it is sufficient, or whether it is unrelated. Do not infer a reply merely because a message exists.
-multi_agent_brief contains only internal advisory materials. If it has pending completed results, decide on at most one delegation and explain whether you adopt, partially adopt, reject, need more evidence, or defer it. Do not let a sub-agent result become a business fact unless you, the main Hermes, adopt it with evidence.
-relationship_touch_policy controls proactive presence and staff fact requests. Boss messages may be sent only when policy allows and there is real evidence/value. Teacher and manager messages may be sent only when policy allows, target_user_id is known, work_related is true, private_emotional_support is false, and the message asks for one concrete task/record/operation fact. For teachers, warm presence can still be recorded as a candidate, but private emotional chat is not auto-sent and does not become boss performance material.
-Use self_evolution_brief as Xiaoyou's experience memory for the next day. In evening_review and night_read_only_review, output concise evolution_candidates when the materials show a real lesson: a low-risk workstyle preference already verified by a tool, a self-correction to avoid repeating, a tool failure to review, a handbook method candidate, a fact gap owner, tomorrow focus, or a multi-agent suggestion you adopted/rejected. Do not create candidates just to prove the wakeup ran.
-No material change is a valid outcome. Do not create observations, gaps, work updates, self-reviews, or value entries just to prove the wakeup ran.
-If a waiting branch says not_a_goal_blocker=true and there is no other blocker, keep the parent work item active; do not mark the entire goal waiting.
-When materials conflict, the latest folded work item and term_state are authoritative for current status. Older goal reviews, counts, plans, and rosters remain historical evidence only. Never describe responsibility_confirmation as the current phase after the latest work item has moved to historical_analysis_and_preparation.
-Keep the JSON under 2200 Chinese characters. Use empty arrays for unchanged sections. Include at most one work_item_update, two gaps, one owner candidate, and never copy student lists or long historical prose into the output.
-Return only one JSON object with keys: employee_summary, institution_understanding, goal_progress_view, observations, work_item_updates, questions_to_humans, boss_attention_candidates, relationship_touch_candidates, institution_fact_gaps, value_progress_entries, agent_delegation_decisions, evolution_candidates, self_review, external_actions.
-observations: array of objects with event_type and event_text.
-work_item_updates: array of objects with focus_key, title, focus_summary, status, update_text, current_phase, next_actions, confirmed_facts, pending_judgements, current_waiting, blocked_by, ask_candidates, last_human_contact_at, next_contact_after, owner_escalation_reason, value_progress_note, next_attention_at.
-questions_to_humans: array of objects with ask_role, reason, question, urgency.
-boss_attention_candidates: array of objects with focus_key, reason, message, urgency. The message must say what Hermes is blocked on, what the owner should confirm, and what Hermes will do after confirmation. It must be a question, not a status report.
-relationship_touch_candidates: array of objects with target_role, target_user_id, target_name, touch_type, message, reason, value, work_related, private_emotional_support, requires_authorization, external_send_allowed, suggested_send_at. touch_type may be care, encouragement, thanks, light_chat, record_relief, material_support, manager_assist, owner_business, owner_progress, or presence_report. For manager/teacher proactive fact requests, set work_related=true and external_send_allowed=true only when you are asking that person for one concrete task/record/operation fact.
-institution_fact_gaps: array of objects with gap_key, gap_text, ask_role, target_time, urgency, related_objects.
-value_progress_entries: array of objects with subject, discovered, hermes_action, human_action, outcome, evidence, attribution.
-agent_delegation_decisions: array with at most one object per wakeup. Include delegation_id, main_hermes_decision, decision_note, adopted_points, rejected_points. Only decide on completed sub-agent results that are present in multi_agent_brief; never let the sub-agent decide for you.
-evolution_candidates: array of objects with candidate_type, summary, evidence, risk_level, status, target_store, proposed_effect, next_effect, applies_to_user_id, applies_to_role, review_required_by, source_text. candidate_type must be one of person_preference_candidate, institution_fact_gap, self_correction, tool_failure_or_bug, handbook_method_candidate, tomorrow_focus, multi_agent_adoption. Low-risk candidates may guide future context; medium/high-risk candidates remain review material and must not change policy, salary, permissions, parent outreach, handbook, or institution rules.
-self_review: object with what_i_checked, what_i_learned, what_is_missing, tomorrow_focus, quality_score, teacher_support, student_service_evidence, risk_detection, business_opportunity.
-external_actions must always be an empty array. Do not include routing or tool-step fields. Do not invent numbers. If facts are missing, say what is missing and who should confirm it."""
+def _request_model_content(cfg: dict[str, Any], messages: list[dict[str, str]], max_tokens: int) -> str:
+    for attempt in range(2):
+        response = httpx.post(
+            f"{cfg['base_url'].rstrip('/')}/chat/completions",
+            headers={"Authorization": f"Bearer {cfg['api_key']}", "Content-Type": "application/json"},
+            json={
+                "model": cfg["model"],
+                "temperature": 0.2,
+                "max_tokens": max_tokens,
+                "response_format": {"type": "json_object"},
+                "messages": messages,
+            },
+            timeout=float(cfg.get("timeout") or 60),
+        )
+        if response.status_code == 429 and attempt == 0:
+            retry_after = response.headers.get("Retry-After")
+            try:
+                delay = max(2.0, min(float(retry_after or 8), 15.0))
+            except ValueError:
+                delay = 8.0
+            time.sleep(delay)
+            continue
+        response.raise_for_status()
+        return str(response.json()["choices"][0]["message"]["content"] or "")
+    raise RuntimeError("model_request_exhausted")
+
+
+_DIAGNOSIS_PROMPT = """你是托管机构数字员工小优，本轮只做事实诊断。
+根据材料判断机构现状、目标进度、真实缺口和需要询问的事实归属人。模型负责判断，材料和工具结果是事实依据。
+不得声称已经外发、写入或完成动作；不得联系家长；不得把历史名单当作新学期事实；没有变化是有效结论。
+只返回一个精简 JSON 对象，字段固定为 employee_summary、institution_understanding、goal_progress_view、observations、institution_fact_gaps、questions_to_humans。
+observations 最多2条，institution_fact_gaps 最多2条，questions_to_humans 最多2条。不要复制学生名单或长段历史。"""
+
+_ACTIONS_PROMPT = """你是托管机构数字员工小优，本轮只根据已给诊断选择内部行动候选。
+你可以选择继续、等待、更新一个工作事项、提出一个老板关注问题、提出一个白名单老师/店长事实问题、记录一条价值进展或决定一条顾问建议。
+系统只守权限、频率、幂等、审计和外发边界；不要把候选写成已经发送或已经完成。家长永远不在本轮触达范围。
+只返回一个精简 JSON 对象，字段固定为 work_item_updates、boss_attention_candidates、relationship_touch_candidates、value_progress_entries、agent_delegation_decisions。
+每个数组最多1条；没有必要行动时使用空数组。"""
+
+_REVIEW_PROMPT = """你是托管机构数字员工小优，本轮只做晚间经验复盘。
+从诊断、行动和既有进化记录中选择真正值得明天应用的经验。不要为了证明醒来而制造学习；不得自动改变制度、工资、权限、家长外发或正式手册。
+只返回一个精简 JSON 对象，字段固定为 evolution_candidates 和 self_review。evolution_candidates 最多3条；self_review 只保留今天核验、学到、缺少、明日重点和质量分。"""
 
 
 def _load_model_configs() -> list[dict[str, Any]]:
@@ -1937,100 +1972,6 @@ def _apply_deferred_service_relation_boundary(update: dict[str, Any]) -> None:
             update[key] = _drop_deferred_relation_items(update.get(key))
     if "pending_judgements" in update:
         update["pending_judgements"] = _drop_deferred_relation_items(update.get("pending_judgements"))
-    if "next_actions" in update and isinstance(update.get("next_actions"), list):
-        update["next_actions"] = [
-            _rewrite_deferred_relation_text(str(item)) if isinstance(item, str) else item
-            for item in update.get("next_actions") or []
-        ][:8]
-    confirmed = list(update.get("confirmed_facts") or []) if isinstance(update.get("confirmed_facts"), list) else []
-    deferred_fact = "新学期名单、服务类型和责任老师确认已延期至2026-08-25至2026-09-10窗口；当前不阻塞历史续费分析、沟通覆盖分析和材料准备。"
-    if deferred_fact not in [str(item) for item in confirmed]:
-        confirmed.append(deferred_fact)
-    update["confirmed_facts"] = confirmed[:8]
-    replacements = {
-        "但服务类型和主责老师仍缺失，无法制定具体沟通计划": "服务关系确认已延期到新学期窗口；当前可继续历史续费分析、沟通覆盖分析和材料准备",
-        "但服务类型和主责老师仍缺失，需要老板决定是否提前处理或等待8月底窗口": "服务关系确认已延期到新学期窗口；当前不需要提前催问，可继续历史分析和准备工作",
-        "服务类型和主责老师仍缺失，需要老板决定是否提前处理或等待8月底窗口": "服务关系确认已延期到新学期窗口；当前不需要提前催问，可继续历史分析和准备工作",
-        "服务类型和主责老师仍缺失，无法制定具体沟通计划": "服务关系确认已延期到新学期窗口；当前可继续历史续费分析、沟通覆盖分析和材料准备",
-    }
-    for field in ("focus_summary", "update_text", "value_progress_note", "owner_escalation_reason"):
-        if isinstance(update.get(field), str):
-            update[field] = _rewrite_deferred_relation_text(update[field], replacements=replacements)
-
-
-def _rewrite_deferred_relation_text(value: str, *, replacements: dict[str, str] | None = None) -> str:
-    text = str(value or "")
-    mapping = {
-        "但仍有服务类型和主责老师缺口未解决": "服务类型和主责老师属于新学期确认项，当前不阻塞历史分析",
-        "但仍缺服务类型和主责老师": "服务类型和主责老师属于新学期确认项，当前不阻塞历史分析",
-        "但服务类型和主责老师缺口仍存": "服务类型和主责老师属于新学期确认项，当前不阻塞历史分析",
-        "但服务类型和主责老师缺口仍然存在，影响具体学生沟通计划": "服务类型和主责老师属于新学期确认项，暂不做具体责任分配",
-        "但服务类型和主责老师缺口仍待决定": "服务类型和主责老师已延期到新学期窗口确认",
-        "服务类型和主责老师缺口仍为推进障碍": "服务类型和主责老师是新学期窗口的未来确认项",
-        "服务关系缺口仍为具体沟通计划的障碍": "服务关系缺口是新学期窗口的未来确认项",
-        "服务关系缺口仍为推进障碍": "服务关系缺口是新学期窗口的未来确认项",
-        "服务关系缺口仍为具体沟通计划的未来确认项": "服务关系缺口是新学期窗口的未来确认项",
-        "但服务类型和主责老师缺口仍缺失": "服务类型和主责老师属于新学期确认项",
-        "服务关系缺口未解决，无法推进具体沟通名单": "服务关系确认已延期到新学期窗口；当前可继续历史分析和材料准备",
-        "无法推进具体沟通名单": "暂不推进基于新学期责任人的具体名单",
-        "无法推进下一步": "当前仍可推进历史分析和材料准备",
-        "无法推进到具体学生沟通": "暂不推进具体学生责任分配，但可继续历史分析和材料准备",
-        "无法制定具体沟通计划": "暂不制定基于新学期责任人的具体沟通计划",
-        "暂时无法展开具体沟通": "暂不展开基于新学期责任人的具体沟通",
-        "直接影响具体沟通覆盖计划": "暂不用于具体责任分配",
-        "影响具体学生沟通计划": "暂不用于具体责任分配",
-        "需要老板决定是否提前处理或等待8月底窗口": "按已确认边界等待8月底窗口",
-        "需老板决定是否提前确认或等待8月25日窗口": "按已确认边界等待8月25日窗口",
-        "需老板决定是否提前确认或等待8月底窗口": "按已确认边界等待8月底窗口",
-        "建议提前处理或等待8月底窗口": "按已确认边界等待8月底窗口",
-        "服务关系缺口需指示": "服务关系缺口已延期到新学期窗口",
-        "仍需老板决定是否提前处理服务关系缺口": "服务关系缺口已延期到新学期窗口",
-        "若要推进下一步，仍需要服务类型和主责老师信息": "推进下一步先做历史分析和材料准备，服务类型和主责老师到新学期窗口确认",
-        "是否需提前确认或等待8月25日-9月10日窗口": "已延期至8月25日-9月10日窗口确认",
-        "是否希望提前确认这些信息，还是按原计划等8月底窗口": "按原计划等8月底窗口确认这些信息",
-    }
-    if replacements:
-        mapping.update(replacements)
-    for old, new in mapping.items():
-        text = text.replace(old, new)
-    if _is_deferred_service_relation_attention("", text, text) and "当前不阻塞历史" not in text and "延期" not in text:
-        text += " 服务关系确认已延期到2026-08-25至2026-09-10窗口，当前不阻塞历史分析和准备工作。"
-    if _is_deferred_service_relation_attention("", text, text):
-        sentence = r"[^。；\n]*(?:服务关系|服务类型|主责老师|责任老师|新学期名单)[^。；\n]*(?:障碍|无法|需老板|建议提前|未解决|仍缺失|仍缺|缺口需指示)[^。；\n]*[。；]?"
-        text = re.sub(sentence, "服务关系确认已延期到2026-08-25至2026-09-10窗口，当前不阻塞历史分析和准备工作。", text)
-        reverse_sentence = r"[^。；\n]*(?:需老板|老板决定|建议提前|仍需要|仍需)[^。；\n]*(?:服务关系|服务类型|主责老师|责任老师|新学期名单)[^。；\n]*[。；]?"
-        text = re.sub(reverse_sentence, "服务关系确认已延期到2026-08-25至2026-09-10窗口，当前不阻塞历史分析和准备工作。", text)
-        deferred_sentence = "服务关系确认已延期到2026-08-25至2026-09-10窗口，当前不阻塞历史分析和准备工作。"
-        escaped = re.escape(deferred_sentence)
-        text = re.sub(rf"(?:\s*{escaped}){{2,}}", " " + deferred_sentence, text).strip()
-    return text
-
-
-def _rewrite_unmaterialized_owner_reply(value: str) -> str:
-    text = str(value or "")
-    mapping = {
-        "计划白天08:00回复老板": "白天核验是否需要形成老板提醒候选",
-        "计划白天08:00回应": "白天核验是否需要形成老板提醒候选",
-        "计划明天08:00第一时间回应": "白天核验是否需要形成老板提醒候选",
-        "计划明天白天窗口（08:00后）向老板回应": "白天核验是否需要形成老板提醒候选",
-        "在白天窗口向老板回应": "在白天窗口核验是否需要形成老板提醒候选",
-        "白天窗口向老板回应": "白天窗口核验是否需要形成老板提醒候选",
-        "08:00白天窗口回应老板": "08:00白天窗口核验老板问题并更新内部判断",
-        "08:30回应老板": "08:30核验老板问题并更新内部判断",
-        "准备回应老板": "准备核验老板问题并形成内部判断",
-        "已在白天窗口回应": "已在白天窗口形成内部判断",
-        "老板主动询问推进情况和回复是否足够，已在白天窗口回应。": "老板主动询问推进情况和回复是否足够；本轮已形成内部判断，未生成外发候选。",
-        "我将直接回应老板，并展示具体分析进展。": "本轮先形成内部分析进展；如需要外发，必须生成老板提醒候选并取得真实发送回执。",
-        "直接回应老板": "形成内部判断",
-        "回应老板": "形成内部判断",
-        "向老板汇报": "形成老板提醒候选后再汇报",
-        "汇报分析成果": "形成分析成果候选",
-        "请示是否同意": "形成待老板确认候选",
-        "当前无外部输出权限": "当前没有生成外发候选",
-    }
-    for old, new in mapping.items():
-        text = text.replace(old, new)
-    return text
 
 
 def _is_real_value_progress(entry: dict[str, Any]) -> bool:

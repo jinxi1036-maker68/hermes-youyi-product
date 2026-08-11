@@ -222,3 +222,35 @@ def test_xiaoyou_health_tool_is_registered_and_permission_scoped(tmp_path):
     denied = teacher.query_xiaoyou_health(now_at="2026-08-09T11:00:00+08:00")
     assert denied["ok"] is False
     assert denied["error"] == "permission_denied"
+
+
+def test_xiaoyou_health_exposes_real_autonomous_loop_failure(tmp_path):
+    from plugins.tuoguan_core.digital_employee_state import query_xiaoyou_health
+    from plugins.tuoguan_core.models import UserIdentity
+
+    store = _seed_store(tmp_path)
+    reports = tmp_path / "reports"
+    reports.mkdir()
+    (reports / "autonomous-wakeup-v1-20260809-103000.json").write_text(
+        json.dumps(
+            {
+                "ok": False,
+                "status": "degraded",
+                "generated_at": "2026-08-09T10:30:00+08:00",
+                "failure_stage": "employee_loop_model_decision_failed",
+                "failure_message": "all_model_providers_failed:diagnosis",
+                "source_counts": {"employee_loop_write_count": 0},
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    identity = UserIdentity("wecom_callback", "boss1", "boss1", "金总", "boss", "approved")
+
+    result = query_xiaoyou_health(store, identity=identity, now_at="2026-08-09T11:00:00+08:00")
+
+    loop = result["proactive_work"]["autonomous_loop"]
+    assert loop["failed_count_last_24h"] == 1
+    assert loop["latest_status"] == "degraded"
+    assert loop["latest_failure_stage"] == "employee_loop_model_decision_failed"
+    assert any("自主员工循环失败 1 次" in issue for issue in result["issues"])

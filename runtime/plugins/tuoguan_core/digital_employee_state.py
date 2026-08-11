@@ -4884,6 +4884,7 @@ def query_xiaoyou_health(
     daily_runs = _read_jsonl(store, "daily_report_runs.jsonl")
     daily_reports = _xiaoyou_daily_report_health(outbox, daily_runs, since_ts)
     outbox_health = _xiaoyou_outbox_health(outbox, since_ts)
+    autonomous_loop = _xiaoyou_autonomous_loop_health(store, since_ts)
     attention = query_attention_threads(store, identity=identity, include_closed=False, limit=limit)
     fact_gaps = query_fact_gap_candidates(store, identity=identity, limit=limit)
     staff_voice = (
@@ -4905,6 +4906,8 @@ def query_xiaoyou_health(
         issues.append(f"有 {outbox_health['failed_or_unknown_count']} 条外发处于失败或结果未知状态。")
     if outbox_health["repeated_task_reminder_candidate_count"]:
         issues.append(f"发现 {outbox_health['repeated_task_reminder_candidate_count']} 组任务提醒重复候选。")
+    if autonomous_loop["failed_count_last_24h"]:
+        issues.append(f"过去24小时自主员工循环失败 {autonomous_loop['failed_count_last_24h']} 次；最近失败阶段为 {autonomous_loop['latest_failure_stage'] or '未知'}。")
     tool_failure_count = int(((evolution.get("health_signals") or {}).get("tool_failure_candidate_count") or 0)) if isinstance(evolution, dict) else 0
     if tool_failure_count:
         issues.append(f"有 {tool_failure_count} 条工具失败/能力缺口候选等待复盘。")
@@ -4932,6 +4935,7 @@ def query_xiaoyou_health(
             "active_work_item_count": int(work.get("work_item_count") or 0) if isinstance(work, dict) else 0,
             "waiting_work_item_count": int(work.get("waiting_count") or 0) if isinstance(work, dict) else 0,
             "outbox": outbox_health,
+            "autonomous_loop": autonomous_loop,
         },
         "fact_gaps": {
             "candidate_count": fact_gap_count,
@@ -4969,6 +4973,33 @@ def query_xiaoyou_health(
     }
     health["rendered_text"] = _render_xiaoyou_health(health)
     return health
+
+
+def _xiaoyou_autonomous_loop_health(store: TuoguanStore, since_ts: float) -> dict[str, Any]:
+    reports_dir = store.data_dir / "reports"
+    rows: list[dict[str, Any]] = []
+    if reports_dir.exists():
+        for path in sorted(reports_dir.glob("autonomous-wakeup-v1-*.json"))[-100:]:
+            try:
+                row = json.loads(path.read_text(encoding="utf-8-sig"))
+            except (OSError, UnicodeError, json.JSONDecodeError):
+                continue
+            if not isinstance(row, dict) or _ts(row.get("generated_at")) < since_ts:
+                continue
+            rows.append(row)
+    failed = [row for row in rows if row.get("ok") is False or str(row.get("status") or "") == "degraded"]
+    latest = rows[-1] if rows else {}
+    latest_failed = failed[-1] if failed else {}
+    return {
+        "run_count_last_24h": len(rows),
+        "successful_count_last_24h": len(rows) - len(failed),
+        "failed_count_last_24h": len(failed),
+        "latest_status": str(latest.get("status") or ("ok" if latest.get("ok") is True else "unknown")),
+        "latest_generated_at": str(latest.get("generated_at") or ""),
+        "latest_write_count": int(((latest.get("source_counts") or {}).get("employee_loop_write_count") or 0)) if isinstance(latest, dict) else 0,
+        "latest_failure_stage": str(latest_failed.get("failure_stage") or ""),
+        "latest_failure_message": str(latest_failed.get("failure_message") or "")[:300],
+    }
 
 
 def _xiaoyou_daily_report_health(outbox: list[Any], daily_runs: list[dict[str, Any]], since_ts: float) -> dict[str, Any]:

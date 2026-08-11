@@ -400,3 +400,62 @@ def test_generic_owner_attention_candidate_is_rejected(tmp_path):
     assert result["ok"] is True
     assert not any(row["kind"] == "owner_attention_queued" and row["ok"] for row in result["writes"])
     assert json.loads((tmp_path / "notification_outbox.json").read_text(encoding="utf-8")) == []
+def test_autonomous_loop_write_allowlist_covers_delegation_ledgers():
+    from plugins.tuoguan_core import autonomous_employee_loop as loop
+    from plugins.tuoguan_core.digital_employee_state import AGENT_DELEGATIONS_FILE, AGENT_DELEGATION_RESULTS_FILE
+
+    assert AGENT_DELEGATIONS_FILE in loop._ALLOWED_FILES
+    assert AGENT_DELEGATION_RESULTS_FILE in loop._ALLOWED_FILES
+
+
+def test_model_decision_uses_small_phases_and_skips_daytime_review(monkeypatch):
+    from plugins.tuoguan_core import autonomous_employee_loop as loop
+
+    phases: list[str] = []
+
+    def fake_phase(phase, _prompt, _payload, *, max_tokens):
+        phases.append(phase)
+        if phase == "diagnosis":
+            return {
+                "employee_summary": "已核验当前事实。",
+                "institution_understanding": "机构事实可用。",
+                "goal_progress_view": "目标继续推进。",
+                "observations": [],
+                "institution_fact_gaps": [],
+                "questions_to_humans": [],
+            }
+        return {
+            "work_item_updates": [],
+            "boss_attention_candidates": [],
+            "relationship_touch_candidates": [],
+            "value_progress_entries": [],
+            "agent_delegation_decisions": [],
+        }
+
+    monkeypatch.setattr(loop, "_request_model_phase", fake_phase)
+    result = loop._call_model_for_decision({"work_cadence": {"mode": "daytime_goal_progress"}})
+
+    assert phases == ["diagnosis", "actions"]
+    assert result["employee_summary"] == "已核验当前事实。"
+    assert result["evolution_candidates"] == []
+    assert result["external_actions"] == []
+
+
+def test_model_decision_runs_review_only_at_night(monkeypatch):
+    from plugins.tuoguan_core import autonomous_employee_loop as loop
+
+    phases: list[str] = []
+
+    def fake_phase(phase, _prompt, _payload, *, max_tokens):
+        phases.append(phase)
+        if phase == "diagnosis":
+            return {"employee_summary": "复盘", "observations": [], "institution_fact_gaps": [], "questions_to_humans": []}
+        if phase == "actions":
+            return {"work_item_updates": [], "boss_attention_candidates": [], "relationship_touch_candidates": [], "value_progress_entries": [], "agent_delegation_decisions": []}
+        return {"evolution_candidates": [{"candidate_type": "tomorrow_focus", "summary": "明天先查事实"}], "self_review": {"tomorrow_focus": "先查事实"}}
+
+    monkeypatch.setattr(loop, "_request_model_phase", fake_phase)
+    result = loop._call_model_for_decision({"work_cadence": {"mode": "night_read_only_review"}})
+
+    assert phases == ["diagnosis", "actions", "review"]
+    assert result["evolution_candidates"][0]["candidate_type"] == "tomorrow_focus"

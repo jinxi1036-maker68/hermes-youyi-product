@@ -81,3 +81,44 @@ def test_autonomous_wakeup_runner_is_clock_tick_only(tmp_path):
     assert before == after
     assert result["report_path"].endswith(".md")
     assert (tmp_path / "reports").exists()
+
+
+def test_autonomous_wakeup_propagates_employee_loop_failure(tmp_path, monkeypatch):
+    import plugins.tuoguan_core.autonomous_wakeup_runner as runner
+
+    store = _seed_store(tmp_path)
+    monkeypatch.setenv("HERMES_AUTONOMOUS_EMPLOYEE_LOOP", "1")
+    monkeypatch.setattr(
+        runner,
+        "run_autonomous_employee_loop",
+        lambda *args, **kwargs: {
+            "ok": False,
+            "error": "employee_loop_model_decision_failed",
+            "message": "all_model_providers_failed:diagnosis",
+            "writes": [],
+        },
+    )
+
+    result = runner.run_autonomous_wakeup_once(
+        store,
+        now=datetime(2026, 7, 28, 9, 0, tzinfo=timezone.utc),
+        write_report=False,
+    )
+
+    assert result["ok"] is False
+    assert result["status"] == "degraded"
+    assert result["failure_stage"] == "employee_loop_model_decision_failed"
+    assert result["source_counts"]["employee_loop_ran"] == 0
+    assert result["source_counts"]["employee_loop_write_count"] == 0
+
+
+def test_autonomous_wakeup_main_returns_failure_exit(monkeypatch):
+    import plugins.tuoguan_core.autonomous_wakeup_runner as runner
+
+    monkeypatch.setattr(
+        runner,
+        "run_autonomous_wakeup_once",
+        lambda **kwargs: {"ok": False, "rendered_text": "failed safely"},
+    )
+
+    assert runner.main() == 1
