@@ -48,12 +48,12 @@ def _log_runtime_module_manifest() -> None:
     for name in (
         "gateway.run",
         "gateway.platforms.base",
-        "gateway.platforms.wecom_callback",
+        "plugins.platforms.wecom.callback_adapter",
         "gateway.outbound_reply_guard",
         "plugins.tuoguan_core.runtime_ownership",
         "plugins.tuoguan_core.runtime_foundation",
-        "plugins.tuoguan_core.core_capability_v1",
-        "plugins.tuoguan_core.production_command_bus",
+        "plugins.tuoguan_core.active_work_context",
+        "plugins.tuoguan_core.self_evolution",
     ):
         try:
             module = importlib.import_module(name)
@@ -69,6 +69,7 @@ _DAILY_PUSH_WAKE_EVENTS: dict[int, asyncio.Event] = {}
 _ACTIVE_WECom_USERS: dict[str, datetime] = {}
 _ACTIVE_CONVERSATION_QUIET_PERIOD = timedelta(minutes=3)
 _CLAIMED_REPLY_MESSAGE_IDS: dict[str, datetime] = {}
+_ACTIVE_MODEL_TURNS: dict[str, dict[str, Any]] = {}
 _REPLY_CLAIM_TTL = timedelta(hours=2)
 
 _SYSTEM_REPLY_MARKERS = (
@@ -1346,6 +1347,22 @@ def _on_pre_llm_call(**kwargs: Any) -> dict[str, str] | None:
             role=identity.role,
             raw_text=raw_text,
         )
+        turn_key = session_id or chat_id or identity.canonical_user_id
+        _ACTIVE_MODEL_TURNS[turn_key] = {
+            "message_id": message_id,
+            "conversation_id": chat_id or session_id or identity.canonical_user_id,
+            "user_id": identity.canonical_user_id,
+            "role": identity.role,
+            "raw_text": raw_text,
+            "created_at": datetime.now().astimezone(),
+        }
+        if len(_ACTIVE_MODEL_TURNS) > 512:
+            oldest = sorted(
+                _ACTIVE_MODEL_TURNS,
+                key=lambda key: _ACTIVE_MODEL_TURNS[key].get("created_at") or datetime.min.astimezone(),
+            )[:128]
+            for key in oldest:
+                _ACTIVE_MODEL_TURNS.pop(key, None)
         injected = _foundation_inject_model_context(
             session_id=session_id,
             sender_id=identity.canonical_user_id,
@@ -1559,8 +1576,51 @@ def _on_pre_tool_call(**kwargs: Any) -> dict[str, str] | None:
 
 
 def _on_transform_llm_output(**kwargs: Any) -> str | None:
-    # Do not rewrite normal model replies after the model has answered.
-    return None
+    platform_raw = kwargs.get("platform")
+    platform = str(getattr(platform_raw, "value", platform_raw) or "").lower()
+    session_id = str(kwargs.get("session_id") or "")
+    response_text = str(kwargs.get("response_text") or "")
+    if platform != "wecom_callback" or not session_id or not response_text:
+        return None
+    return _foundation_transform_final_response(
+        store=_router().store,
+        session_id=session_id,
+        response_text=response_text,
+    )
+
+
+def _on_post_llm_call_v020(**kwargs: Any) -> None:
+    """Record a finalized v0.20 model turn before the platform delivery step."""
+
+    platform_raw = kwargs.get("platform")
+    platform = str(getattr(platform_raw, "value", platform_raw) or "").lower()
+    session_id = str(kwargs.get("session_id") or "")
+    if platform != "wecom_callback" or not session_id:
+        return
+    turn = _ACTIVE_MODEL_TURNS.pop(session_id, None)
+    if not turn:
+        return
+    final_reply = str(kwargs.get("assistant_response") or "")
+    if not final_reply:
+        return
+    _foundation_ensure_outbound_reply_recorded(
+        store=_router().store,
+        message_id=str(turn.get("message_id") or ""),
+        conversation_id=str(turn.get("conversation_id") or session_id),
+        user_id=str(turn.get("user_id") or ""),
+        role=str(turn.get("role") or "unbound"),
+        raw_text=str(turn.get("raw_text") or ""),
+        final_reply=final_reply,
+        entered_model=True,
+        session_id=session_id,
+        route_decision="model_first_v020",
+    )
+    logger.warning(
+        "YOUYI_POST_LLM_RESPONSE_RECORDED sender=%s session_id=%s message_id=%s",
+        str(turn.get("user_id") or ""),
+        session_id,
+        str(turn.get("message_id") or ""),
+    )
 
 
 def _on_post_gateway_response(**kwargs: Any) -> None:
@@ -1631,7 +1691,15 @@ def register(ctx) -> None:
     # not registered on the main message path. Keep tools plus passive audit only.
     ctx.register_hook("pre_llm_call", _on_pre_llm_call)
     ctx.register_hook("post_tool_call", _on_post_tool_call)
-    ctx.register_hook("post_gateway_response", _on_post_gateway_response)
+    try:
+        from hermes_cli.plugins import VALID_HOOKS
+    except Exception:
+        VALID_HOOKS = {"post_gateway_response"}
+    if "post_gateway_response" in VALID_HOOKS:
+        ctx.register_hook("post_gateway_response", _on_post_gateway_response)
+    else:
+        ctx.register_hook("transform_llm_output", _on_transform_llm_output)
+        ctx.register_hook("post_llm_call", _on_post_llm_call_v020)
     for name, schema, handler in TOOLS:
         ctx.register_tool(
             name=name,

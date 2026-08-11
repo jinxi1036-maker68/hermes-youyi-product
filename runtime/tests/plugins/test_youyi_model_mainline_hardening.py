@@ -41,12 +41,61 @@ def test_tuoguan_core_does_not_register_pre_model_business_decision_hooks():
     plugin.register(ctx)
 
     names = [name for name, _fn in hooks]
-    assert names == ["pre_llm_call", "post_tool_call", "post_gateway_response"]
+    try:
+        from hermes_cli.plugins import VALID_HOOKS
+    except Exception:
+        VALID_HOOKS = {"post_gateway_response"}
+    if "post_gateway_response" in VALID_HOOKS:
+        assert names == ["pre_llm_call", "post_tool_call", "post_gateway_response"]
+    else:
+        assert names == ["pre_llm_call", "post_tool_call", "transform_llm_output", "post_llm_call"]
     assert "pre_gateway_dispatch" not in names
     assert "pre_tool_call" not in names
-    assert "transform_llm_output" not in names
-    assert "post_gateway_response" in names
     assert {tool["name"] for tool in tools}
+
+
+def test_v020_output_and_post_llm_hooks_preserve_honesty_and_audit(tmp_path, monkeypatch):
+    import plugins.tuoguan_core as plugin
+
+    store = SimpleNamespace(data_dir=tmp_path)
+    monkeypatch.setattr(plugin, "_router", lambda: SimpleNamespace(store=store))
+    monkeypatch.setattr(
+        plugin,
+        "_foundation_transform_final_response",
+        lambda **kwargs: "clean:" + kwargs["response_text"],
+    )
+    recorded = []
+    monkeypatch.setattr(
+        plugin,
+        "_foundation_ensure_outbound_reply_recorded",
+        lambda **kwargs: recorded.append(kwargs),
+    )
+
+    transformed = plugin._on_transform_llm_output(
+        platform="wecom_callback",
+        session_id="session-v020",
+        response_text="已经保存",
+    )
+    assert transformed == "clean:已经保存"
+
+    plugin._ACTIVE_MODEL_TURNS["session-v020"] = {
+        "message_id": "msg-v020",
+        "conversation_id": "corp:boss1",
+        "user_id": "boss1",
+        "role": "boss",
+        "raw_text": "以后汇报三条以内",
+    }
+    plugin._on_post_llm_call_v020(
+        platform="wecom_callback",
+        session_id="session-v020",
+        assistant_response=transformed,
+    )
+
+    assert len(recorded) == 1
+    assert recorded[0]["message_id"] == "msg-v020"
+    assert recorded[0]["final_reply"] == transformed
+    assert recorded[0]["route_decision"] == "model_first_v020"
+    assert "session-v020" not in plugin._ACTIVE_MODEL_TURNS
 
 
 def test_pre_llm_call_establishes_write_context_with_workstyle_material_only(tmp_path, monkeypatch):

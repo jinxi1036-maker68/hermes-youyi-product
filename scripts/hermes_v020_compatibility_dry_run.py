@@ -24,13 +24,18 @@ def run(*, candidate_root: Path, project_root: Path) -> dict:
     body = pyproject.read_text(encoding="utf-8") if pyproject.exists() else ""
     version_match = re.search(r'^version\s*=\s*"([^"]+)"', body, re.MULTILINE)
     requires_match = re.search(r'^requires-python\s*=\s*"([^"]+)"', body, re.MULTILINE)
+    cron_tools = candidate_root / "tools" / "cronjob_tools.py"
+    cron_body = cron_tools.read_text(encoding="utf-8", errors="ignore") if cron_tools.exists() else ""
     checks = {
         "candidate_version_is_0_20": bool(version_match and version_match.group(1).startswith("0.20")),
         "running_python_supported": (3, 11) <= sys.version_info[:2] < (3, 14),
         "plugin_hook_registration_present": _contains(candidate_root, "register_hook"),
         "plugin_tool_registration_present": _contains(candidate_root, "register_tool"),
         "skill_bundle_support_present": _contains(candidate_root, "skill-bundles"),
-        "cron_preflight_support_present": _contains(candidate_root, "blocked_config"),
+        "cron_preflight_support_present": all(
+            marker in cron_body
+            for marker in ("def _validate_cron_base_url", "def _validate_cron_script_path")
+        ),
         "session_context_api_present": (candidate_root / "gateway" / "session_context.py").exists(),
         "hermes_constants_present": (candidate_root / "hermes_constants.py").exists(),
         "xiaoyou_bundle_present": (project_root / "runtime" / "plugins" / "tuoguan_core" / "skill_assets" / "skill-bundles" / "xiaoyou-core.yaml").exists(),

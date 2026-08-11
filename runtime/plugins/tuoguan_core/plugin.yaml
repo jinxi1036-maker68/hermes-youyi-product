@@ -1,0 +1,9 @@
+name: tuoguan_core
+version: "1.0.0"
+description: "Xiaoyou tutoring-center digital employee tools and boundary hooks."
+author: Hermes Xiaoyou Project
+hooks:
+  - pre_llm_call
+  - post_tool_call
+  - transform_llm_output
+  - post_llm_call
