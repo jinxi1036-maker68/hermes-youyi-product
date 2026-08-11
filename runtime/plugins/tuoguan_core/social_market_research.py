@@ -464,7 +464,7 @@ def _is_non_market_row(*, platform: str, url: str, title: str, excerpt: str, que
     if platform == "xiaohongshu" and url_lower:
         if "xiaohongshu.com" not in url_lower:
             return False
-        if "/explore/" not in url_lower and "/user/profile/" not in url_lower:
+        if "/explore/" not in url_lower and "/search_result/" not in url_lower and "/user/profile/" not in url_lower:
             return True
     if platform == "douyin" and url_lower:
         if "douyin.com" not in url_lower:

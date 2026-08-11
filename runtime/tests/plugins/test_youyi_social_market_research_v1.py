@@ -198,6 +198,42 @@ def test_social_market_filters_platform_agreement_pages(tmp_path):
     assert result["candidates"] == []
 
 
+def test_social_market_keeps_xiaohongshu_search_result_urls(tmp_path):
+    from plugins.tuoguan_core.social_market_research import run_social_market_research
+    from plugins.tuoguan_core.store import TuoguanStore
+
+    def runner(command, **_kwargs):
+        if "whoami" in command:
+            return SimpleNamespace(returncode=0, stdout=json.dumps({"ok": True}, ensure_ascii=False), stderr="")
+        return SimpleNamespace(
+            returncode=0,
+            stdout=json.dumps([
+                {
+                    "rank": 1,
+                    "author": "优加托管",
+                    "likes": "36",
+                    "title": "精装400平、满生源托管忍痛转让",
+                    "url": "https://www.xiaohongshu.com/search_result/6a190885000000000803d259?xsec_token=abc",
+                    "published_at": "2026-05-29",
+                }
+            ], ensure_ascii=False),
+            stderr="",
+        )
+
+    result = run_social_market_research(
+        "xiaohongshu",
+        store=TuoguanStore(tmp_path),
+        query="项城托管招生",
+        dry_run=True,
+        runner=runner,
+        now=datetime(2026, 8, 11, 8, 0, tzinfo=timezone.utc),
+    )
+
+    assert result["ok"] is True
+    assert result["run"]["status"] == "completed"
+    assert result["candidates"][0]["title"] == "精装400平、满生源托管忍痛转让"
+
+
 def test_social_market_browser_auth_required_is_backend_unavailable(tmp_path):
     from plugins.tuoguan_core.social_market_research import run_social_market_research
     from plugins.tuoguan_core.store import TuoguanStore

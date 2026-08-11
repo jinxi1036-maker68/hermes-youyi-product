@@ -79,7 +79,7 @@ async function extractRows(page, platform, limit, query) {
       }
       if (platform === "xiaohongshu") {
         return hostname.endsWith("xiaohongshu.com") && (
-          path.startsWith("/explore/") || path.startsWith("/user/profile/")
+          path.startsWith("/explore/") || path.startsWith("/search_result/") || path.startsWith("/user/profile/")
         );
       }
       if (platform === "douyin") {
