@@ -1221,8 +1221,22 @@ def _load_model_configs() -> list[dict[str, Any]]:
 
 
 def _query_onboarding(store: TuoguanStore) -> dict[str, Any]:
+    owner_id = _owner_user_id(store)
+    if not owner_id:
+        return {
+            "ok": False,
+            "error": "owner_identity_missing",
+            "message": "当前机构尚未确认老板身份，未以预设账号查询入职缺口。",
+        }
     try:
-        service = TuoguanToolService(store=store, platform="system", user_id="JinWenJie", user_name="Jin", chat_id="system:autonomous", session_key="system:autonomous")
+        service = TuoguanToolService(
+            store=store,
+            platform="system",
+            user_id=owner_id,
+            user_name="机构老板",
+            chat_id="system:autonomous",
+            session_key="system:autonomous",
+        )
         return service.query_institution_onboarding_gaps(program_id="regular_tuoguan")
     except Exception as exc:
         return {"ok": False, "error": "onboarding_query_failed", "message": _safe_error(exc)}
@@ -1231,12 +1245,19 @@ def _query_onboarding(store: TuoguanStore) -> dict[str, Any]:
 def _query_operating_evidence(store: TuoguanStore) -> dict[str, Any]:
     """Collect a small general evidence pack without choosing an action."""
 
+    owner_id = _owner_user_id(store)
+    if not owner_id:
+        return {
+            "ok": False,
+            "error": "owner_identity_missing",
+            "message": "当前机构尚未确认老板身份，未以预设账号读取经营证据。",
+        }
     try:
         service = TuoguanToolService(
             store=store,
             platform="system",
-            user_id="JinWenJie",
-            user_name="金总",
+            user_id=owner_id,
+            user_name="机构老板",
             chat_id="system:autonomous:evidence",
             session_key="system:autonomous:evidence",
         )

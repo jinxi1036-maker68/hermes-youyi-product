@@ -459,3 +459,74 @@ def test_model_decision_runs_review_only_at_night(monkeypatch):
 
     assert phases == ["diagnosis", "actions", "review"]
     assert result["evolution_candidates"][0]["candidate_type"] == "tomorrow_focus"
+
+
+def test_model_phase_rejects_repeated_truncated_json(monkeypatch):
+    import pytest
+    from plugins.tuoguan_core import autonomous_employee_loop as loop
+
+    monkeypatch.setattr(loop, "_load_model_configs", lambda: [{"base_url": "https://example.test", "api_key": "test", "model": "test"}])
+    monkeypatch.setattr(loop, "_request_model_content", lambda *_args, **_kwargs: "{")
+
+    with pytest.raises(RuntimeError, match="all_model_providers_failed:diagnosis:.*invalid_json"):
+        loop._request_model_phase("diagnosis", "system", {"fact": "value"}, max_tokens=900)
+
+
+def test_model_content_exhausts_repeated_429_without_success(monkeypatch):
+    import pytest
+    from plugins.tuoguan_core import autonomous_employee_loop as loop
+
+    class RateLimitedResponse:
+        status_code = 429
+        headers = {"Retry-After": "0"}
+
+        def raise_for_status(self):
+            request = loop.httpx.Request("POST", "https://example.test/chat/completions")
+            response = loop.httpx.Response(429, request=request)
+            raise loop.httpx.HTTPStatusError("rate limited", request=request, response=response)
+
+    monkeypatch.setattr(loop.httpx, "post", lambda *args, **kwargs: RateLimitedResponse())
+    monkeypatch.setattr(loop.time, "sleep", lambda _seconds: None)
+    monkeypatch.setattr(loop, "_load_model_configs", lambda: [{"base_url": "https://example.test", "api_key": "test", "model": "test", "timeout": 1}])
+
+    with pytest.raises(RuntimeError, match="all_model_providers_failed:diagnosis"):
+        loop._request_model_phase("diagnosis", "system", {"fact": "value"}, max_tokens=900)
+
+
+def test_model_phase_reports_timeout_as_failure(monkeypatch):
+    import pytest
+    from plugins.tuoguan_core import autonomous_employee_loop as loop
+
+    monkeypatch.setattr(loop, "_load_model_configs", lambda: [{"base_url": "https://example.test", "api_key": "test", "model": "test", "timeout": 1}])
+    monkeypatch.setattr(
+        loop.httpx,
+        "post",
+        lambda *args, **kwargs: (_ for _ in ()).throw(loop.httpx.TimeoutException("timed out")),
+    )
+
+    with pytest.raises(RuntimeError, match="all_model_providers_failed:diagnosis"):
+        loop._request_model_phase("diagnosis", "system", {"fact": "value"}, max_tokens=900)
+
+
+def test_autonomous_evidence_queries_use_tenant_owner_without_identity_pollution(tmp_path):
+    from plugins.tuoguan_core import autonomous_employee_loop as loop
+
+    store = _seed_store(tmp_path)
+
+    assert loop._query_onboarding(store).get("error") != "owner_identity_missing"
+    assert loop._query_operating_evidence(store).get("error") != "owner_identity_missing"
+
+    whitelist = store.read_json("wecom_whitelist.json", {})
+    assert whitelist.get("pending_users") in (None, [])
+    assert "JinWenJie" not in json.dumps(whitelist, ensure_ascii=False)
+
+
+def test_autonomous_evidence_queries_fail_closed_when_tenant_owner_is_missing(tmp_path):
+    from plugins.tuoguan_core import autonomous_employee_loop as loop
+    from plugins.tuoguan_core.store import TuoguanStore
+
+    store = TuoguanStore(tmp_path)
+
+    assert loop._query_onboarding(store)["error"] == "owner_identity_missing"
+    assert loop._query_operating_evidence(store)["error"] == "owner_identity_missing"
+    assert not (tmp_path / "wecom_whitelist.json").exists()
