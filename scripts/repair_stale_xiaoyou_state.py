@@ -101,29 +101,37 @@ def repair(data_dir: Path, *, cutoff: datetime, apply: bool) -> dict[str, Any]:
     work_status = _fold_latest_status(work_rows, "work_item_id")
 
     attention_matches: list[dict[str, Any]] = []
+    attention_seen: set[str] = set()
     for row in attention_rows:
         if str(row.get("record_type") or "") == "attention_thread_update":
             continue
         attention_id = str(row.get("attention_id") or "").strip()
         if not attention_id or attention_status.get(attention_id, str(row.get("status") or "")) in CLOSED_STATUSES:
             continue
+        if attention_id in attention_seen:
+            continue
         text = _text(row)
         if not _is_before_cutoff(row, cutoff):
             continue
         if str(row.get("focus_key") or "") in STALE_FOCUS_KEYS or any(term in text for term in STALE_TERMS):
+            attention_seen.add(attention_id)
             attention_matches.append(row)
 
     work_matches: list[dict[str, Any]] = []
+    work_seen: set[str] = set()
     for row in work_rows:
         if str(row.get("record_type") or "") == "hermes_work_item_update":
             continue
         work_item_id = str(row.get("work_item_id") or "").strip()
         if not work_item_id or work_status.get(work_item_id, str(row.get("status") or "")) in CLOSED_STATUSES:
             continue
+        if work_item_id in work_seen:
+            continue
         text = _text(row)
         if not _is_before_cutoff(row, cutoff):
             continue
         if str(row.get("focus_key") or "") in STALE_FOCUS_KEYS or any(term in text for term in STALE_TERMS):
+            work_seen.add(work_item_id)
             work_matches.append(row)
 
     if apply:
@@ -166,6 +174,24 @@ def repair(data_dir: Path, *, cutoff: datetime, apply: bool) -> dict[str, Any]:
         "work_item_match_count": len(work_matches),
         "attention_ids": [str(row.get("attention_id") or "") for row in attention_matches],
         "work_item_ids": [str(row.get("work_item_id") or "") for row in work_matches],
+        "attention_summaries": [
+            {
+                "attention_id": str(row.get("attention_id") or ""),
+                "focus_key": str(row.get("focus_key") or ""),
+                "status": str(row.get("status") or ""),
+                "text": _text(row)[:160],
+            }
+            for row in attention_matches
+        ],
+        "work_item_summaries": [
+            {
+                "work_item_id": str(row.get("work_item_id") or ""),
+                "focus_key": str(row.get("focus_key") or ""),
+                "status": str(row.get("status") or ""),
+                "text": _text(row)[:160],
+            }
+            for row in work_matches
+        ],
     }
 
 
