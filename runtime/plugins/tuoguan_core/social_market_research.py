@@ -271,6 +271,8 @@ def _opencli_preflight(platform: str, *, runner: Any | None = None) -> dict[str,
 
 def _call_opencli(platform: str, command: str, query: str, *, limit: int, runner: Any | None = None) -> dict[str, Any]:
     args = [platform, command, query, "-f", "json", "--window", "background", "--site-session", "persistent"]
+    if command == "search":
+        args.extend(["--limit", str(max(1, min(int(limit or 5), 20)))])
     return _run_opencli(args, runner=runner)
 
 

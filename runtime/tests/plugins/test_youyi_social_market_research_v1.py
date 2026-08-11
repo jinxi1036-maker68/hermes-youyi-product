@@ -89,6 +89,7 @@ def test_social_market_success_persists_source_candidates(tmp_path):
         store=store,
         query="项城 托管机构 招生",
         dry_run=False,
+        limit=1,
         runner=runner,
         now=datetime(2026, 8, 10, 10, 0, tzinfo=timezone.utc),
     )
@@ -96,6 +97,8 @@ def test_social_market_success_persists_source_candidates(tmp_path):
     assert result["ok"] is True
     assert result["candidate_count"] == 1
     assert any(command[1:3] == ["xiaohongshu", "search"] for command in calls)
+    search_command = next(command for command in calls if command[1:3] == ["xiaohongshu", "search"])
+    assert search_command[-2:] == ["--limit", "1"]
     rows = [json.loads(line) for line in (tmp_path / "social_market_research_candidates.jsonl").read_text(encoding="utf-8").splitlines()]
     assert rows[0]["platform"] == "xiaohongshu"
     assert rows[0]["status"] == "pending_review"
