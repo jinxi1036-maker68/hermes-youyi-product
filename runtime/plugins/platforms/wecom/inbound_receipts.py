@@ -165,3 +165,23 @@ class WecomInboundReceiptStore:
                 "SELECT status, COUNT(*) AS count FROM inbound_receipts GROUP BY status"
             ).fetchall()
         return {str(row["status"]): int(row["count"]) for row in rows}
+
+    def health_snapshot(self, *, since: float = 0.0) -> dict[str, Any]:
+        with self._connect() as connection:
+            row = connection.execute(
+                """
+                SELECT COUNT(*) AS total,
+                       SUM(CASE WHEN attempt_count > 1 THEN 1 ELSE 0 END) AS retried,
+                       SUM(CASE WHEN status = 'failed' THEN 1 ELSE 0 END) AS failed,
+                       SUM(CASE WHEN status = 'claimed' THEN 1 ELSE 0 END) AS claimed
+                FROM inbound_receipts
+                WHERE claimed_at >= ?
+                """,
+                (float(since or 0.0),),
+            ).fetchone()
+        return {
+            "total_count": int(row["total"] or 0),
+            "duplicate_or_retry_count": int(row["retried"] or 0),
+            "failed_count": int(row["failed"] or 0),
+            "claimed_count": int(row["claimed"] or 0),
+        }

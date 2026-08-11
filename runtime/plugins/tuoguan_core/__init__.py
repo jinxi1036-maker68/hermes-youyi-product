@@ -441,6 +441,20 @@ def _public_identity_context(store: TuoguanStore) -> str:
     return ""
 
 
+def _xiaoyou_core_skill_context(*, identity: Any) -> str:
+    role = str(getattr(identity, "role", "staff") or "staff")
+    user_id = str(getattr(identity, "canonical_user_id", "") or "")
+    return (
+        "【已加载 Skill：xiaoyou-core】小优是托管机构数字员工；员工手册提供身份、业务常识、岗位责任和判断框架，"
+        "模型负责理解、判断和行动选择，系统只守身份、权限、证据、幂等、频率、审计、真实执行、写后反查和外发边界。"
+        f"本轮服务对象仅为 user_id={user_id}、role={role}；只可注入此人的角色、个人工作方式、当前任务和必要机构事实，"
+        "不得混入老板或其他员工的个人档案。先查当前上下文、可信业务工具、人员目录、历史证据及必要只读公开资料，再说查不到。"
+        "没有真实工具调用不能说查过，没有写后反查不能说已保存，没有发送回执不能说已发送。"
+        "专项问题按需参考 youyi-digital-employee、youyi-tuoguan-business、active-information-acquisition、goal-management、"
+        "memory-evidence-learning、institution-onboarding、student-service-relations；它们不是固定 Router。"
+    )
+
+
 def _workstyle_context(store: TuoguanStore, *, identity: Any, raw_text: str) -> str:
     try:
         from .workstyle_profiles import workstyle_context_for_user
@@ -1351,6 +1365,8 @@ def _on_pre_llm_call(**kwargs: Any) -> dict[str, str] | None:
     except Exception:
         logger.exception("tuoguan_core failed to establish model-led runtime context")
     context_parts: list[str] = []
+    if "identity" in locals():
+        context_parts.append(_xiaoyou_core_skill_context(identity=identity))
     try:
         if "identity" in locals():
             _record_owner_inbound_fact(

@@ -135,7 +135,7 @@ def test_evening_employee_loop_defers_owner_attention(tmp_path):
 
 
 def test_autonomous_policy_is_not_blanket_ban_on_asking(tmp_path):
-    from plugins.tuoguan_core.autonomous_employee_loop import build_employee_loop_materials, _SYSTEM_PROMPT
+    from plugins.tuoguan_core.autonomous_employee_loop import build_employee_loop_materials, _ACTIONS_PROMPT, _DIAGNOSIS_PROMPT
     from plugins.tuoguan_core.models import UserIdentity
 
     store = _seed_store(tmp_path)
@@ -143,12 +143,12 @@ def test_autonomous_policy_is_not_blanket_ban_on_asking(tmp_path):
     materials = build_employee_loop_materials(store, identity=identity, timestamp=datetime(2026, 7, 28, 20, 0, tzinfo=timezone(timedelta(hours=8))))
 
     assert materials["owner_attention_policy"]["not_a_blanket_ban"]
-    assert "cannot proactively ask" in _SYSTEM_PROMPT
-    assert "Hermes may ask the current conversation participant" in _SYSTEM_PROMPT
+    assert "事实归属人" in _DIAGNOSIS_PROMPT
+    assert "老板关注问题" in _ACTIONS_PROMPT
 
 
 def test_autonomous_materials_use_confirmed_public_employee_name(tmp_path):
-    from plugins.tuoguan_core.autonomous_employee_loop import build_employee_loop_materials, _SYSTEM_PROMPT
+    from plugins.tuoguan_core.autonomous_employee_loop import build_employee_loop_materials, _DIAGNOSIS_PROMPT
     from plugins.tuoguan_core.models import UserIdentity
 
     store = _seed_store(tmp_path)
@@ -177,7 +177,7 @@ def test_autonomous_materials_use_confirmed_public_employee_name(tmp_path):
     assert materials["public_identity"]["public_name"] == "小优"
     assert materials["public_identity"]["internal_name"] == "Hermes"
     assert "Xiaoyou" in materials["identity"]
-    assert "public-facing digital employee" in _SYSTEM_PROMPT
+    assert "数字员工小优" in _DIAGNOSIS_PROMPT
 
 
 def test_proactive_work_radar_uses_handbook_employee_map(tmp_path):
@@ -214,7 +214,7 @@ def test_proactive_work_radar_uses_handbook_employee_map(tmp_path):
 
 
 def test_autonomous_materials_include_proactive_work_radar(tmp_path):
-    from plugins.tuoguan_core.autonomous_employee_loop import build_employee_loop_materials, _model_payload, _SYSTEM_PROMPT
+    from plugins.tuoguan_core.autonomous_employee_loop import build_employee_loop_materials, _model_payload, _DIAGNOSIS_PROMPT
     from plugins.tuoguan_core.models import UserIdentity
 
     store = _seed_store(tmp_path)
@@ -226,7 +226,7 @@ def test_autonomous_materials_include_proactive_work_radar(tmp_path):
     assert materials["materials_summary"]["proactive_radar_question_candidate_count"] >= 1
     assert payload["proactive_work_radar"]["model_decides_next_action"] is True
     assert "teacher_work_habits" in json.dumps(payload["proactive_work_radar"], ensure_ascii=False)
-    assert "proactive_work_radar is the handbook-based employee map" in _SYSTEM_PROMPT
+    assert "事实诊断" in _DIAGNOSIS_PROMPT
 
 
 def test_proactive_work_radar_tool_is_registered():

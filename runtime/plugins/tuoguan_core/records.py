@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import uuid
+from copy import deepcopy
 from datetime import datetime, timedelta
 from typing import Any
 
@@ -448,26 +449,37 @@ def save_analysis(
         return {"record": records[-1], "task": None, "created": False}
 
     draft = build_task_draft(analysis, assignee_userid)
-    tasks = store.load_tasks()
-    for task in tasks:
-        if (
-            task.get("status") not in {"completed", "cancelled", "closed", "done", "closed_by_admin", "completed_by_admin"}
-            and task.get("student_name") == draft["student_name"]
-            and task.get("type") == draft["type"]
-        ):
-            source = str(draft.get("source_text") or "")
-            previous = str(task.get("evidence_summary") or "")
-            task["evidence_summary"] = f"{previous}\n{source}".strip()
-            task["duplicate_record_count"] = int(task.get("duplicate_record_count") or 0) + 1
-            task["updated_at"] = datetime.now().isoformat(timespec="seconds")
-            store.save_tasks(tasks)
-            _refresh_dashboard_cache_best_effort(store)
-            return {"record": records[-1], "task": task, "created": False}
+    persisted_task: dict[str, Any] = {}
+    created = False
 
-    tasks.append(draft)
-    store.save_tasks(tasks)
+    def upsert_record_task(tasks: list[dict[str, Any]]) -> None:
+        nonlocal persisted_task, created
+        existing = next(
+            (
+                task for task in tasks
+                if task.get("status") not in {"completed", "cancelled", "closed", "done", "closed_by_admin", "completed_by_admin"}
+                and task.get("student_name") == draft["student_name"]
+                and task.get("type") == draft["type"]
+            ),
+            None,
+        )
+        if existing is not None:
+            source = str(draft.get("source_text") or "")
+            previous = str(existing.get("evidence_summary") or "")
+            evidence_lines = [line for line in previous.splitlines() if line.strip()]
+            if source and source not in evidence_lines:
+                existing["evidence_summary"] = "\n".join([*evidence_lines, source]).strip()
+            existing["duplicate_record_count"] = int(existing.get("duplicate_record_count") or 0) + 1
+            existing["updated_at"] = datetime.now().isoformat(timespec="seconds")
+            persisted_task = deepcopy(existing)
+            return
+        tasks.append(deepcopy(draft))
+        persisted_task = deepcopy(draft)
+        created = True
+
+    store.update_tasks(upsert_record_task)
     _refresh_dashboard_cache_best_effort(store)
-    return {"record": records[-1], "task": draft, "created": True}
+    return {"record": records[-1], "task": persisted_task, "created": created}
 
 
 def remove_record_by_id(

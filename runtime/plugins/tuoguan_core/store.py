@@ -175,3 +175,94 @@ class TuoguanStore:
             raise TuoguanStoreError("tasks.json must be a list or contain a tasks list")
 
         self.update_json("tasks.json", [], replace)
+
+    def update_tasks(self, updater: Callable[[list[dict[str, Any]]], Any]) -> list[dict[str, Any]]:
+        """Atomically mutate the task list while preserving its legacy container shape."""
+
+        def mutate(existing: Any) -> Any:
+            if isinstance(existing, dict) and isinstance(existing.get("tasks"), list):
+                container = deepcopy(existing)
+                tasks = deepcopy(existing["tasks"])
+                updated = updater(tasks)
+                container["tasks"] = tasks if updated is None else updated
+                return container
+            if isinstance(existing, list):
+                tasks = deepcopy(existing)
+                updated = updater(tasks)
+                return tasks if updated is None else updated
+            raise TuoguanStoreError("tasks.json must be a list or contain a tasks list")
+
+        container = self.update_json("tasks.json", [], mutate)
+        if isinstance(container, dict):
+            return deepcopy(container.get("tasks") or [])
+        return deepcopy(container)
+
+    def update_task(
+        self,
+        task_id: str,
+        updater: Callable[[dict[str, Any]], Any],
+    ) -> dict[str, Any] | None:
+        """Atomically update one task and return the persisted task."""
+
+        wanted = str(task_id or "").strip()
+        if not wanted:
+            raise TuoguanStoreError("task_id is required")
+        persisted: dict[str, Any] | None = None
+
+        def mutate(tasks: list[dict[str, Any]]) -> None:
+            nonlocal persisted
+            for index, task in enumerate(tasks):
+                if not isinstance(task, dict) or str(task.get("id") or "") != wanted:
+                    continue
+                working = deepcopy(task)
+                updated = updater(working)
+                tasks[index] = working if updated is None else updated
+                persisted = deepcopy(tasks[index])
+                return
+
+        self.update_tasks(mutate)
+        if persisted is None:
+            return None
+        reread = next(
+            (task for task in self.load_tasks() if str(task.get("id") or "") == wanted),
+            None,
+        )
+        return deepcopy(reread) if isinstance(reread, dict) else None
+
+    def append_jsonl_verified(self, name: str, row: dict[str, Any]) -> bool:
+        """Append one JSONL row under a process lock and verify it from disk."""
+
+        from .write_guard import assert_business_write_allowed
+
+        if not isinstance(row, dict):
+            raise TuoguanStoreError("JSONL row must be an object")
+        path = self.path_for(name)
+        serialized = json.dumps(row, ensure_ascii=False, separators=(",", ":"))
+        with self._lock:
+            try:
+                assert_business_write_allowed(self.data_dir, name)
+                with self._process_write_lock(path):
+                    path.parent.mkdir(parents=True, exist_ok=True)
+                    preserved_owner = _owner_for_root_write(path)
+                    with path.open("a", encoding="utf-8", newline="\n") as handle:
+                        handle.write(serialized + "\n")
+                        handle.flush()
+                        os.fsync(handle.fileno())
+                    if preserved_owner is not None:
+                        os.chown(path, *preserved_owner)
+                    verified = False
+                    for line in path.read_text(encoding="utf-8-sig").splitlines()[-200:]:
+                        if not line.strip():
+                            continue
+                        try:
+                            candidate = json.loads(line)
+                        except json.JSONDecodeError:
+                            continue
+                        if candidate == row:
+                            verified = True
+                            break
+                    if not verified:
+                        raise TuoguanStoreError(f"JSONL writeback verification failed: {name}")
+                    return True
+            except (OSError, TypeError, ValueError, PermissionError) as exc:
+                raise TuoguanStoreError(f"Unable to append {name}: {exc}") from exc

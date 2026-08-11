@@ -1533,48 +1533,70 @@ class TuoguanToolService:
                     already_applied=True,
                 )
 
-            result = cancel_task_state(
-                target,
-                self.identity.canonical_user_id,
-                self.identity.role,
-                reason_text,
-                now=datetime.now().astimezone(),
-            )
-            if result.action == "forbidden":
-                return self._error("permission_denied", result.reply)
-            events = target.get("closure_events")
-            if not isinstance(events, list):
-                events = []
-            events.append(
-                {
-                    "action": "cancelled",
-                    "actor_userid": self.identity.canonical_user_id,
-                    "actor_role": self.identity.role,
-                    "text": reason_text,
-                    "at": str(target.get("cancelled_at") or datetime.now().astimezone().isoformat(timespec="seconds")),
-                }
-            )
-            target["closure_events"] = events[-50:]
-            self.store.save_tasks(tasks)
+            result_holder: dict[str, Any] = {}
+
+            def cancel_current(current: dict[str, Any]) -> None:
+                if str(current.get("status") or "") in _CLOSED_STATUSES:
+                    result_holder["action"] = "already_closed"
+                    result_holder["reply"] = "这个任务已经是关闭状态，不需要重复取消。"
+                    return
+                current_result = cancel_task_state(
+                    current,
+                    self.identity.canonical_user_id,
+                    self.identity.role,
+                    reason_text,
+                    now=datetime.now().astimezone(),
+                )
+                result_holder["action"] = current_result.action
+                result_holder["reply"] = current_result.reply
+                if current_result.action == "forbidden":
+                    return
+                events = current.get("closure_events")
+                if not isinstance(events, list):
+                    events = []
+                events.append(
+                    {
+                        "action": "cancelled",
+                        "actor_userid": self.identity.canonical_user_id,
+                        "actor_role": self.identity.role,
+                        "text": reason_text,
+                        "at": str(current.get("cancelled_at") or datetime.now().astimezone().isoformat(timespec="seconds")),
+                    }
+                )
+                current["closure_events"] = events[-50:]
+
+            persisted = self.store.update_task(target_id, cancel_current)
+            if result_holder.get("action") == "forbidden":
+                return self._error("permission_denied", str(result_holder.get("reply") or "当前账号无权取消该任务。"))
+            if persisted is None:
+                return self._error("task_not_found", "任务在更新前已不存在，请重新查询。")
             suppressed = self._suppress_pending_notifications_for_task(target_id, reason="task_cancelled")
             cleared = self._clear_task_context_for_task(target_id)
-            persisted = next(
-                (item for item in self.store.load_tasks() if str(item.get("id") or "") == target_id),
-                None,
+            result_action = str(result_holder.get("action") or "cancelled")
+            persisted_status = str(persisted.get("status") or "") if isinstance(persisted, dict) else ""
+            verified = bool(
+                isinstance(persisted, dict)
+                and (
+                    persisted_status == "cancelled"
+                    or (result_action == "already_closed" and persisted_status in _CLOSED_STATUSES)
+                )
             )
-            verified = isinstance(persisted, dict) and str(persisted.get("status") or "") == "cancelled"
             return self._ok(
                 "cancel_task",
                 data={
                     "task_id": target_id,
                     "task": deepcopy(persisted or target),
-                    "result_action": result.action,
+                    "result_action": result_action,
                     "suppressed_notification_count": suppressed,
                     "cleared_context": cleared,
                     "writeback_verified": verified,
                     "idempotency_verified": True,
                 },
-                message="任务已取消，后续提醒已收口。" if verified else "任务取消已尝试，但写后反查没有通过。",
+                message=(
+                    "这个任务已经是关闭状态，相关提醒已收口。"
+                    if verified and result_action == "already_closed"
+                    else ("任务已取消，后续提醒已收口。" if verified else "任务取消已尝试，但写后反查没有通过。")
+                ),
             )
 
         return self._operation(operation_id, "cancel_task", execute)
@@ -2013,65 +2035,66 @@ class TuoguanToolService:
                     message="这个任务已经是完成状态，不需要重复处理。",
                     already_applied=True,
                 )
-            actor = (
-                str(target.get("assignee_userid") or "")
-                if self.identity.role in {"manager", "boss"}
-                else self.identity.canonical_user_id
-            )
-            # The current inbound user text is authoritative; model-generated
-            # elaboration must never become safety or closure evidence.
-            if was_closed and ordinary_feedback and not is_safety and not completion_intent:
-                previous = str(target.get("evidence_summary") or "").strip()
-                evidence_lines = [line.strip() for line in previous.splitlines() if line.strip()]
-                if evidence_text not in evidence_lines:
-                    target["evidence_summary"] = "\n".join([*evidence_lines, evidence_text]).strip()
-                stamp = datetime.now().isoformat(timespec="seconds")
-                target["updated_at"] = stamp
-                events = target.get("closure_events")
-                if not isinstance(events, list):
-                    events = []
-                events.append(
-                    {
-                        "action": "fact_added_after_completion",
-                        "actor_userid": actor,
-                        "text": evidence_text,
-                        "at": stamp,
-                    }
+            update_result: dict[str, Any] = {}
+
+            def update_current(current: dict[str, Any]) -> None:
+                current_is_safety = str(current.get("type") or "") == "safety_incident" or str(current.get("level") or "") == "S"
+                current_was_closed = str(current.get("status") or "") in _CLOSED_STATUSES
+                actor = (
+                    str(current.get("assignee_userid") or "")
+                    if self.identity.role in {"manager", "boss"}
+                    else self.identity.canonical_user_id
                 )
-                target["closure_events"] = events[-50:]
-                result_action = "fact_added_after_completion"
-                result_reply = "已把这次回访情况补充到原任务记录中，任务仍保持已完成。"
-            else:
-                result = apply_task_reply([target], actor, evidence_text)
-                result_action = result.action
-                result_reply = result.reply
-            auto_parent_complete = bool(
-                not is_safety
-                and (str(target.get("type") or "") in {"parent_anxiety", "parent_complaint", "renewal_risk"} or "家长沟通" in str(target.get("title") or ""))
-                and "沟通" in compact_evidence
-                and any(word in compact_evidence for word in ("家长", "妈妈", "爸爸"))
-                and any(word in compact_evidence for word in ("知道", "表示", "说", "反馈", "关注", "考虑", "同意", "认可"))
-                and any(word in compact_evidence for word in ("后期", "后续", "继续", "再", "关注", "跟进", "观察"))
-            )
-            if auto_parent_complete:
-                fields = target.get("closure_fields") if isinstance(target.get("closure_fields"), dict) else {}
-                fields.update({"parent_informed": evidence_text, "parent_attitude": evidence_text, "followup_plan": evidence_text})
-                target["closure_fields"] = fields
-                completion_intent = True
-                result_action = "completed"
-                result_reply = "家长沟通结果和后续安排已记录，任务已完成。"
-            current_missing = [] if auto_parent_complete else closure_missing_fields(target, str(target.get("evidence_summary") or evidence_text))
-            if completion_intent and not is_safety and not current_missing:
-                stamp = datetime.now().isoformat(timespec="seconds")
-                target["status"] = "completed"
-                target["completed_at"] = stamp
-                target["updated_at"] = stamp
-                target["closure_summary"] = evidence_text
-            self.store.save_tasks(tasks)
-            persisted = next(
-                (item for item in self.store.load_tasks() if str(item.get("id") or "") == str(target.get("id") or "")),
-                None,
-            )
+                completion_requested = completion_intent
+                if current_was_closed and ordinary_feedback and not current_is_safety and not completion_requested:
+                    previous = str(current.get("evidence_summary") or "").strip()
+                    evidence_lines = [line.strip() for line in previous.splitlines() if line.strip()]
+                    if evidence_text not in evidence_lines:
+                        current["evidence_summary"] = "\n".join([*evidence_lines, evidence_text]).strip()
+                    stamp = datetime.now().isoformat(timespec="seconds")
+                    current["updated_at"] = stamp
+                    events = current.get("closure_events")
+                    if not isinstance(events, list):
+                        events = []
+                    events.append({"action": "fact_added_after_completion", "actor_userid": actor, "text": evidence_text, "at": stamp})
+                    current["closure_events"] = events[-50:]
+                    result_action = "fact_added_after_completion"
+                    result_reply = "已把这次回访情况补充到原任务记录中，任务仍保持已完成。"
+                else:
+                    current_result = apply_task_reply([current], actor, evidence_text)
+                    result_action = current_result.action
+                    result_reply = current_result.reply
+                auto_parent_complete = bool(
+                    not current_is_safety
+                    and (str(current.get("type") or "") in {"parent_anxiety", "parent_complaint", "renewal_risk"} or "家长沟通" in str(current.get("title") or ""))
+                    and "沟通" in compact_evidence
+                    and any(word in compact_evidence for word in ("家长", "妈妈", "爸爸"))
+                    and any(word in compact_evidence for word in ("知道", "表示", "说", "反馈", "关注", "考虑", "同意", "认可"))
+                    and any(word in compact_evidence for word in ("后期", "后续", "继续", "再", "关注", "跟进", "观察"))
+                )
+                if auto_parent_complete:
+                    fields = current.get("closure_fields") if isinstance(current.get("closure_fields"), dict) else {}
+                    fields.update({"parent_informed": evidence_text, "parent_attitude": evidence_text, "followup_plan": evidence_text})
+                    current["closure_fields"] = fields
+                    completion_requested = True
+                    result_action = "completed"
+                    result_reply = "家长沟通结果和后续安排已记录，任务已完成。"
+                current_missing = [] if auto_parent_complete else closure_missing_fields(current, str(current.get("evidence_summary") or evidence_text))
+                if completion_requested and not current_is_safety and not current_missing:
+                    stamp = datetime.now().isoformat(timespec="seconds")
+                    current["status"] = "completed"
+                    current["completed_at"] = stamp
+                    current["updated_at"] = stamp
+                    current["closure_summary"] = evidence_text
+                update_result.update({"action": result_action, "reply": result_reply, "missing": current_missing})
+
+            persisted = self.store.update_task(str(target.get("id") or ""), update_current)
+            if persisted is None:
+                return self._error("task_not_found", "任务在更新前已不存在，请重新查询。")
+            target = persisted
+            result_action = str(update_result.get("action") or "fact_added")
+            result_reply = str(update_result.get("reply") or "已更新任务。")
+            current_missing = update_result.get("missing") if isinstance(update_result.get("missing"), list) else []
             task_verified = isinstance(persisted, dict) and str(persisted.get("updated_at") or persisted.get("completed_at") or persisted.get("evidence_summary") or "") != ""
             final_message = result_reply
             if task_verified and str(target.get("status") or "") in _CLOSED_STATUSES:

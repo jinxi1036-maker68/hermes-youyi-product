@@ -1,0 +1,15 @@
+name: xiaoyou-core
+description: 小优数字员工核心手册组合
+skills:
+  - xiaoyou-core-contract
+  - youyi-digital-employee
+  - youyi-tuoguan-business
+  - active-information-acquisition
+  - goal-management
+  - memory-evidence-learning
+  - institution-onboarding
+  - student-service-relations
+instruction: |
+  先确定当前服务对象和可信事实，再由模型判断该理解、查询、追问、行动、等待或停止。
+  只注入当前人的个人工作方式和任务上下文。手册是判断材料，不得变成固定 Router。
+  真实数据、写入和外发必须经过权限、幂等、审计、写后反查和回执边界。

@@ -122,13 +122,7 @@ def _new_id(prefix: str) -> str:
 
 
 def _append_jsonl(store: TuoguanStore, filename: str, row: dict[str, Any]) -> None:
-    from .write_guard import assert_business_write_allowed
-
-    assert_business_write_allowed(store.data_dir, filename)
-    path = store.path_for(filename)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    with path.open("a", encoding="utf-8") as handle:
-        handle.write(json.dumps(row, ensure_ascii=False, separators=(",", ":")) + "\n")
+    store.append_jsonl_verified(filename, row)
 
 
 def _read_jsonl(store: TuoguanStore, filename: str) -> list[dict[str, Any]]:
@@ -4885,6 +4879,7 @@ def query_xiaoyou_health(
     daily_reports = _xiaoyou_daily_report_health(outbox, daily_runs, since_ts)
     outbox_health = _xiaoyou_outbox_health(outbox, since_ts)
     autonomous_loop = _xiaoyou_autonomous_loop_health(store, since_ts)
+    runtime_learning = _xiaoyou_runtime_learning_health(store, since_ts)
     attention = query_attention_threads(store, identity=identity, include_closed=False, limit=limit)
     fact_gaps = query_fact_gap_candidates(store, identity=identity, limit=limit)
     staff_voice = (
@@ -4908,6 +4903,10 @@ def query_xiaoyou_health(
         issues.append(f"发现 {outbox_health['repeated_task_reminder_candidate_count']} 组任务提醒重复候选。")
     if autonomous_loop["failed_count_last_24h"]:
         issues.append(f"过去24小时自主员工循环失败 {autonomous_loop['failed_count_last_24h']} 次；最近失败阶段为 {autonomous_loop['latest_failure_stage'] or '未知'}。")
+    if runtime_learning["core_skill_missing_count"]:
+        issues.append(f"过去24小时有 {runtime_learning['core_skill_missing_count']} 个模型回合没有记录 xiaoyou-core 加载证据。")
+    if runtime_learning["inbound_receipts"].get("failed_count"):
+        issues.append(f"过去24小时有 {runtime_learning['inbound_receipts']['failed_count']} 条入站消息处理失败回执。")
     tool_failure_count = int(((evolution.get("health_signals") or {}).get("tool_failure_candidate_count") or 0)) if isinstance(evolution, dict) else 0
     if tool_failure_count:
         issues.append(f"有 {tool_failure_count} 条工具失败/能力缺口候选等待复盘。")
@@ -4958,7 +4957,9 @@ def query_xiaoyou_health(
             "pending_review_count": pending_review,
             "tool_failure_candidate_count": tool_failure_count,
             "recent_workstyle_preference_count": len(evolution.get("recent_workstyle_preferences") or []) if isinstance(evolution, dict) else 0,
+            "status_counts": deepcopy(runtime_learning.get("evolution_status_counts") or {}),
         },
+        "runtime_learning": runtime_learning,
         "issues": issues[:8],
         "actions_taken": [],
         "boundary": {
@@ -4999,6 +5000,50 @@ def _xiaoyou_autonomous_loop_health(store: TuoguanStore, since_ts: float) -> dic
         "latest_write_count": int(((latest.get("source_counts") or {}).get("employee_loop_write_count") or 0)) if isinstance(latest, dict) else 0,
         "latest_failure_stage": str(latest_failed.get("failure_stage") or ""),
         "latest_failure_message": str(latest_failed.get("failure_message") or "")[:300],
+    }
+
+
+def _xiaoyou_runtime_learning_health(store: TuoguanStore, since_ts: float) -> dict[str, Any]:
+    reply_rows = [
+        row for row in _read_jsonl(store, "reply_ledger.jsonl")
+        if _ts(row.get("completed_at") or row.get("created_at")) >= since_ts
+    ]
+    model_rows = [row for row in reply_rows if row.get("entered_model") is True]
+    core_loaded = [
+        row for row in model_rows
+        if "xiaoyou-core" in {str(value) for value in (row.get("used_manual_cards") or [])}
+    ]
+    workstyle_applied = [
+        row for row in reply_rows
+        if isinstance(row.get("workstyle_adaptation"), dict)
+        and (row.get("workstyle_adaptation") or {}).get("application_recorded") is True
+    ]
+    folded_evolution: dict[str, dict[str, Any]] = {}
+    for row in _read_jsonl(store, "self_evolution_events.jsonl"):
+        key = str(row.get("semantic_fingerprint") or row.get("evolution_event_id") or "")
+        if key:
+            folded_evolution[key] = row
+    status_counts: dict[str, int] = {}
+    for row in folded_evolution.values():
+        status = str(row.get("status") or "candidate")
+        status_counts[status] = status_counts.get(status, 0) + 1
+    receipt_health: dict[str, Any] = {"available": False, "total_count": 0, "duplicate_or_retry_count": 0, "failed_count": 0, "claimed_count": 0}
+    try:
+        from hermes_constants import get_hermes_home
+        from plugins.platforms.wecom.inbound_receipts import WecomInboundReceiptStore
+
+        receipt_path = get_hermes_home() / "state" / "wecom_callback_receipts.sqlite3"
+        if receipt_path.exists():
+            receipt_health = {"available": True, **WecomInboundReceiptStore(receipt_path).health_snapshot(since=since_ts)}
+    except Exception:
+        receipt_health["error"] = "receipt_health_unavailable"
+    return {
+        "model_turn_count_last_24h": len(model_rows),
+        "core_skill_loaded_count": len(core_loaded),
+        "core_skill_missing_count": max(0, len(model_rows) - len(core_loaded)),
+        "workstyle_application_count": len(workstyle_applied),
+        "evolution_status_counts": status_counts,
+        "inbound_receipts": receipt_health,
     }
 
 

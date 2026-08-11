@@ -124,13 +124,7 @@ def _read_events(store: TuoguanStore) -> list[dict[str, Any]]:
 
 
 def _append_event(store: TuoguanStore, row: dict[str, Any]) -> None:
-    from .write_guard import assert_business_write_allowed
-
-    assert_business_write_allowed(store.data_dir, WORKSTYLE_EVENTS_FILE)
-    path = store.path_for(WORKSTYLE_EVENTS_FILE)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    with path.open("a", encoding="utf-8") as handle:
-        handle.write(json.dumps(row, ensure_ascii=False, separators=(",", ":")) + "\n")
+    store.append_jsonl_verified(WORKSTYLE_EVENTS_FILE, row)
 
 
 def _normalize_preference_type(value: str) -> str:

@@ -631,8 +631,9 @@ def begin_inbound(*, store: TuoguanStore, message_id: str, conversation_id: str,
         "model_intent": intent,
         "model_confidence": None,
         "selected_capability_card": card,
-        # Only confirmed runtime cards are injected. Partial cards remain observable.
-        "used_manual_cards": [card] if card in _allowed_cards(store) else [],
+        # The compact core contract is always loaded. Specialized runtime cards
+        # are appended only when the model actually uses the matching capability.
+        "used_manual_cards": ["xiaoyou-core"],
         "used_tool_registry_entry": "",
         "requested_scope": "all" if intent == "query_all_tasks" else ("mine" if intent == "query_my_tasks" else None),
         "effective_scope": None,
@@ -1118,7 +1119,10 @@ def _reconcile_model_tool_selection(item: dict[str, Any], tool_name: str, args: 
         return False
     card = candidates[0]
     item["selected_capability_card"] = str(card.get("capability") or "")
-    item["used_manual_cards"] = [item["selected_capability_card"]]
+    item["used_manual_cards"] = list(dict.fromkeys([
+        *(str(value) for value in (item.get("used_manual_cards") or []) if str(value)),
+        item["selected_capability_card"],
+    ]))
     item["model_intent"] = str(card.get("intent") or item.get("model_intent") or "unclassified_message")
     item["capability_resolved_by"] = "model_tool_selection_validated_by_runtime_allowlist"
     return True
@@ -1360,6 +1364,34 @@ def ensure_outbound_reply_recorded(
         )
     except Exception:
         item["workstyle_adaptation"] = {"ok": False, "error": "workstyle_observer_failed"}
+    try:
+        from .models import UserIdentity
+        from .self_evolution import SELF_EVOLUTION_EVENTS_FILE, record_self_evolution_application
+        from .write_guard import authorized_system_write
+
+        evolution_identity = UserIdentity(
+            platform="wecom_callback",
+            platform_user_id=str(user_id or ""),
+            canonical_user_id=str(user_id or ""),
+            person_name=str(user_id or ""),
+            role=str(role or "staff"),
+            approval_state="approved",
+        )
+        with authorized_system_write(
+            store.data_dir,
+            job_name="self_evolution_application_observer",
+            allowed_files={SELF_EVOLUTION_EVENTS_FILE},
+        ):
+            item["self_evolution_application"] = record_self_evolution_application(
+                store,
+                identity=evolution_identity,
+                source_message_id=message_id,
+                final_reply=str(final_reply or ""),
+                tool_write_verified=_tool_results_have_verified_write(item.get("tool_results") or []),
+                limit=3,
+            )
+    except Exception:
+        item["self_evolution_application"] = {"ok": False, "error": "self_evolution_application_observer_failed"}
     audit_id = _audit(store, item, "reply_completed", "success")
     item["audit_event_ids"] = [audit_id]
     _append_jsonl(store, "reply_ledger.jsonl", item)

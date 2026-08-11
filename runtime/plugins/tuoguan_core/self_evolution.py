@@ -117,6 +117,8 @@ ALLOWED_STATUSES = {
     "needs_confirmation",
     "rejected",
     "superseded",
+    "verified",
+    "failed",
 }
 
 
@@ -177,13 +179,7 @@ def _read_jsonl(store: TuoguanStore, filename: str) -> list[dict[str, Any]]:
 
 
 def _append_jsonl(store: TuoguanStore, filename: str, row: dict[str, Any]) -> None:
-    from .write_guard import assert_business_write_allowed
-
-    assert_business_write_allowed(store.data_dir, filename)
-    path = store.path_for(filename)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    with path.open("a", encoding="utf-8") as handle:
-        handle.write(json.dumps(row, ensure_ascii=False, separators=(",", ":")) + "\n")
+    store.append_jsonl_verified(filename, row)
 
 
 def normalize_evolution_candidate(raw: dict[str, Any]) -> dict[str, Any]:
@@ -312,13 +308,28 @@ def submit_self_evolution_event(
         if str(existing.get("tenant_id") or "") not in {"", current_tenant_id()}:
             continue
         if str(existing.get("semantic_fingerprint") or "") == fingerprint:
+            merged = deepcopy(existing)
+            merged["occurrence_count"] = int(existing.get("occurrence_count") or 1) + 1
+            merged["updated_at"] = now_iso()
+            merged["evidence"] = _list_any([*(existing.get("evidence") or []), *candidate["evidence"]], 8)
+            if str(existing.get("status") or "") not in {"verified", "applied"}:
+                merged["status"] = candidate["status"]
+            merged["source"] = {
+                "actor_user_id": identity.canonical_user_id,
+                "actor_name": identity.person_name,
+                "actor_role": identity.role,
+                "operation_id": str(operation_id or ""),
+                "source_message_id": str(source_message_id or ""),
+                "cadence_mode": str(cadence_mode or ""),
+            }
+            _append_jsonl(store, SELF_EVOLUTION_EVENTS_FILE, merged)
             return {
                 "ok": True,
-                "self_evolution_event": existing,
+                "self_evolution_event": merged,
                 "writeback_verified": True,
-                "state_changed": False,
-                "idempotent_replay": True,
-                "rendered_text": "这条自我进化候选已经记录，本轮未重复追加。",
+                "state_changed": True,
+                "deduplicated_update": True,
+                "rendered_text": "这条自我进化问题已经存在，本轮已合并证据并更新出现次数。",
             }
     row = {
         "record_type": "self_evolution_event",
@@ -346,6 +357,7 @@ def submit_self_evolution_event(
             "cadence_mode": str(cadence_mode or ""),
         },
         "semantic_fingerprint": fingerprint,
+        "occurrence_count": 1,
         "created_at": now_iso(),
         "auto_effects": _safe_auto_effects(candidate["risk_level"]),
     }
@@ -406,14 +418,21 @@ def build_self_evolution_brief(
     identity: UserIdentity,
     limit: int = 12,
 ) -> dict[str, Any]:
-    ledger = query_self_evolution_ledger(store, identity=identity, limit=max(limit, 20))
-    events = ledger.get("events") if ledger.get("ok") else []
-    events = events if isinstance(events, list) else []
-    recent_workstyles = _recent_workstyle_preferences(store, limit=6)
+    if identity.role in {"boss", "manager"} or identity.platform == "system":
+        ledger = query_self_evolution_ledger(store, identity=identity, limit=max(limit, 20))
+        events = ledger.get("events") if ledger.get("ok") else []
+        events = events if isinstance(events, list) else []
+    else:
+        events = [item for item in _filtered_events(store) if _applies_to_identity(item, identity)][-max(limit, 20):]
+        ledger = {"health_signals": _health_signals(events)}
+    recent_workstyles = _recent_workstyle_preferences(store, identity=identity, limit=6)
+    applicable_events = [
+        item for item in events
+        if _is_next_context_candidate(item) and _applies_to_identity(item, identity)
+    ][-max(1, min(limit, 12)):]
     applicable = [
         _evolution_context_line(item)
-        for item in events
-        if _is_next_context_candidate(item)
+        for item in applicable_events
     ]
     applicable = [line for line in applicable if line][-max(1, min(limit, 12)):]
     review_queue = [
@@ -427,6 +446,7 @@ def build_self_evolution_brief(
         "event_count": len(events),
         "recent_events": deepcopy(events[-max(1, min(limit, 20)):]),
         "next_day_context": applicable,
+        "next_day_application_ids": [str(item.get("evolution_event_id") or "") for item in applicable_events],
         "review_queue": deepcopy(review_queue),
         "review_queue_count": len(review_queue),
         "recent_workstyle_preferences": recent_workstyles,
@@ -460,19 +480,102 @@ def conversation_evolution_context_for_user(
 
 
 def _filtered_events(store: TuoguanStore, *, candidate_type: str = "", status: str = "") -> list[dict[str, Any]]:
-    rows: list[dict[str, Any]] = []
+    folded: dict[str, dict[str, Any]] = {}
     for row in _read_jsonl(store, SELF_EVOLUTION_EVENTS_FILE):
         if str(row.get("record_type") or "") != "self_evolution_event":
             continue
         if str(row.get("tenant_id") or "") not in {"", current_tenant_id()}:
             continue
-        if candidate_type and str(row.get("candidate_type") or "") != candidate_type:
-            continue
-        if status and str(row.get("status") or "") != status:
-            continue
-        rows.append(deepcopy(row))
-    rows.sort(key=lambda item: str(item.get("created_at") or ""))
+        key = str(row.get("semantic_fingerprint") or row.get("evolution_event_id") or "")
+        if key:
+            folded[key] = deepcopy(row)
+    rows = [row for row in folded.values() if not candidate_type or str(row.get("candidate_type") or "") == candidate_type]
+    rows = [row for row in rows if not status or str(row.get("status") or "") == status]
+    rows.sort(key=lambda item: str(item.get("updated_at") or item.get("created_at") or ""))
     return rows
+
+
+def _applies_to_identity(item: dict[str, Any], identity: UserIdentity) -> bool:
+    target_user = str(item.get("applies_to_user_id") or "").strip()
+    target_role = str(item.get("applies_to_role") or "").strip()
+    if target_user and target_user not in {identity.canonical_user_id, identity.platform_user_id}:
+        return False
+    if target_role and target_role != identity.role:
+        return False
+    if not target_user and not target_role:
+        text = "".join(str(item.get(key) or "") for key in ("summary", "proposed_effect", "next_effect"))
+        if any(term in text for term in ("李老师", "CeShi")):
+            return identity.canonical_user_id == "CeShi" or identity.platform_user_id == "CeShi"
+        if any(term in text for term in ("老板", "金总", "老板日报")):
+            return identity.role == "boss"
+        if "店长" in text:
+            return identity.role == "manager"
+        if "老师" in text:
+            return identity.role == "teacher"
+    return True
+
+
+def record_self_evolution_application(
+    store: TuoguanStore,
+    *,
+    identity: UserIdentity,
+    source_message_id: str,
+    final_reply: str,
+    tool_write_verified: bool = False,
+    limit: int = 3,
+) -> dict[str, Any]:
+    """Record that ready experience was actually carried into a real reply."""
+
+    candidates = [
+        item for item in _filtered_events(store)
+        if str(item.get("risk_level") or "") == "low"
+        and str(item.get("status") or "") == "ready_for_application"
+        and _applies_to_identity(item, identity)
+    ][-max(1, min(int(limit or 3), 3)):]
+    applied: list[dict[str, Any]] = []
+    for candidate in candidates:
+        row = deepcopy(candidate)
+        row["status"] = "applied"
+        row["updated_at"] = now_iso()
+        row["application_evidence"] = {
+            "source_message_id": str(source_message_id or ""),
+            "target_user_id": identity.canonical_user_id,
+            "target_role": identity.role,
+            "reply_excerpt": _limit_text(final_reply, 300),
+            "tool_write_verified": bool(tool_write_verified),
+        }
+        _append_jsonl(store, SELF_EVOLUTION_EVENTS_FILE, row)
+        applied.append(row)
+    return {
+        "ok": True,
+        "applied_count": len(applied),
+        "applied_event_ids": [str(item.get("evolution_event_id") or "") for item in applied],
+        "state_changed": bool(applied),
+        "writeback_verified": bool(applied),
+    }
+
+
+def verify_self_evolution_application(
+    store: TuoguanStore,
+    *,
+    evolution_event_id: str,
+    succeeded: bool,
+    evidence: str,
+) -> dict[str, Any]:
+    """Close one applied experience only when a later check has real evidence."""
+
+    target = next(
+        (item for item in reversed(_filtered_events(store)) if str(item.get("evolution_event_id") or "") == str(evolution_event_id or "")),
+        None,
+    )
+    if target is None:
+        return {"ok": False, "error": "evolution_event_not_found", "writeback_verified": False}
+    row = deepcopy(target)
+    row["status"] = "verified" if succeeded else "failed"
+    row["updated_at"] = now_iso()
+    row["verification_evidence"] = _limit_text(evidence, 700)
+    _append_jsonl(store, SELF_EVOLUTION_EVENTS_FILE, row)
+    return {"ok": True, "self_evolution_event": row, "writeback_verified": True}
 
 
 def _normalize_status(value: Any, *, candidate_type: str, risk_level: str, writeback_verified: bool) -> str:
@@ -548,13 +651,14 @@ def _boundary() -> dict[str, bool]:
     }
 
 
-def _recent_workstyle_preferences(store: TuoguanStore, *, limit: int = 6) -> list[dict[str, Any]]:
+def _recent_workstyle_preferences(store: TuoguanStore, *, identity: UserIdentity, limit: int = 6) -> list[dict[str, Any]]:
     rows = [
         deepcopy(row)
         for row in _read_jsonl(store, WORKSTYLE_EVENTS_FILE)
         if str(row.get("record_type") or "") == "person_workstyle_preference"
         and str(row.get("status") or "active") == "active"
         and str(row.get("tenant_id") or "") in {"", current_tenant_id()}
+        and str(row.get("target_user_id") or "") in {identity.canonical_user_id, identity.platform_user_id}
     ]
     rows.sort(key=lambda item: str(item.get("created_at") or ""))
     compact: list[dict[str, Any]] = []

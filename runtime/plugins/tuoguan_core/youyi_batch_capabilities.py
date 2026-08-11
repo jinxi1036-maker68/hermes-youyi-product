@@ -189,15 +189,25 @@ def create_trial_lead(
 def create_assigned_task(store: TuoguanStore, *, title: str, assignee_user_id: str, created_by: str, due_at: str = "", level: str = "A", student_name: str = "", channel: str = "wecom_callback") -> dict[str, Any]:
     if not str(title).strip() or not str(assignee_user_id).strip():
         return {"ok": False, "reason_code": "missing_required_fields", "writeback_verified": False}
-    tasks = store.load_tasks()
     signature = (str(title).strip(), assignee_user_id, due_at, student_name)
-    existing = next((task for task in tasks if (str(task.get("title") or "").strip(), str(task.get("assignee_userid") or ""), str(task.get("due_at") or ""), str(task.get("student_name") or "")) == signature and task.get("status") not in {"cancelled", "closed"}), None)
-    if existing:
-        return {"ok": True, "already_applied": True, "task_id": existing.get("id"), "writeback_verified": True}
     task_id = f"task_{uuid.uuid4().hex[:12]}"
     task = {"id": task_id, "title": str(title).strip(), "type": "manual_assignment", "level": level if level in {"S", "A", "B", "C"} else "A", "status": "pending", "student_name": student_name, "assignee_userid": assignee_user_id, "created_by": created_by, "due_at": due_at, "created_at": _stamp(), "tenant_id": TENANT_ID, "channel": channel}
-    tasks.append(task)
-    store.save_tasks(tasks)
+    selected: dict[str, Any] = {}
+    already_applied = False
+
+    def append_if_absent(tasks: list[dict[str, Any]]) -> None:
+        nonlocal selected, already_applied
+        existing = next((item for item in tasks if (str(item.get("title") or "").strip(), str(item.get("assignee_userid") or ""), str(item.get("due_at") or ""), str(item.get("student_name") or "")) == signature and item.get("status") not in {"cancelled", "closed"}), None)
+        if existing is not None:
+            selected = deepcopy(existing)
+            already_applied = True
+            return
+        tasks.append(deepcopy(task))
+        selected = deepcopy(task)
+
+    store.update_tasks(append_if_absent)
+    if already_applied:
+        return {"ok": True, "already_applied": True, "task_id": selected.get("id"), "task": selected, "writeback_verified": True}
     found = next((item for item in store.load_tasks() if item.get("id") == task_id), None)
     verified = isinstance(found, dict) and found.get("assignee_userid") == assignee_user_id
     return {"ok": verified, "already_applied": False, "task_id": task_id, "task": deepcopy(found), "writeback_verified": verified, "reason_code": "" if verified else "writeback_consistency_failed"}
