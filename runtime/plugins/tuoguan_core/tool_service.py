@@ -28,7 +28,7 @@ from .records import analyze_teacher_record, save_analysis
 from .summer_records import save_summer_lesson_record
 from .store import JSON_NO_CHANGE, TuoguanStore, TuoguanStoreError
 from .summer_points import change_points, query_points_ranking, query_student_points
-from .tasks import apply_task_reply, closure_missing_fields, current_task_for_user
+from .tasks import apply_task_reply, cancel_task as cancel_task_state, closure_missing_fields, current_task_for_user
 from .temporal_grounding import parse_business_due_at
 from .youyi_batch_capabilities import (
     create_assigned_task,
@@ -77,6 +77,7 @@ from .digital_employee_state import (
     query_hermes_work_items,
     query_wakeup_requests,
     query_active_goal_work_state,
+    query_attention_threads,
     query_gray_optimization_decisions,
     query_gray_observations,
     query_gray_rollout_decisions,
@@ -93,11 +94,13 @@ from .digital_employee_state import (
     query_industry_learning_candidates,
     query_market_research_candidates,
     query_proactive_work_radar,
+    query_relationship_touch_candidates,
     query_staff_voice_radar,
     query_student_service_relations,
     query_value_ledger,
     query_value_progress_ledger,
     query_weekly_record_coverage,
+    relationship_touch_policy,
     submit_industry_learning_candidate,
     submit_action_execution,
     submit_business_event,
@@ -115,8 +118,10 @@ from .digital_employee_state import (
     submit_performance_evidence_response,
     submit_profile_candidate,
     submit_profile_candidate_correction,
+    submit_relationship_touch_candidate,
     submit_service_relation_fact_candidate,
     submit_value_ledger_entry,
+    update_attention_thread,
     update_hermes_work_item,
 )
 
@@ -467,6 +472,69 @@ class TuoguanToolService:
         self.store.update_json("active_task_context.json", {}, update_active)
         self.store.update_json("pending_next_task_context.json", {}, update_pending)
 
+    def _clear_task_context_for_task(self, task_id: str) -> dict[str, int]:
+        normalized_id = str(task_id or "").strip()
+        if not normalized_id:
+            return {"active_removed": 0, "pending_removed": 0, "focus_removed": 0}
+        counts = {"active_removed": 0, "pending_removed": 0, "focus_removed": 0}
+
+        def clear_mapping(value: Any, counter_name: str) -> Any:
+            data = value if isinstance(value, dict) else {}
+            kept: dict[str, Any] = {}
+            removed = 0
+            for key, item in data.items():
+                if isinstance(item, dict) and str(item.get("task_id") or "") == normalized_id:
+                    removed += 1
+                    continue
+                kept[key] = item
+            counts[counter_name] = removed
+            return kept if removed else JSON_NO_CHANGE
+
+        self.store.update_json("active_task_context.json", {}, lambda value: clear_mapping(value, "active_removed"))
+        self.store.update_json("pending_next_task_context.json", {}, lambda value: clear_mapping(value, "pending_removed"))
+
+        def clear_focus(value: Any) -> Any:
+            data = value if isinstance(value, dict) else {}
+            kept: dict[str, Any] = {}
+            removed = 0
+            for key, item in data.items():
+                if isinstance(item, dict) and str(item.get("task_id") or "") == normalized_id:
+                    removed += 1
+                    continue
+                kept[key] = item
+            counts["focus_removed"] = removed
+            return kept if removed else JSON_NO_CHANGE
+
+        self.store.update_json("model_focus.json", {}, clear_focus)
+        return counts
+
+    def _suppress_pending_notifications_for_task(self, task_id: str, *, reason: str) -> int:
+        normalized_id = str(task_id or "").strip()
+        if not normalized_id:
+            return 0
+        stamp = datetime.now().astimezone().isoformat(timespec="seconds")
+        changed_count = {"value": 0}
+
+        def suppress(outbox: Any) -> Any:
+            rows = outbox if isinstance(outbox, list) else []
+            changed = False
+            for item in rows:
+                if not isinstance(item, dict):
+                    continue
+                if str(item.get("task_id") or "") != normalized_id:
+                    continue
+                if str(item.get("status") or "") not in {"pending", "retry_pending", "sending"}:
+                    continue
+                item["status"] = "suppressed"
+                item["suppressed_at"] = stamp
+                item["suppressed_reason"] = reason
+                changed = True
+                changed_count["value"] += 1
+            return rows if changed else JSON_NO_CHANGE
+
+        self.store.update_json("notification_outbox.json", [], suppress)
+        return int(changed_count["value"])
+
     @staticmethod
     def _looks_like_goal_workspace_task_misuse(*, raw_text: str, title: str, operation_id: str, assignee_user_id: str, student_name: str) -> bool:
         """Protect single-task creation from long-running goal workspace misuse.
@@ -521,6 +589,7 @@ class TuoguanToolService:
             "register_summer_student",
             "create_trial_lead",
             "create_task",
+            "cancel_task",
             "update_task",
             "report_safety_event",
             "change_summer_points",
@@ -551,6 +620,8 @@ class TuoguanToolService:
             "submit_action_execution",
             "submit_fact_gap_candidate",
             "submit_staff_voice_signal",
+            "submit_relationship_touch_candidate",
+            "update_attention_thread",
         }
         if compact_raw in {
             "你再试一下",
@@ -1104,7 +1175,21 @@ class TuoguanToolService:
                     {"task_id": task_id, "touser": assignee_user_id, "action": item["action"], "status": "scheduled"}
                     for item in notifications
                 )
-                self._write_user_focus(assignee_user_id, task_id=task_id, student_name=str(task.get("student_name") or student_name or ""), task_type=str(task.get("type") or "manual_assignment"))
+                focus_expires_at = (datetime.now().astimezone() + timedelta(hours=36)).isoformat(timespec="seconds")
+                self._write_focus(
+                    task_id=task_id,
+                    student_name=str(task.get("student_name") or student_name or ""),
+                    focus_source="task_created",
+                    focus_expires_at=focus_expires_at,
+                )
+                self._write_user_focus(
+                    assignee_user_id,
+                    task_id=task_id,
+                    student_name=str(task.get("student_name") or student_name or ""),
+                    task_type=str(task.get("type") or "manual_assignment"),
+                    focus_source="task_created",
+                    focus_expires_at=focus_expires_at,
+                )
                 self._remember_user_task_context(assignee_user_id, task, ttl_hours=36)
             return result
 
@@ -1309,6 +1394,189 @@ class TuoguanToolService:
             },
             message=f"查询到 {len(tasks)} 个任务。",
         )
+
+    def cancel_task(
+        self,
+        *,
+        task_id: str = "",
+        reason: str = "",
+        operation_id: str = "",
+        student_name: str = "",
+        teacher_name: str = "",
+    ) -> dict[str, Any]:
+        denied = self._approved()
+        if denied:
+            return denied
+        if self.identity.role not in {"boss", "manager", "teacher"}:
+            return self._error("permission_denied", "当前账号无权取消托管任务。")
+
+        def execute() -> dict[str, Any]:
+            tasks = self.store.load_tasks()
+            visible_tasks = self._visible_tasks()
+            visible_ids = {str(item.get("id") or "") for item in visible_tasks}
+            open_visible = [
+                task for task in visible_tasks
+                if str(task.get("status") or "") not in _CLOSED_STATUSES
+            ]
+            raw_text = ""
+            try:
+                from .runtime_foundation import current_raw_text
+                raw_text = current_raw_text(self.identity.canonical_user_id)
+            except Exception:
+                raw_text = ""
+            reason_text = str(raw_text or reason or "用户要求取消任务").strip()
+
+            requested_teacher = str(teacher_name or "").strip()
+            target_teacher_id = ""
+            if requested_teacher:
+                if self.identity.role not in {"boss", "manager"}:
+                    return self._error("permission_denied", "当前账号不能代取消其他老师的任务。")
+                teacher_identity = self._teacher_identity_by_name(requested_teacher)
+                if teacher_identity is None:
+                    return self._error("teacher_not_found", f"没有找到老师“{requested_teacher}”。")
+                if not self._manager_can_view_teacher(teacher_identity.canonical_user_id):
+                    return self._error("permission_denied", f"老师“{requested_teacher}”不在当前店长管理范围内。")
+                target_teacher_id = teacher_identity.canonical_user_id
+
+            candidates = open_visible
+            if target_teacher_id:
+                candidates = [
+                    task for task in candidates
+                    if str(task.get("assignee_userid") or "") == target_teacher_id
+                ]
+            if student_name:
+                normalized_student = str(student_name or "").strip()
+                candidates = [
+                    task for task in candidates
+                    if str(task.get("student_name") or "").strip() == normalized_student
+                    or normalized_student in str(task.get("title") or task.get("source_text") or "")
+                ]
+
+            supplied_task_id = str(task_id or "").strip()
+            target: dict[str, Any] | None = None
+            if supplied_task_id:
+                target = next(
+                    (task for task in candidates if str(task.get("id") or "") == supplied_task_id),
+                    None,
+                )
+                if target is None and supplied_task_id in visible_ids:
+                    target = next(
+                        (task for task in tasks if str(task.get("id") or "") == supplied_task_id),
+                        None,
+                    )
+
+            if target is None:
+                focus = self._read_focus()
+                focus_task_id = str(focus.get("task_id") or "")
+                focus_source = str(focus.get("focus_source") or "")
+                focus_expires_at = str(focus.get("focus_expires_at") or "")
+                try:
+                    focus_not_expired = bool(focus_expires_at) and datetime.fromisoformat(focus_expires_at) >= datetime.now().astimezone()
+                except (TypeError, ValueError):
+                    focus_not_expired = False
+                if focus_task_id and focus_source in {"task_created", "explicit_task_interaction", "task_created_by_me"} and focus_not_expired:
+                    target = next(
+                        (task for task in candidates if str(task.get("id") or "") == focus_task_id),
+                        None,
+                    )
+
+            if target is None and len(candidates) == 1:
+                target = candidates[0]
+
+            if target is None:
+                summaries = [
+                    {
+                        "task_id": str(task.get("id") or ""),
+                        "title": str(task.get("title") or task.get("task_name") or "未命名任务"),
+                        "assignee_userid": str(task.get("assignee_userid") or ""),
+                        "status": str(task.get("status") or ""),
+                        "student_name": str(task.get("student_name") or ""),
+                    }
+                    for task in candidates[:8]
+                ]
+                return self._ok(
+                    "cancel_task",
+                    data={
+                        "result_action": "clarification_needed",
+                        "reason_code": "ambiguous_or_missing_task_reference",
+                        "candidate_count": len(candidates),
+                        "candidate_tasks": summaries,
+                        "writeback_verified": True,
+                        "idempotency_verified": True,
+                        "no_write_performed": True,
+                    },
+                    message="你要取消的是哪个任务？请补一下学生姓名、老师或任务内容。",
+                    already_applied=True,
+                )
+
+            target_id = str(target.get("id") or "")
+            if target_id not in visible_ids:
+                return self._error("permission_denied", "当前账号无权取消该任务。")
+            canonical_target = next(
+                (task for task in tasks if str(task.get("id") or "") == target_id),
+                None,
+            )
+            if canonical_target is None:
+                return self._error("task_not_found", "没有找到指定任务。")
+            target = canonical_target
+            if str(target.get("status") or "") in _CLOSED_STATUSES:
+                return self._ok(
+                    "cancel_task",
+                    data={
+                        "task": deepcopy(target),
+                        "result_action": "already_closed",
+                        "writeback_verified": True,
+                        "idempotency_verified": True,
+                    },
+                    message="这个任务已经是关闭状态，不需要重复取消。",
+                    already_applied=True,
+                )
+
+            result = cancel_task_state(
+                target,
+                self.identity.canonical_user_id,
+                self.identity.role,
+                reason_text,
+                now=datetime.now().astimezone(),
+            )
+            if result.action == "forbidden":
+                return self._error("permission_denied", result.reply)
+            events = target.get("closure_events")
+            if not isinstance(events, list):
+                events = []
+            events.append(
+                {
+                    "action": "cancelled",
+                    "actor_userid": self.identity.canonical_user_id,
+                    "actor_role": self.identity.role,
+                    "text": reason_text,
+                    "at": str(target.get("cancelled_at") or datetime.now().astimezone().isoformat(timespec="seconds")),
+                }
+            )
+            target["closure_events"] = events[-50:]
+            self.store.save_tasks(tasks)
+            suppressed = self._suppress_pending_notifications_for_task(target_id, reason="task_cancelled")
+            cleared = self._clear_task_context_for_task(target_id)
+            persisted = next(
+                (item for item in self.store.load_tasks() if str(item.get("id") or "") == target_id),
+                None,
+            )
+            verified = isinstance(persisted, dict) and str(persisted.get("status") or "") == "cancelled"
+            return self._ok(
+                "cancel_task",
+                data={
+                    "task_id": target_id,
+                    "task": deepcopy(persisted or target),
+                    "result_action": result.action,
+                    "suppressed_notification_count": suppressed,
+                    "cleared_context": cleared,
+                    "writeback_verified": verified,
+                    "idempotency_verified": True,
+                },
+                message="任务已取消，后续提醒已收口。" if verified else "任务取消已尝试，但写后反查没有通过。",
+            )
+
+        return self._operation(operation_id, "cancel_task", execute)
 
     def next_task(self) -> dict[str, Any]:
         """Select and focus the next real task instead of returning a list."""
@@ -2912,6 +3180,171 @@ class TuoguanToolService:
             return self._error("permission_denied", "只有店长或老板可以查看小优主动工作雷达。")
         result = query_proactive_work_radar(self.store, identity=self.identity, limit=limit)
         return self._ok("query_proactive_work_radar", data=result, message=str(result.get("rendered_text") or ""))
+
+    def query_attention_threads(
+        self,
+        *,
+        status: str = "",
+        focus_key: str = "",
+        include_closed: bool = False,
+        limit: int = 30,
+    ) -> dict[str, Any]:
+        denied = self._approved()
+        if denied:
+            return denied
+        result = query_attention_threads(
+            self.store,
+            identity=self.identity,
+            status=status,
+            focus_key=focus_key,
+            include_closed=include_closed,
+            limit=limit,
+        )
+        if not result.get("ok"):
+            return self._error(str(result.get("error") or "attention_query_failed"), str(result.get("message") or "提醒线程查询失败。"))
+        return self._ok("query_attention_threads", data=result, message=str(result.get("rendered_text") or ""))
+
+    def update_attention_thread(
+        self,
+        *,
+        attention_id: str,
+        status: str,
+        operation_id: str,
+        owner_message_id: str = "",
+        owner_message_text: str = "",
+        reply_relevance: str = "",
+        reply_sufficiency: str = "",
+        model_judgment: str = "",
+        resolution_note: str = "",
+        failure_reason: str = "",
+        source_text: str = "",
+        source_message_id: str = "",
+    ) -> dict[str, Any]:
+        denied = self._approved()
+        if denied:
+            return denied
+
+        def execute() -> dict[str, Any]:
+            result = update_attention_thread(
+                self.store,
+                identity=self.identity,
+                attention_id=attention_id,
+                status=status,
+                operation_id=operation_id,
+                owner_message_id=owner_message_id,
+                owner_message_text=owner_message_text,
+                reply_relevance=reply_relevance,
+                reply_sufficiency=reply_sufficiency,
+                model_judgment=model_judgment,
+                resolution_note=resolution_note,
+                failure_reason=failure_reason,
+                source_text=source_text,
+                source_message_id=source_message_id,
+            )
+            return result if not result.get("ok") else self._ok("update_attention_thread", data=result, message=str(result.get("rendered_text") or ""))
+
+        return self._operation(operation_id, "update_attention_thread", execute)
+
+    def query_relationship_touch_candidates(
+        self,
+        *,
+        target_user_id: str = "",
+        target_role: str = "",
+        include_closed: bool = False,
+        limit: int = 30,
+    ) -> dict[str, Any]:
+        denied = self._approved()
+        if denied:
+            return denied
+        result = query_relationship_touch_candidates(
+            self.store,
+            identity=self.identity,
+            target_user_id=target_user_id,
+            target_role=target_role,
+            include_closed=include_closed,
+            limit=limit,
+        )
+        if not result.get("ok"):
+            return self._error(str(result.get("error") or "relationship_touch_query_failed"), str(result.get("message") or "主动触达候选查询失败。"))
+        return self._ok("query_relationship_touch_candidates", data=result, message=str(result.get("rendered_text") or ""))
+
+    def submit_relationship_touch_candidate(
+        self,
+        *,
+        target_role: str,
+        touch_type: str,
+        message: str,
+        reason: str,
+        operation_id: str,
+        target_user_id: str = "",
+        target_name: str = "",
+        value: str = "",
+        work_related: bool = False,
+        private_emotional_support: bool = False,
+        suggested_send_at: str = "",
+        source_text: str = "",
+        source_message_id: str = "",
+    ) -> dict[str, Any]:
+        denied = self._approved()
+        if denied:
+            return denied
+        if self.identity.role not in {"boss", "manager"}:
+            return self._error("permission_denied", "只有老板或店长会话可以提交主动触达候选。")
+        role = str(target_role or "").strip()
+        if role == "parent":
+            return self._error("relationship_touch_parent_disabled", "当前阶段小优不能主动联系家长。")
+
+        def execute() -> dict[str, Any]:
+            policy = relationship_touch_policy(self.store)
+            role_policy = policy.get(role) if isinstance(policy.get(role), dict) else {}
+            mode = str(role_policy.get("mode") or "candidate").strip()
+            allowed_user_ids = {
+                str(item).strip()
+                for item in (role_policy.get("allowed_target_user_ids") or [])
+                if str(item).strip()
+            }
+            target = str(target_user_id or "").strip()
+            allowed_by_whitelist = role == "boss" or not allowed_user_ids or target in allowed_user_ids
+            external_send_allowed = bool(mode == "direct" and allowed_by_whitelist)
+            requires_authorization = not external_send_allowed
+            status = "candidate"
+            result = submit_relationship_touch_candidate(
+                self.store,
+                identity=self.identity,
+                target_role=role,
+                touch_type=touch_type,
+                message=message,
+                reason=reason,
+                operation_id=operation_id,
+                target_user_id=target,
+                target_name=target_name,
+                value=value,
+                work_related=work_related,
+                private_emotional_support=private_emotional_support,
+                requires_authorization=requires_authorization,
+                external_send_allowed=external_send_allowed,
+                suggested_send_at=suggested_send_at,
+                status=status,
+                source_text=source_text,
+                source_message_id=source_message_id,
+            )
+            if not result.get("ok"):
+                return result
+            data = {
+                **result,
+                "relationship_touch_policy": policy,
+                "target_allowed_by_test_whitelist": allowed_by_whitelist,
+                "external_send_allowed_by_policy": external_send_allowed,
+                "policy_mode": mode,
+            }
+            message_text = (
+                "已保存可主动触达候选；当前测试白名单允许该对象进入外发候选。"
+                if external_send_allowed
+                else "已保存内部候选；该对象不在当前直接主动外发范围内，不会真实外发。"
+            )
+            return self._ok("submit_relationship_touch_candidate", data=data, message=message_text)
+
+        return self._operation(operation_id, "submit_relationship_touch_candidate", execute)
 
     def query_employee_work_map(self, *, limit: int = 12) -> dict[str, Any]:
         denied = self._approved()

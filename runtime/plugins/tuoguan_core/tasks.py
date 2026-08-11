@@ -120,6 +120,11 @@ def classify_task_reply(text: str) -> dict[str, str]:
             "给家长说了",
             "跟家长说了",
             "已沟通",
+            "确认",
+            "闭环",
+            "可以闭环",
+            "金总知道",
+            "老板知道",
         )
     ):
         intent = "complete_pending_confirmation"
@@ -142,8 +147,12 @@ def _as_dict(value: Any) -> dict[str, Any]:
 
 def _is_parent_follow_up_task(task: dict[str, Any]) -> bool:
     task_type = _task_type(task)
+    task_text = "".join(
+        str(task.get(key) or "")
+        for key in ("type", "title", "source_text", "trigger_reason")
+    )
     return task_type in {"parent_anxiety", "parent_complaint", "renewal_risk"} or _contains_any(
-        task_type,
+        task_text,
         ("家长", "续费", "投诉", "沟通"),
     )
 
@@ -173,6 +182,12 @@ def closure_missing_fields(task: dict[str, Any], evidence: str) -> list[str]:
                 "已沟通家长",
                 "已经沟通",
                 "已沟通",
+                "妈妈",
+                "爸爸",
+                "满意",
+                "感谢",
+                "挺好",
+                "很好",
                 "同意",
                 "认可",
                 "观察",
@@ -922,6 +937,25 @@ def apply_task_reply(
             return finish(
                 "closure_ready",
                 "闭环信息已补齐，可以回复“完成了”提交任务闭环。",
+            )
+        task["status"] = "waiting_confirmation"
+        task["coach_stage"] = "waiting_closure_evidence"
+        return finish(
+            "fact_added",
+            _fact_added_reply(task, missing),
+            missing,
+        )
+    if _is_parent_follow_up_task(task):
+        missing = closure_missing_fields(task, task["evidence_summary"])
+        if not missing:
+            task["status"] = "completed"
+            task["coach_stage"] = "closed"
+            task["closure_summary"] = task["evidence_summary"]
+            task["completed_at"] = timestamp.isoformat(timespec="seconds")
+            return finish(
+                "completed",
+                "家长沟通结果和后续安排已记录，任务已完成。\n"
+                + _next_task_message(tasks, userid),
             )
         task["status"] = "waiting_confirmation"
         task["coach_stage"] = "waiting_closure_evidence"

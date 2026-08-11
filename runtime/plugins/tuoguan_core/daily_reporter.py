@@ -32,6 +32,8 @@ from .write_guard import assert_business_write_allowed, authorized_system_write
 DAILY_REPORT_RUNS_FILE = "daily_report_runs.jsonl"
 NOTIFICATION_OUTBOX_FILE = "notification_outbox.json"
 VALID_REPORT_KINDS = {"morning", "evening"}
+REPORT_FRESHNESS_HOURS = 36
+STALE_REPORT_TERMS = ("昨晚", "明天10点", "李老师沟通结果", "一直发", "一直提醒")
 
 
 def queue_daily_boss_report(
@@ -210,12 +212,14 @@ def build_daily_boss_report(kind: str, *, store: TuoguanStore | None = None, now
     staff_voice = query_staff_voice_radar(actual_store, identity=identity, now_at=timestamp.isoformat(timespec="seconds"), since_hours=24, limit=10)
     attention = query_attention_threads(actual_store, identity=identity, include_closed=False, limit=5)
     items = work.get("items") if isinstance(work.get("items"), list) else []
-    waiting_items = [item for item in items if str(item.get("status") or "") == "waiting"]
     open_attention = attention.get("attention_threads") if isinstance(attention.get("attention_threads"), list) else []
+    items = _fresh_report_work_items(items, timestamp)
+    open_attention = _fresh_attention_threads(open_attention, timestamp)
+    waiting_items = [item for item in items if str(item.get("status") or "") == "waiting"]
     source_counts = {
-        "work_item_count": int(work.get("work_item_count") or 0),
-        "waiting_count": int(work.get("waiting_count") or len(waiting_items)),
-        "open_attention_count": int(attention.get("attention_count") or len(open_attention)),
+        "work_item_count": len(items),
+        "waiting_count": len(waiting_items),
+        "open_attention_count": len(open_attention),
         "recent_business_event_count": int(brief.get("recent_business_event_count") or 0),
         "recent_action_execution_count": int(brief.get("recent_action_execution_count") or 0),
         "result_unknown_action_count": int(brief.get("result_unknown_action_count") or 0),
@@ -439,6 +443,81 @@ def _render_ultra_evening_report(
         _style_closing_line(workstyle),
     ]
     return _limit_message(_join_style_lines(rows, workstyle), _style_limit(workstyle))
+
+
+def _fresh_attention_threads(rows: list[dict[str, Any]], timestamp: datetime) -> list[dict[str, Any]]:
+    cutoff = timestamp - timedelta(hours=REPORT_FRESHNESS_HOURS)
+    fresh: list[dict[str, Any]] = []
+    for row in rows:
+        row_time = _material_timestamp(row, timestamp)
+        if row_time is not None and row_time < cutoff:
+            continue
+        fresh.append(row)
+    return fresh
+
+
+def _fresh_report_work_items(rows: list[dict[str, Any]], timestamp: datetime) -> list[dict[str, Any]]:
+    cutoff = timestamp - timedelta(hours=REPORT_FRESHNESS_HOURS)
+    fresh: list[dict[str, Any]] = []
+    for row in rows:
+        row_time = _material_timestamp(row, timestamp)
+        is_old = bool(row_time is not None and row_time < cutoff)
+        text = _report_material_text(row)
+        status = str(row.get("status") or "").strip().lower()
+        is_waiting_material = status in {"waiting", "blocked", "pending"}
+        if is_old and any(term in text for term in STALE_REPORT_TERMS):
+            continue
+        if is_old and is_waiting_material:
+            continue
+        fresh.append(row)
+    return fresh
+
+
+def _material_timestamp(row: dict[str, Any], now: datetime) -> datetime | None:
+    for key in (
+        "updated_at",
+        "created_at",
+        "queued_at",
+        "sent_at",
+        "last_attention_at",
+        "next_attention_at",
+        "next_contact_after",
+    ):
+        value = str(row.get(key) or "").strip()
+        if not value:
+            continue
+        try:
+            parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+        except (TypeError, ValueError):
+            continue
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=now.tzinfo)
+        return parsed
+    return None
+
+
+def _report_material_text(row: dict[str, Any]) -> str:
+    chunks: list[str] = []
+    keys = (
+        "title",
+        "focus_key",
+        "focus_summary",
+        "question_text",
+        "source_text",
+        "current_waiting",
+        "blocked_by",
+        "next_actions",
+        "pending_judgements",
+    )
+    for key in keys:
+        value = row.get(key)
+        if isinstance(value, str):
+            chunks.append(value)
+        elif isinstance(value, (dict, list)):
+            chunks.append(json.dumps(value, ensure_ascii=False))
+        elif value is not None:
+            chunks.append(str(value))
+    return "\n".join(chunks)
 
 
 def _proactivity_health(store: TuoguanStore, timestamp: datetime) -> list[str]:

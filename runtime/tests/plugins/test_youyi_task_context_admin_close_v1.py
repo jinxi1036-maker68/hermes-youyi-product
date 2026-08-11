@@ -67,6 +67,94 @@ def test_model_created_task_persists_teacher_context_for_natural_completion(tmp_
     assert active["teacher1"]["expires_at"] > "2026-08-05T22:00:00"
     pending = json.loads((tmp_path / "pending_next_task_context.json").read_text(encoding="utf-8"))
     assert pending["teacher1"]["source"] == "new_task_notification"
+    focus = json.loads((tmp_path / "model_focus.json").read_text(encoding="utf-8"))
+    assert focus["boss1"]["task_id"] == task_id
+    assert focus["boss1"]["focus_source"] == "task_created"
+    assert focus["wecom_callback:teacher1"]["task_id"] == task_id
+    assert focus["wecom_callback:teacher1"]["focus_source"] == "task_created"
+
+
+def test_boss_can_cancel_just_created_task_by_focus_and_clear_context(tmp_path):
+    from plugins.tuoguan_core.tool_service import TuoguanToolService
+
+    store = _seed_store(tmp_path)
+    service = TuoguanToolService(
+        store=store,
+        platform="wecom_callback",
+        user_id="boss1",
+        user_name="金总",
+        chat_id="boss1",
+        session_key="boss1",
+    )
+    created = service.create_task(
+        title="今天下午4:30跟小金家长沟通",
+        assignee_user_id="teacher1",
+        operation_id="op-create-cancel-focus",
+        due_at="2026-08-09T16:30:00+08:00",
+        level="B",
+        student_name="小金",
+    )
+
+    assert created["ok"] is True
+    cancelled = service.cancel_task(
+        reason="中途取消，不用做了",
+        operation_id="op-cancel-focus",
+    )
+
+    assert cancelled["ok"] is True
+    assert cancelled["data"]["writeback_verified"] is True
+    assert cancelled["data"]["result_action"] == "cancelled"
+    saved = store.load_tasks()[0]
+    assert saved["status"] == "cancelled"
+    outbox = json.loads((tmp_path / "notification_outbox.json").read_text(encoding="utf-8"))
+    assert all(item["status"] == "suppressed" for item in outbox)
+    active = json.loads((tmp_path / "active_task_context.json").read_text(encoding="utf-8"))
+    pending = json.loads((tmp_path / "pending_next_task_context.json").read_text(encoding="utf-8"))
+    focus = json.loads((tmp_path / "model_focus.json").read_text(encoding="utf-8"))
+    assert "teacher1" not in active
+    assert "teacher1" not in pending
+    assert all(item.get("task_id") != created["task_id"] for item in focus.values())
+
+
+def test_parent_communication_manual_assignment_closes_from_natural_teacher_evidence(tmp_path):
+    from plugins.tuoguan_core.tool_service import TuoguanToolService
+
+    store = _seed_store(tmp_path)
+    boss = TuoguanToolService(
+        store=store,
+        platform="wecom_callback",
+        user_id="boss1",
+        user_name="金总",
+        chat_id="boss1",
+        session_key="boss1",
+    )
+    created = boss.create_task(
+        title="小金家长沟通任务",
+        assignee_user_id="teacher1",
+        operation_id="op-parent-comm-create",
+        due_at="2026-08-09T18:00:00+08:00",
+        level="B",
+        student_name="小金",
+    )
+    assert created["ok"] is True
+    teacher = TuoguanToolService(
+        store=store,
+        platform="wecom_callback",
+        user_id="teacher1",
+        user_name="李老师",
+        chat_id="teacher1",
+        session_key="",
+    )
+
+    first = teacher.update_task(reply="小金妈妈说孩子最近挺好，也很感谢咱们。", operation_id="op-parent-comm-1")
+    second = teacher.update_task(reply="她很满意，我下一步准备再继续跟进。", operation_id="op-parent-comm-2")
+
+    assert first["ok"] is True
+    assert first["data"]["result_action"] in {"fact_added", "completed"}
+    assert second["ok"] is True
+    saved = store.load_tasks()[0]
+    assert saved["status"] == "completed"
+    assert "下一步准备再继续跟进" in saved["evidence_summary"]
 
 
 def test_boss_can_close_own_manual_assignment_and_suppress_pending_notifications(tmp_path):

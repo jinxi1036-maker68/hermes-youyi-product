@@ -310,6 +310,86 @@ def test_test_mode_policy_allows_only_boss_and_li_teacher(tmp_path):
     assert outbox[0]["auto_effects"]["sends_teacher_messages"] is True
 
 
+def test_tool_service_exposes_li_teacher_touch_policy_and_candidate_writeback(tmp_path):
+    from plugins.tuoguan_core.store import TuoguanStore
+    from plugins.tuoguan_core.tool_service import TuoguanToolService
+
+    _write_json(tmp_path, "write_guard_config.json", {"enabled": False})
+    _write_json(
+        tmp_path,
+        "wecom_whitelist.json",
+        {
+            "super_users": ["JinWenJie"],
+            "allowed_users": ["JinWenJie", "CeShi", "LiuLi"],
+            "user_roles": {"JinWenJie": "boss", "CeShi": "teacher", "LiuLi": "teacher"},
+        },
+    )
+    _write_json(tmp_path, "teacher_wecom_map.json", {"李老师": "CeShi", "刘老师": "LiuLi"})
+    _write_json(
+        tmp_path,
+        "relationship_touch_policy.json",
+        {
+            "boss": {"mode": "direct", "allowed_target_user_ids": ["JinWenJie"], "daily_limit": 2},
+            "teacher": {"mode": "direct", "allowed_target_user_ids": ["CeShi"], "daily_limit": 2},
+            "manager": {"mode": "candidate", "allowed_target_user_ids": []},
+            "parent": {"mode": "disabled"},
+        },
+    )
+    _write_json(tmp_path, "notification_outbox.json", [])
+    _write_json(tmp_path, "students.json", {})
+    _write_json(tmp_path, "tasks.json", [])
+    store = TuoguanStore(tmp_path)
+    service = TuoguanToolService(
+        store=store,
+        platform="wecom_callback",
+        user_id="JinWenJie",
+        user_name="金总",
+        chat_id="JinWenJie",
+        session_key="JinWenJie",
+    )
+
+    queried = service.query_relationship_touch_candidates(target_role="teacher")
+    assert queried["ok"] is True
+    assert queried["data"]["policy"]["teacher"]["allowed_target_user_ids"] == ["CeShi"]
+
+    allowed = service.submit_relationship_touch_candidate(
+        target_role="teacher",
+        target_user_id="CeShi",
+        target_name="李老师",
+        touch_type="record_relief",
+        message="李老师，我在测试主动工作能力，想确认你今天几点方便我问一个任务记录事实？",
+        reason="测试期允许主动向李老师确认具体工作事实。",
+        value="验证小优可主动问事实归属人。",
+        work_related=True,
+        operation_id="touch-li-allowed",
+    )
+    blocked = service.submit_relationship_touch_candidate(
+        target_role="teacher",
+        target_user_id="LiuLi",
+        target_name="刘老师",
+        touch_type="record_relief",
+        message="刘老师，我想确认一个学生记录事实。",
+        reason="非测试白名单老师，只能留下内部候选。",
+        value="验证白名单收口。",
+        work_related=True,
+        operation_id="touch-li-blocked",
+    )
+
+    assert allowed["ok"] is True
+    assert allowed["data"]["external_send_allowed_by_policy"] is True
+    assert allowed["data"]["writeback_verified"] is True
+    assert blocked["ok"] is True
+    assert blocked["data"]["external_send_allowed_by_policy"] is False
+    rows = [
+        json.loads(line)
+        for line in (tmp_path / "relationship_touch_candidates.jsonl").read_text(encoding="utf-8").splitlines()
+        if line.strip()
+    ]
+    assert [row["target_user_id"] for row in rows] == ["CeShi", "LiuLi"]
+    assert rows[0]["external_send_allowed"] is True
+    assert rows[1]["external_send_allowed"] is False
+
+
 def test_teacher_fact_request_cannot_be_parent_outreach_instruction(tmp_path):
     from plugins.tuoguan_core.autonomous_employee_loop import run_autonomous_employee_loop
     from plugins.tuoguan_core.store import TuoguanStore

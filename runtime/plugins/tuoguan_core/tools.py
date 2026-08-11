@@ -213,6 +213,18 @@ TUOGUAN_CREATE_TASK_SCHEMA = _schema(
     ["user_id", "title", "assignee_user_id", "operation_id"],
 )
 
+TUOGUAN_CANCEL_TASK_SCHEMA = _schema(
+    "取消一个已有托管内部任务。适合老板/店长/老师明确说取消、撤回、不用做、刚才那个任务不要了时调用；工具会按可信任务上下文、任务 id、学生或老师解析目标任务，写入 cancelled，压住未发送提醒，清理任务上下文并写后反查。不得用来取消机构级目标，目标撤回请用 tuoguan_goal_workspace。",
+    _identity_props({
+        "task_id": {"type": "string", "description": "任务 id，可为空；为空时工具按可信焦点、学生、老师和可见任务解析。"},
+        "reason": {"type": "string", "description": "取消原因，优先传用户原话，不得替用户编造。"},
+        "student_name": {"type": "string", "description": "可选，任务关联学生。"},
+        "teacher_name": {"type": "string", "description": "可选，老板/店长取消某位老师任务时填写老师姓名。"},
+        "operation_id": {"type": "string", "description": "幂等写入 id。"},
+    }),
+    ["user_id", "operation_id"],
+)
+
 TUOGUAN_QUERY_OPERATIONS_REPORT_SCHEMA = _schema(
     "老板查询经营、老师名单、指定老师近期执行、老师工作量、试听跟进、日报或周报。用户说查老师、有哪些老师、几位老师时用 staff；说查某老师最近怎么样时用 teacher_activity。所有数字和名单由工具确定性生成。不要用于 H5、看板链接、打开看板、看板地址，这些请求使用 tuoguan_dashboard_link。",
     _identity_props({
@@ -1004,6 +1016,67 @@ TUOGUAN_QUERY_PROACTIVE_WORK_RADAR_SCHEMA = _schema(
     ["user_id"],
 )
 
+TUOGUAN_QUERY_ATTENTION_THREADS_SCHEMA = _schema(
+    "只读查询老板主动提醒线程。老板回复“什么意思/刚才那个/这个不用了/已处理”时，模型应先查最近提醒线程再判断是否更新状态；查询结果只是上下文材料，不替模型判断老板回复是否相关。",
+    _identity_props({
+        "status": {"type": "string", "description": "可选，按 candidate/queued/sent/replied/resolved/failed/superseded 筛选。"},
+        "focus_key": {"type": "string", "description": "可选，按提醒焦点筛选。"},
+        "include_closed": {"type": "boolean", "default": False},
+        "limit": {"type": "integer", "default": 30},
+    }),
+    ["user_id"],
+)
+
+TUOGUAN_UPDATE_ATTENTION_THREAD_SCHEMA = _schema(
+    "更新老板主动提醒线程状态，例如老板已回复、提醒已解决、旧提醒被替代或失败。写操作必须有 operation_id；只能保存模型判断和真实消息证据，不得把无关回复强行绑定。",
+    _identity_props({
+        "attention_id": {"type": "string", "description": "提醒线程 id。"},
+        "status": {"type": "string", "enum": ["candidate", "queued", "sent", "replied", "resolved", "failed", "superseded"]},
+        "owner_message_id": {"type": "string", "description": "老板回复消息 id，可空。"},
+        "owner_message_text": {"type": "string", "description": "老板回复原文或短摘要。"},
+        "reply_relevance": {"type": "string", "description": "模型判断本回复是否关联该提醒，如 related/unrelated/unclear。"},
+        "reply_sufficiency": {"type": "string", "description": "模型判断回复是否足够关闭，如 sufficient/partial/insufficient。"},
+        "model_judgment": {"type": "string", "description": "模型判断依据。"},
+        "resolution_note": {"type": "string", "description": "解决或替代原因。"},
+        "failure_reason": {"type": "string", "description": "失败原因。"},
+        "source_text": {"type": "string", "description": "来源原文或简述。"},
+        "source_message_id": {"type": "string", "description": "来源消息 id。"},
+        "operation_id": {"type": "string"},
+    }),
+    ["user_id", "attention_id", "status", "operation_id"],
+)
+
+TUOGUAN_QUERY_RELATIONSHIP_TOUCH_CANDIDATES_SCHEMA = _schema(
+    "只读查询小优主动找老板/店长/老师的关系触达候选和当前策略。老板问“现在能不能主动找李老师/准备问谁/为什么没问”时应先用本工具核对候选、白名单和策略状态，不能凭旧认知回答。",
+    _identity_props({
+        "target_user_id": {"type": "string", "description": "可选，按目标企业微信 user_id 筛选，如 CeShi。"},
+        "target_role": {"type": "string", "enum": ["", "boss", "manager", "teacher"], "default": ""},
+        "include_closed": {"type": "boolean", "default": False},
+        "limit": {"type": "integer", "default": 30},
+    }),
+    ["user_id"],
+)
+
+TUOGUAN_SUBMIT_RELATIONSHIP_TOUCH_CANDIDATE_SCHEMA = _schema(
+    "保存一个主动找老板/店长/老师的具体工作候选。测试期只允许金总和李老师测试号 CeShi 进入直接外发候选；其他老师/店长最多保存内部候选，家长禁止。消息必须是工作相关的一个具体问题或支持，不得让老师联系家长，不得批量骚扰。",
+    _identity_props({
+        "target_role": {"type": "string", "enum": ["boss", "manager", "teacher"], "description": "目标角色。"},
+        "target_user_id": {"type": "string", "description": "目标企业微信 user_id；李老师测试号为 CeShi。"},
+        "target_name": {"type": "string", "description": "目标姓名，可空。"},
+        "touch_type": {"type": "string", "description": "触达类型，如 owner_business、owner_progress、care、record_relief、material_support。"},
+        "message": {"type": "string", "description": "准备问对方的一句话，必须具体、温和、工作相关。"},
+        "reason": {"type": "string", "description": "为什么需要问这个人，说明事实缺口或任务上下文。"},
+        "value": {"type": "string", "description": "这次询问对机构或任务的价值，可空。"},
+        "work_related": {"type": "boolean", "default": True},
+        "private_emotional_support": {"type": "boolean", "default": False},
+        "suggested_send_at": {"type": "string", "description": "建议发送时间，可空；最终仍受频率和时间窗限制。"},
+        "source_text": {"type": "string", "description": "来源原文或简述。"},
+        "source_message_id": {"type": "string", "description": "来源消息 id。"},
+        "operation_id": {"type": "string"},
+    }),
+    ["user_id", "target_role", "touch_type", "message", "reason", "operation_id"],
+)
+
 TUOGUAN_QUERY_EMPLOYEE_WORK_MAP_SCHEMA = _schema(
     "只读查询小优机构工作地图：汇总已知机构事实、未知缺口、事实归属人、开放工作项和下一步材料。它是员工入职认知地图，不发送消息、不创建任务、不写业务事实、不规定模型下一步。",
     _identity_props({"limit": {"type": "integer", "description": "最多返回地图域、缺口和问题候选数量。"}}),
@@ -1200,6 +1273,7 @@ TOOLS = (
     ("tuoguan_register_summer_student", TUOGUAN_REGISTER_SUMMER_STUDENT_SCHEMA, _handler("register_summer_student")),
     ("tuoguan_create_trial_lead", TUOGUAN_CREATE_TRIAL_LEAD_SCHEMA, _handler("create_trial_lead")),
     ("tuoguan_create_task", TUOGUAN_CREATE_TASK_SCHEMA, _handler("create_task")),
+    ("tuoguan_cancel_task", TUOGUAN_CANCEL_TASK_SCHEMA, _handler("cancel_task")),
     ("tuoguan_query_operations_report", TUOGUAN_QUERY_OPERATIONS_REPORT_SCHEMA, _handler("query_operations_report")),
     ("tuoguan_verify_dashboard_visibility", TUOGUAN_VERIFY_DASHBOARD_VISIBILITY_SCHEMA, _handler("verify_dashboard_visibility")),
     ("tuoguan_dashboard_link", TUOGUAN_DASHBOARD_LINK_SCHEMA, _handler("dashboard_link")),
@@ -1250,6 +1324,10 @@ TOOLS = (
     ("tuoguan_submit_action_execution", TUOGUAN_SUBMIT_ACTION_EXECUTION_SCHEMA, _handler("submit_action_execution")),
     ("tuoguan_query_autonomous_work_brief", TUOGUAN_QUERY_AUTONOMOUS_WORK_BRIEF_SCHEMA, _handler("query_autonomous_work_brief")),
     ("tuoguan_query_proactive_work_radar", TUOGUAN_QUERY_PROACTIVE_WORK_RADAR_SCHEMA, _handler("query_proactive_work_radar")),
+    ("tuoguan_query_attention_threads", TUOGUAN_QUERY_ATTENTION_THREADS_SCHEMA, _handler("query_attention_threads")),
+    ("tuoguan_update_attention_thread", TUOGUAN_UPDATE_ATTENTION_THREAD_SCHEMA, _handler("update_attention_thread")),
+    ("tuoguan_query_relationship_touch_candidates", TUOGUAN_QUERY_RELATIONSHIP_TOUCH_CANDIDATES_SCHEMA, _handler("query_relationship_touch_candidates")),
+    ("tuoguan_submit_relationship_touch_candidate", TUOGUAN_SUBMIT_RELATIONSHIP_TOUCH_CANDIDATE_SCHEMA, _handler("submit_relationship_touch_candidate")),
     ("tuoguan_query_employee_work_map", TUOGUAN_QUERY_EMPLOYEE_WORK_MAP_SCHEMA, _handler("query_employee_work_map")),
     ("tuoguan_query_fact_gap_candidates", TUOGUAN_QUERY_FACT_GAP_CANDIDATES_SCHEMA, _handler("query_fact_gap_candidates")),
     ("tuoguan_submit_fact_gap_candidate", TUOGUAN_SUBMIT_FACT_GAP_CANDIDATE_SCHEMA, _handler("submit_fact_gap_candidate")),

@@ -258,6 +258,47 @@ def test_daily_report_applies_next_day_self_evolution_context(tmp_path):
     assert "今天带入" in report["content"]
     assert "避免重复错误" in report["content"]
     assert "日报只放重点" in report["content"]
+
+
+def test_daily_report_does_not_surface_stale_owner_attention_as_today_focus(tmp_path):
+    from plugins.tuoguan_core.daily_reporter import build_daily_boss_report
+
+    store = _seed_store(tmp_path)
+    _append_jsonl(
+        tmp_path,
+        "attention_threads.jsonl",
+        [
+            {
+                "record_type": "attention_thread",
+                "attention_id": "attention_old_li",
+                "focus_key": "report:xiaojin_parent_comm_20260806",
+                "question_text": "昨晚您说要明天10点汇报李老师沟通结果，需要确认吗？",
+                "status": "queued",
+                "target_user_id": "boss1",
+                "created_at": "2026-08-06T21:30:00+08:00",
+                "updated_at": "2026-08-06T21:30:00+08:00",
+            },
+            {
+                "record_type": "attention_thread",
+                "attention_id": "attention_recent",
+                "focus_key": "market:today",
+                "question_text": "今天新采集到一条本地市场观察，是否需要展开？",
+                "status": "queued",
+                "target_user_id": "boss1",
+                "created_at": "2026-08-11T07:30:00+08:00",
+                "updated_at": "2026-08-11T07:30:00+08:00",
+            },
+        ],
+    )
+    cn_tz = timezone(timedelta(hours=8))
+    report = build_daily_boss_report("morning", store=store, now=datetime(2026, 8, 11, 8, 30, tzinfo=cn_tz))
+
+    assert report["ok"] is True
+    assert "昨晚" not in report["content"]
+    assert "李老师沟通结果" not in report["content"]
+    assert "明天10点" not in report["content"]
+    assert "本地市场观察" in report["content"]
+    assert report["source_counts"]["open_attention_count"] == 1
     assert len(report["content"]) <= 700
 
 
