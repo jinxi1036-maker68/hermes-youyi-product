@@ -244,6 +244,52 @@ def test_pre_llm_call_authorizes_model_selected_task_cancel(tmp_path, monkeypatc
     assert write_authorization_for("boss1", "submit_relationship_touch_candidate") is not None
 
 
+def test_write_authorization_accepts_live_session_when_entered_model_flag_is_not_visible(tmp_path, monkeypatch):
+    from plugins.tuoguan_core.runtime_foundation import (
+        begin_inbound,
+        clear_runtime_state,
+        write_authorization_for,
+    )
+    from plugins.tuoguan_core.store import TuoguanStore
+
+    clear_runtime_state()
+    store = TuoguanStore(tmp_path)
+    manual_context = tmp_path / "manual_context"
+    manual_context.mkdir()
+    (manual_context / "hermes_model_context_injection_allowlist_v1.json").write_text(
+        json.dumps(
+            {
+                "runtime_foundation": {"enabled": True},
+                "allowed_capability_cards": [],
+            }
+        ),
+        encoding="utf-8",
+    )
+    begin_inbound(
+        store=store,
+        message_id="msg-cancel-session",
+        conversation_id="wwcorp:boss1",
+        user_id="boss1",
+        role="boss",
+        raw_text="把这个测试任务直接关闭，不用再提醒",
+    )
+
+    def fake_get_session_env(key: str, default: str = "") -> str:
+        return {
+            "HERMES_SESSION_USER_ID": "wecom_callback:boss1",
+            "HERMES_SESSION_ID": "session-boss-live",
+            "HERMES_SESSION_KEY": "session-boss-live",
+        }.get(key, default)
+
+    import sys
+
+    fake_session_context = SimpleNamespace(get_session_env=fake_get_session_env)
+    monkeypatch.setitem(sys.modules, "gateway.session_context", fake_session_context)
+
+    assert write_authorization_for("boss1", "cancel_task") is not None
+    assert write_authorization_for("teacher1", "cancel_task") is None
+
+
 def test_pre_llm_call_injects_workstyle_feedback_contract(tmp_path, monkeypatch):
     import plugins.tuoguan_core as plugin
     from plugins.tuoguan_core.models import UserIdentity

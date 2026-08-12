@@ -736,9 +736,30 @@ def write_authorization_for(user_id: str, operation: str) -> dict[str, str] | No
     }
     if str(operation or "") not in supported_write_operations:
         return None
+    session_user = ""
+    session_id = ""
+    try:
+        from gateway.session_context import get_session_env
+        session_user = str(get_session_env("HERMES_SESSION_USER_ID", "") or "")
+        session_id = str(get_session_env("HERMES_SESSION_ID", "") or get_session_env("HERMES_SESSION_KEY", "") or "")
+    except Exception:
+        session_user = ""
+        session_id = ""
+    if ":" in session_user:
+        session_user = session_user.split(":", 1)[1].strip()
     with _LOCK:
         item = _PENDING_BY_USER.get(str(user_id or ""))
-        if not item or not item.get("entered_model"):
+        if not item:
+            return None
+        entered_model = bool(item.get("entered_model"))
+        same_session_user = bool(session_user) and session_user == str(user_id or "")
+        same_session = bool(session_id) and session_id == str(item.get("session_id") or "")
+        # Hermes v0.20 may execute tools in a context where the pre-LLM hook has
+        # created the turn ledger but the in-memory entered_model flag is not
+        # visible to the tool call. In that case, require the live Hermes session
+        # to still match the same actor and, when known, the same session before
+        # letting the tool's own role/permission/writeback checks proceed.
+        if not entered_model and not (same_session_user and (same_session or not str(item.get("session_id") or ""))):
             return None
         return {
             "ledger_id": str(item.get("ledger_id") or ""),
