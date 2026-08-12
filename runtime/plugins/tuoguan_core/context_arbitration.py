@@ -6,6 +6,8 @@ from dataclasses import asdict, dataclass
 from datetime import datetime
 from typing import Any
 
+from .tenant_context import current_tenant_id
+
 
 TASK_QUERY_TEXTS = {"我的任务", "我的今日任务", "查看我的任务", "查看我的今日任务", "查看我的待办任务"}
 NEXT_TASK_TEXTS = {"继续下一个任务", "继续下一个", "下一个任务", "开始下一个任务", "处理下一个任务"}
@@ -88,7 +90,7 @@ def arbitrate(
     if (role in {"boss", "manager"} or safety_context) and any(mark in value for mark in SAFETY_REVIEW_MARKERS):
         return ArbitrationDecision("selected", "safety_workflow_coach", "pending_safety_review", ("explicit_safety_review",))
     if role in {"boss", "manager"} and any(mark in value for mark in BOSS_MARKERS):
-        return ArbitrationDecision("selected", "management_boss_advisor", "youyi_tuoguan", ("explicit_management_query",))
+        return ArbitrationDecision("selected", "management_boss_advisor", current_tenant_id(), ("explicit_management_query",))
     if named_students and any(mark in value for mark in STUDENT_RECORD_MARKERS):
         if task_context and task_student in named_students:
             return ArbitrationDecision("selected", "teacher_task_guidance", str(task_context.get("task_id") or ""), ("task_contract_student_observation",), context_used="ordinary_task")

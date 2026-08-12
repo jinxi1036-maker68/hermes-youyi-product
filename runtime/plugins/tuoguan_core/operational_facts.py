@@ -15,6 +15,7 @@ from typing import Any
 from .models import UserIdentity
 from .responsibility_resolver import REGULAR_PROGRAM_ID, SUMMER_PROGRAM_ID, regular_manager_names
 from .store import TuoguanStore
+from .tenant_context import current_tenant_id
 
 
 FACTS_FILE = "operational_facts.json"
@@ -55,7 +56,7 @@ def _read_facts(store: TuoguanStore) -> dict[str, Any]:
     if not isinstance(data, dict):
         data = {}
     data.setdefault("schema_version", 1)
-    data.setdefault("tenant_id", "youyi_tuoguan")
+    data.setdefault("tenant_id", current_tenant_id())
     data.setdefault("facts", [])
     data.setdefault("updated_at", "")
     if not isinstance(data["facts"], list):
@@ -135,7 +136,7 @@ def submit_operational_fact_candidate(
         status = "pending_confirmation"
     candidate = {
         "candidate_id": _candidate_id(),
-        "tenant_id": "youyi_tuoguan",
+        "tenant_id": current_tenant_id(),
         "fact_type": fact_type,
         "subject": subject,
         "value": deepcopy(value),
@@ -182,7 +183,7 @@ def _upsert_fact_from_candidate(store: TuoguanStore, candidate: dict[str, Any], 
             break
     row = {
         "fact_id": existing.get("fact_id") if existing else _fact_id(),
-        "tenant_id": "youyi_tuoguan",
+        "tenant_id": current_tenant_id(),
         "fact_type": candidate.get("fact_type"),
         "subject": candidate.get("subject"),
         "value": deepcopy(candidate.get("value")),

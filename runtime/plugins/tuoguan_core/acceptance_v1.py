@@ -24,6 +24,7 @@ from .digital_employee_state import (
 )
 from .models import UserIdentity
 from .store import TuoguanStore
+from .tenant_context import current_tenant_id
 from .tools import TOOLS
 from .wakeup_v2 import _term_state
 
@@ -131,7 +132,7 @@ def run_acceptance_v1_dry_run(
     deferred = [item for item in scenarios if item["status"] == "deferred"]
     summary = {
         "schema_version": 1,
-        "tenant_id": "youyi_tuoguan",
+        "tenant_id": current_tenant_id(),
         "report_type": "acceptance_v1_dry_run",
         "generated_at": timestamp.isoformat(timespec="seconds"),
         "read_only": True,

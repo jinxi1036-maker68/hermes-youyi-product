@@ -6,7 +6,7 @@ from datetime import datetime
 from typing import Any
 
 from .models import UserIdentity
-from .operations_query import TENANT_ID, query_operations
+from .operations_query import query_operations
 from .store import TuoguanStore
 
 
@@ -18,7 +18,7 @@ def generate_operations_daily_report(
     store: TuoguanStore,
     *,
     identity: UserIdentity,
-    expected_tenant_id: str = TENANT_ID,
+    expected_tenant_id: str = "",
 ) -> dict[str, Any]:
     source = query_operations(
         store,

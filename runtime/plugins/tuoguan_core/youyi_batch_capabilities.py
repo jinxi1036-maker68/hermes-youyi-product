@@ -15,9 +15,9 @@ from typing import Any
 
 from .programs import student_program_ids
 from .store import TuoguanStore
+from .tenant_context import current_tenant_id
 
 
-TENANT_ID = "youyi_tuoguan"
 SUMMER_PROGRAM_ID = "summer_2026"
 FORMAL_STATUS = "active"
 
@@ -80,7 +80,7 @@ def register_official_student(
         "grade": str(grade or ""),
         "status": FORMAL_STATUS,
         "program_enrollments": [{"program_id": "regular_tuoguan", "status": FORMAL_STATUS, "created_at": _stamp()}],
-        "tenant_id": TENANT_ID,
+        "tenant_id": current_tenant_id(),
         "channel": channel,
         "created_by": teacher_user_id,
         "created_at": _stamp(),
@@ -121,14 +121,14 @@ def register_summer_student(
     profile["phone"] = phone
     profile["grade"] = grade
     profile["summer_status"] = FORMAL_STATUS
-    profile["tenant_id"] = TENANT_ID
+    profile["tenant_id"] = current_tenant_id()
     profile["channel"] = channel
     relations = profile.get("program_enrollments") if isinstance(profile.get("program_enrollments"), list) else []
     relations = [item for item in relations if not (isinstance(item, dict) and item.get("program_id") == SUMMER_PROGRAM_ID)]
     relations.append({"program_id": SUMMER_PROGRAM_ID, "status": FORMAL_STATUS, "created_at": _stamp()})
     profile["program_enrollments"] = relations
     students[name] = profile
-    enrollment = {"program_id": SUMMER_PROGRAM_ID, "program_name": "2026暑假班", "student_name": name, "grade": grade, "parent_phone": phone, "attendance_mode": attendance_mode or "full_day", "status": FORMAL_STATUS, "created_by": created_by, "tenant_id": TENANT_ID, "channel": channel, "created_at": _stamp(), "updated_at": _stamp()}
+    enrollment = {"program_id": SUMMER_PROGRAM_ID, "program_name": "2026暑假班", "student_name": name, "grade": grade, "parent_phone": phone, "attendance_mode": attendance_mode or "full_day", "status": FORMAL_STATUS, "created_by": created_by, "tenant_id": current_tenant_id(), "channel": channel, "created_at": _stamp(), "updated_at": _stamp()}
     enrollments.append(enrollment)
     store.write_json("students.json", students)
     store.write_json("summer_enrollments.json", enrollments)
@@ -165,7 +165,7 @@ def create_trial_lead(
         return {"ok": verified, "already_applied": True, "lead_id": existing.get("lead_id"), "task_ids": [task.get("id") for task in linked], "writeback_verified": verified}
     now = _now()
     lead_id = f"lead_{uuid.uuid4().hex[:12]}"
-    lead = {"lead_id": lead_id, "student_name": name, "parent_phone": phone, "age_or_grade": age_or_grade, "observation": observation, "recorder_user_id": recorder_user_id, "status": "pending_follow_up", "tenant_id": TENANT_ID, "channel": channel, "created_at": _stamp(now)}
+    lead = {"lead_id": lead_id, "student_name": name, "parent_phone": phone, "age_or_grade": age_or_grade, "observation": observation, "recorder_user_id": recorder_user_id, "status": "pending_follow_up", "tenant_id": current_tenant_id(), "channel": channel, "created_at": _stamp(now)}
     leads.append(lead)
     tasks = store.load_tasks()
     specs = [
@@ -177,7 +177,7 @@ def create_trial_lead(
     for title, due in specs:
         task_id = f"task_{uuid.uuid4().hex[:12]}"
         task_ids.append(task_id)
-        tasks.append({"id": task_id, "title": f"{name}｜{title}", "type": "trial_lead_follow_up", "level": "A", "status": "pending", "student_name": name, "assignee_userid": recorder_user_id, "trial_lead_id": lead_id, "due_at": _stamp(due), "created_at": _stamp(now), "tenant_id": TENANT_ID, "channel": channel, "source": "试听线索自动生成"})
+        tasks.append({"id": task_id, "title": f"{name}｜{title}", "type": "trial_lead_follow_up", "level": "A", "status": "pending", "student_name": name, "assignee_userid": recorder_user_id, "trial_lead_id": lead_id, "due_at": _stamp(due), "created_at": _stamp(now), "tenant_id": current_tenant_id(), "channel": channel, "source": "试听线索自动生成"})
     store.write_json("trial_leads.json", leads)
     store.save_tasks(tasks)
     lead_ok = any(isinstance(item, dict) and item.get("lead_id") == lead_id for item in store.read_json("trial_leads.json", []))
@@ -191,7 +191,7 @@ def create_assigned_task(store: TuoguanStore, *, title: str, assignee_user_id: s
         return {"ok": False, "reason_code": "missing_required_fields", "writeback_verified": False}
     signature = (str(title).strip(), assignee_user_id, due_at, student_name)
     task_id = f"task_{uuid.uuid4().hex[:12]}"
-    task = {"id": task_id, "title": str(title).strip(), "type": "manual_assignment", "level": level if level in {"S", "A", "B", "C"} else "A", "status": "pending", "student_name": student_name, "assignee_userid": assignee_user_id, "created_by": created_by, "due_at": due_at, "created_at": _stamp(), "tenant_id": TENANT_ID, "channel": channel}
+    task = {"id": task_id, "title": str(title).strip(), "type": "manual_assignment", "level": level if level in {"S", "A", "B", "C"} else "A", "status": "pending", "student_name": student_name, "assignee_userid": assignee_user_id, "created_by": created_by, "due_at": due_at, "created_at": _stamp(), "tenant_id": current_tenant_id(), "channel": channel}
     selected: dict[str, Any] = {}
     already_applied = False
 

@@ -13,9 +13,9 @@ from .ai_coach_foundation import LLMUnderstandingAdapter, analyze_record_v2
 from .models import UserIdentity
 from .store import TuoguanStore
 from .student_resolver import all_student_names, resolve_student_for_record
+from .tenant_context import current_tenant_id
 
 
-TENANT_ID = "youyi_tuoguan"
 CONFIG_FILE = "ai_coach_feature_flags.json"
 DRAFT_FILE = "student_record_drafts.json"
 EVENT_FILE = "ai_coach_guidance_events.jsonl"
@@ -53,7 +53,7 @@ def _drafts(store: TuoguanStore) -> dict[str, Any]:
 
 
 def _key(identity: UserIdentity) -> str:
-    return f"{TENANT_ID}:{identity.canonical_user_id}"
+    return f"{current_tenant_id()}:{identity.canonical_user_id}"
 
 
 def get_draft(store: TuoguanStore, identity: UserIdentity) -> tuple[dict[str, Any] | None, bool]:
@@ -118,12 +118,12 @@ def evaluate(
     config = _read_config(store)
     ttl_minutes = max(1, int(config.get("draft_ttl_minutes") or 20))
     payload = {
-        "tenant_id": TENANT_ID,
+        "tenant_id": current_tenant_id(),
         "actor_user_id": identity.canonical_user_id,
         "actor_role": identity.role,
         "message": raw_text,
         "enabled_capability_contracts": ["student_daily_record"],
-        "system_owned_facts": {"tenant_id": TENANT_ID, "actor_role": identity.role, "channel": "wecom_callback"},
+        "system_owned_facts": {"tenant_id": current_tenant_id(), "actor_role": identity.role, "channel": "wecom_callback"},
         "student_record_draft": draft or {},
         "context_expired": expired,
     }
@@ -180,12 +180,12 @@ def evaluate(
     if message_id not in source_ids:
         source_ids.append(message_id)
     row = _write_draft(store, identity, {
-        "context_type": "student_record_draft", "tenant_id": TENANT_ID,
+        "context_type": "student_record_draft", "tenant_id": current_tenant_id(),
         "actor_user_id": identity.canonical_user_id, "actor_role": identity.role,
         "student_candidate": resolved_name, "resolved_student_id": str(profile.get("student_id") or ""),
         "record_scene": quality.scene,
         "confirmed_user_facts": {"root_text": combined, "sources": ["user_statement"]},
-        "system_owned_facts": {"tenant_id": TENANT_ID, "actor_role": identity.role, "program_id": str(profile.get("program_id") or "")},
+        "system_owned_facts": {"tenant_id": current_tenant_id(), "actor_role": identity.role, "program_id": str(profile.get("program_id") or "")},
         "missing_observation_dimensions": list(quality.missing_dimensions),
         "pending_question": quality.suggested_question,
         "root_message_id": str(draft.get("root_message_id") or message_id) if draft else message_id,

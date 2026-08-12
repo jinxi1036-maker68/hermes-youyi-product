@@ -5,6 +5,8 @@ from __future__ import annotations
 from copy import deepcopy
 from typing import Any
 
+from .tenant_context import current_tenant_id
+
 
 CONTRACTS: dict[str, dict[str, Any]] = {
     "teacher_task_guidance": {
@@ -70,12 +72,12 @@ def contract(capability_id: str) -> dict[str, Any] | None:
     return deepcopy(row) if row else None
 
 
-def validate_contract(capability_id: str, *, role: str, tenant_id: str, expected_tenant_id: str = "youyi_tuoguan") -> tuple[bool, str]:
+def validate_contract(capability_id: str, *, role: str, tenant_id: str, expected_tenant_id: str = "") -> tuple[bool, str]:
     row = CONTRACTS.get(str(capability_id or ""))
     if not row:
         return False, "capability_contract_missing"
     if str(role or "") not in row["allowed_roles"]:
         return False, "permission_denied"
-    if str(tenant_id or "") != expected_tenant_id:
+    if str(tenant_id or "") != str(expected_tenant_id or current_tenant_id()):
         return False, "cross_tenant_denied"
     return True, "allowed"

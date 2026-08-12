@@ -9,14 +9,15 @@ from .models import UserIdentity
 from .programs import SUMMER_PROGRAM_ID, canonical_program_id
 from .permissions import PermissionService
 from .store import TuoguanStore
+from .tenant_context import current_tenant_id
 
 
 ACTIVE_STATUSES = {"active", "phone_pending"}
-TENANT_ID = "youyi_tuoguan"
 
 
 def _same_tenant(item: dict[str, Any]) -> bool:
-    return str(item.get("tenant_id") or TENANT_ID) == TENANT_ID
+    tenant_id = current_tenant_id()
+    return str(item.get("tenant_id") or tenant_id) == tenant_id
 
 
 def _active_profile(profile: dict[str, Any]) -> bool:
@@ -83,7 +84,7 @@ def active_summer_students(store: TuoguanStore) -> dict[str, dict[str, Any]]:
             "student_id": next(iter(student_ids), str(merged.get("student_id") or "")),
             "program_id": SUMMER_PROGRAM_ID,
             "status": "active",
-            "tenant_id": TENANT_ID,
+            "tenant_id": current_tenant_id(),
             "resolution_ambiguous": len(student_ids) > 1 or (len(enrollment_rows) > 1 and len(enrollment_phones) > 1),
             "compatibility_warning": ["phone_conflict_between_sources"] if len(phones) > 1 else [],
         })
@@ -156,6 +157,6 @@ def resolve_student_for_record(
     result.update({
         "student_name": requested,
         "program_id": canonical_program_id(profile.get("program_id")),
-        "tenant_id": TENANT_ID,
+        "tenant_id": current_tenant_id(),
     })
     return requested, result

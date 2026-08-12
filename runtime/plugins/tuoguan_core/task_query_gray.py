@@ -11,11 +11,11 @@ from pathlib import Path
 from typing import Any
 
 from .store import TuoguanStore
+from .tenant_context import current_tenant_id
 
 
 CAPABILITY = "老师本人任务查询"
 TOOL_NAME = "tuoguan_query_tasks"
-TENANT_ID = "youyi_tuoguan"
 _MY_TASK_PHRASES = {"我的任务", "我的今日任务"}
 _ALL_TASK_PHRASES = {"查看全员任务"}
 _LOCK = threading.RLock()
@@ -86,7 +86,7 @@ def begin_inbound(
         "ledger_id": ledger_id,
         "message_id": str(message_id or ledger_id),
         "conversation_id": str(conversation_id or user_id),
-        "tenant_id": TENANT_ID,
+        "tenant_id": current_tenant_id(),
         "channel": "wecom_callback",
         "user_id": user_id,
         "role": role,
@@ -202,7 +202,7 @@ def transform_final_response(*, store: TuoguanStore, session_id: str, response_t
         audit_payload = {
             "audit_event_id": audit_id,
             "ledger_id": item["ledger_id"],
-            "tenant_id": TENANT_ID,
+            "tenant_id": current_tenant_id(),
             "channel": "wecom_callback",
             "actor_user_id": item["user_id"],
             "actor_role": item["role"],

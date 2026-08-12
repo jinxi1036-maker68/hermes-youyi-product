@@ -11,9 +11,9 @@ from typing import Any
 from .models import UserIdentity
 from .store import TuoguanStore, TuoguanStoreError
 from .student_resolver import active_summer_students
+from .tenant_context import current_tenant_id
 
 
-TENANT_ID = "youyi_tuoguan"
 COMPLETED_STATUSES = {"completed", "done", "cancelled", "closed"}
 
 
@@ -64,14 +64,14 @@ def query_operations(
     identity: UserIdentity,
     query_type: str = "overview",
     teacher_name: str = "",
-    expected_tenant_id: str = TENANT_ID,
+    expected_tenant_id: str = "",
     allowed_roles: tuple[str, ...] = ("boss",),
 ) -> dict[str, Any]:
     if identity.approval_state != "approved":
         return {"ok": False, "reason_code": "permission_denied", "message": "当前账号尚未授权，不能查看机构经营数据。"}
     if identity.role not in set(allowed_roles):
         return {"ok": False, "reason_code": "permission_denied", "message": "经营数据仅限老板查看。"}
-    if expected_tenant_id != TENANT_ID:
+    if str(expected_tenant_id or current_tenant_id()) != current_tenant_id():
         return {"ok": False, "reason_code": "cross_tenant_denied", "message": "不能跨机构查询经营数据。"}
 
     today = _today()

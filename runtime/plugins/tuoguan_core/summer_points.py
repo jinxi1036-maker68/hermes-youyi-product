@@ -11,10 +11,10 @@ import uuid
 from .models import UserIdentity
 from .store import TuoguanStore
 from .student_resolver import active_summer_students, resolve_active_summer_student
+from .tenant_context import current_tenant_id
 
 
 PROGRAM_ID = "summer_2026"
-TENANT_ID = "youyi_tuoguan"
 CHANNEL = "wecom_callback"
 _VALID_REASON_TYPES = {"reward", "penalty", "exchange", "auction", "correction"}
 
@@ -177,8 +177,8 @@ def change_points(
         "source_message_id": str(source_message_id or operation_id),
         "operation_id": str(operation_id),
         "created_at": stamp,
-        "tenant": "youyi",
-        "tenant_id": TENANT_ID,
+        "tenant": current_tenant_id(),
+        "tenant_id": current_tenant_id(),
         "program_id": PROGRAM_ID,
         "writeback_verified": True,
     }

@@ -11,9 +11,9 @@ from .models import UserIdentity
 from .programs import SUMMER_PROGRAM_ID, canonical_program_id
 from .store import TuoguanStore
 from .student_resolver import resolve_student_for_record
+from .tenant_context import current_tenant_id
 
 
-TENANT_ID = "youyi_tuoguan"
 CHANNEL = "wecom_callback"
 
 
@@ -86,7 +86,7 @@ def create_daily_record(
     record = {
         "record_id": record_id,
         "id": record_id,
-        "tenant_id": TENANT_ID,
+        "tenant_id": current_tenant_id(),
         "student_id": str(profile.get("student_id") or ""),
         "student_name": name,
         "program_id": program_id,

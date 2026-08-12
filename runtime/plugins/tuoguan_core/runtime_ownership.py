@@ -8,6 +8,8 @@ import hashlib
 import re
 from typing import Any
 
+from .tenant_context import current_tenant_id
+
 
 _CLOSED = {"closed", "completed", "done", "cancelled", "canceled"}
 _CLAIMS = {
@@ -42,7 +44,7 @@ def active_business_owner(store: Any, identity: Any, source_message_id: str) -> 
     payload = store.read_json("core_workflow_contexts.json", {})
     if not isinstance(payload, dict):
         return None
-    tenant_id = "youyi_tuoguan"
+    tenant_id = current_tenant_id()
     prefix = f"{tenant_id}:{identity.canonical_user_id}:"
     candidates: list[tuple[int, str, dict[str, Any]]] = []
     for key, row in payload.items():

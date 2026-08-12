@@ -22,6 +22,7 @@ from pathlib import Path
 from typing import Any
 
 from .store import TuoguanStore
+from .tenant_context import current_tenant_id
 
 
 INCIDENTS_FILE = "learning_incidents.jsonl"
@@ -329,7 +330,7 @@ def record_learning_from_ledger(store: TuoguanStore, ledger_item: dict[str, Any]
         previous = _latest_previous_ledger(store, ledger_id)
         _append_jsonl(store, CORRECTIONS_FILE, {
             "correction_id": f"correction_{uuid.uuid4().hex[:12]}",
-            "tenant_id": "youyi_tuoguan",
+            "tenant_id": current_tenant_id(),
             "actor_user_id": str(ledger_item.get("user_id") or ""),
             "actor_role": str(ledger_item.get("role") or ""),
             "original_role": str(previous.get("role") or ledger_item.get("role") or ""),
@@ -554,7 +555,7 @@ def run_learning_replay_check(store: TuoguanStore, *, adapter: Any = None) -> di
             config_path.write_text(json.dumps({
                 "enabled": True,
                 "mode": "production",
-                "tenant_id": str(source_case.get("tenant_id") or "youyi_tuoguan"),
+                "tenant_id": str(source_case.get("tenant_id") or current_tenant_id()),
                 "production_data_dir": str(tmp_data),
                 "allow_business_write": False,
                 "allow_runtime_reply_change": False,
@@ -563,7 +564,7 @@ def run_learning_replay_check(store: TuoguanStore, *, adapter: Any = None) -> di
             }, ensure_ascii=False), encoding="utf-8")
             planned = create_production_plan(
                 data_dir=tmp_data,
-                tenant_id=str(source_case.get("tenant_id") or "youyi_tuoguan"),
+                tenant_id=str(source_case.get("tenant_id") or current_tenant_id()),
                 actor_user_id=str(source_case.get("user_id") or "replay_actor"),
                 actor_role=str(source_case.get("role") or "teacher"),
                 source_message_id=str(source_case.get("case_id") or candidate.get("candidate_id") or "replay"),
@@ -657,7 +658,7 @@ def process_pending_corrections(
             continue
         planned = create_production_plan(
             data_dir=store.data_dir,
-            tenant_id=str(correction.get("tenant_id") or "youyi_tuoguan"),
+            tenant_id=str(correction.get("tenant_id") or current_tenant_id()),
             actor_user_id=actor_user_id or "correction_actor",
             actor_role=actor_role or "teacher",
             source_message_id=correction_id,
@@ -718,7 +719,7 @@ def process_pending_corrections(
             "status": "pending_review",
             "source_incident_id": incident_id,
             "source_correction_id": correction_id,
-            "tenant_id": str(correction.get("tenant_id") or "youyi_tuoguan"),
+            "tenant_id": str(correction.get("tenant_id") or current_tenant_id()),
             "user_id": actor_user_id or "correction_actor",
             "role": actor_role or "teacher",
             "raw_text": original_text,

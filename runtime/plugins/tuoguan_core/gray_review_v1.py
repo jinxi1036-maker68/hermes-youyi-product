@@ -17,6 +17,7 @@ from .acceptance_v1 import run_acceptance_v1_dry_run
 from .digital_employee_state import query_gray_observations, query_gray_rollout_decisions
 from .models import UserIdentity
 from .store import TuoguanStore
+from .tenant_context import current_tenant_id
 from .wakeup_v2 import run_wakeup_v2_dry_run
 
 
@@ -44,7 +45,7 @@ def run_gray_review_v1(
     suggestions = _review_suggestions(acceptance, observations, wakeup, latest_rollout_decision)
     summary = {
         "schema_version": 1,
-        "tenant_id": "youyi_tuoguan",
+        "tenant_id": current_tenant_id(),
         "report_type": "gray_review_v1",
         "generated_at": timestamp.isoformat(timespec="seconds"),
         "read_only": True,
