@@ -129,6 +129,29 @@ def test_wecom_multi_app_resolution_fails_closed_for_unknown_bare_user():
     assert adapter._resolve_app_for_chat("teacher1")["name"] == "tenant-a"
 
 
+def test_wecom_tuoguan_import_falls_back_to_v020_dynamic_namespace(monkeypatch):
+    from plugins.platforms.wecom import callback_adapter
+
+    sentinel = object()
+    requested = []
+
+    def fake_import(name):
+        requested.append(name)
+        if name.startswith("plugins.tuoguan_core"):
+            error = ModuleNotFoundError(name)
+            error.name = "plugins.tuoguan_core"
+            raise error
+        return sentinel
+
+    monkeypatch.setattr(callback_adapter.importlib, "import_module", fake_import)
+
+    assert callback_adapter._import_tuoguan_module("dashboard_http") is sentinel
+    assert requested == [
+        "plugins.tuoguan_core.dashboard_http",
+        "hermes_plugins.tuoguan_core.dashboard_http",
+    ]
+
+
 def test_completed_runtime_turn_cannot_authorize_or_leak_raw_text(tmp_path):
     from plugins.tuoguan_core.runtime_foundation import (
         begin_inbound,

@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import importlib
 import logging
 import os
 from pathlib import Path
@@ -65,6 +66,23 @@ DEFAULT_PATH = "/wecom/callback"
 # unauthenticated POST can force before signature verification.
 _MAX_BODY = 65_536
 ACCESS_TOKEN_TTL_SECONDS = 7200
+
+
+def _import_tuoguan_module(name: str):
+    """Resolve Tuoguan modules in package and Hermes v0.20 plugin namespaces."""
+
+    last_error: ModuleNotFoundError | None = None
+    for root in ("plugins.tuoguan_core", "hermes_plugins.tuoguan_core"):
+        module_name = f"{root}.{name}"
+        try:
+            return importlib.import_module(module_name)
+        except ModuleNotFoundError as exc:
+            if exc.name not in {"plugins", "plugins.tuoguan_core", root, module_name}:
+                raise
+            last_error = exc
+    if last_error is not None:
+        raise last_error
+    raise ModuleNotFoundError(name)
 
 
 def check_wecom_callback_requirements() -> bool:
@@ -157,7 +175,8 @@ class WecomCallbackAdapter(BasePlatformAdapter):
             self._app.router.add_get(self._path, self._handle_verify)
             self._app.router.add_post(self._path, self._handle_callback)
             try:
-                from plugins.tuoguan_core.dashboard_http import register_wecom_callback_routes
+                dashboard_http = _import_tuoguan_module("dashboard_http")
+                register_wecom_callback_routes = dashboard_http.register_wecom_callback_routes
 
                 if register_wecom_callback_routes(self._app, self):
                     logger.info("[WecomCallback] Tuoguan dashboard routes registered")
@@ -277,9 +296,9 @@ class WecomCallbackAdapter(BasePlatformAdapter):
             import re
             from urllib.parse import quote
 
-            from plugins.tuoguan_core.dashboard_auth import sign_dashboard_token
-            from plugins.tuoguan_core.identity import IdentityService
-            from plugins.tuoguan_core.store import TuoguanStore
+            sign_dashboard_token = _import_tuoguan_module("dashboard_auth").sign_dashboard_token
+            IdentityService = _import_tuoguan_module("identity").IdentityService
+            TuoguanStore = _import_tuoguan_module("store").TuoguanStore
 
             touser = str(chat_id or "").split(":", 1)[1] if ":" in str(chat_id or "") else str(chat_id or "")
             base_url = str(os.getenv("HERMES_TUOGUAN_DASHBOARD_BASE_URL") or "").strip()
