@@ -196,6 +196,54 @@ def test_pre_llm_call_injects_narrow_rule_for_explicit_write(tmp_path, monkeypat
     assert write_authorization_for("boss1", "change_summer_points") is not None
 
 
+def test_pre_llm_call_authorizes_model_selected_task_cancel(tmp_path, monkeypatch):
+    import plugins.tuoguan_core as plugin
+    from plugins.tuoguan_core.models import UserIdentity
+    from plugins.tuoguan_core.runtime_foundation import clear_runtime_state, write_authorization_for
+    from plugins.tuoguan_core.store import TuoguanStore
+
+    clear_runtime_state()
+    store = TuoguanStore(tmp_path)
+    manual_context = tmp_path / "manual_context"
+    manual_context.mkdir()
+    (manual_context / "hermes_model_context_injection_allowlist_v1.json").write_text(
+        json.dumps(
+            {
+                "runtime_foundation": {"enabled": True},
+                "allowed_capability_cards": [],
+            }
+        ),
+        encoding="utf-8",
+    )
+    fake_router = SimpleNamespace(
+        store=store,
+        identities=SimpleNamespace(
+            resolve=lambda *args, **kwargs: UserIdentity(
+                platform="wecom",
+                platform_user_id="boss1",
+                canonical_user_id="boss1",
+                person_name="金总",
+                role="boss",
+                approval_state="approved",
+            )
+        ),
+    )
+    monkeypatch.setattr(plugin, "_router", lambda: fake_router)
+
+    result = plugin._on_pre_llm_call(
+        platform=Platform.WECOM_CALLBACK,
+        sender_id="wecom_callback:boss1",
+        session_id="session-cancel",
+        turn_id="turn-cancel",
+        user_message="这个任务直接关闭删除",
+    )
+
+    assert result is not None
+    assert write_authorization_for("boss1", "cancel_task") is not None
+    assert write_authorization_for("boss1", "submit_fact_gap_candidate") is not None
+    assert write_authorization_for("boss1", "submit_relationship_touch_candidate") is not None
+
+
 def test_pre_llm_call_injects_workstyle_feedback_contract(tmp_path, monkeypatch):
     import plugins.tuoguan_core as plugin
     from plugins.tuoguan_core.models import UserIdentity
