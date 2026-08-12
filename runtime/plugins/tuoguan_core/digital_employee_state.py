@@ -5099,19 +5099,22 @@ def _xiaoyou_daily_report_health(outbox: list[Any], daily_runs: list[dict[str, A
     daily_outbox = [
         item for item in outbox
         if isinstance(item, dict) and str(item.get("notification_type") or "") == "autonomous_daily_report"
+        and _valid_daily_report_timing(item)
+    ]
+    valid_daily_runs = [
+        row for row in daily_runs
+        if isinstance(row, dict) and _valid_daily_report_timing(row)
     ]
     for item in daily_outbox:
         kind = _daily_report_kind(item)
         if kind in by_kind:
             by_kind[kind] = _newer_daily_report_item(by_kind[kind], item)
-    for row in daily_runs:
-        if not isinstance(row, dict):
-            continue
+    for row in valid_daily_runs:
         kind = str(row.get("report_kind") or "")
         if kind in by_kind:
             by_kind[kind] = _newer_daily_report_item(by_kind[kind], row)
     sent_rows = []
-    for item in daily_outbox + daily_runs:
+    for item in daily_outbox + valid_daily_runs:
         if not isinstance(item, dict):
             continue
         status = str(item.get("delivery_status") or item.get("status") or "")
@@ -5129,6 +5132,27 @@ def _xiaoyou_daily_report_health(outbox: list[Any], daily_runs: list[dict[str, A
             for kind, item in by_kind.items()
         },
     }
+
+
+def _valid_daily_report_timing(item: dict[str, Any]) -> bool:
+    notification_id = str(item.get("notification_id") or item.get("id") or "")
+    if "deploy_misfire" in notification_id:
+        return False
+    kind = _daily_report_kind(item)
+    if kind not in {"morning", "evening"}:
+        return False
+    observed = _parse_time(
+        item.get("sent_at")
+        or item.get("observed_at")
+        or item.get("queued_at")
+        or item.get("created_at")
+    )
+    if observed is None:
+        return False
+    minute = observed.hour * 60 + observed.minute
+    if kind == "morning":
+        return 7 * 60 + 30 <= minute <= 10 * 60 + 30
+    return 19 * 60 + 30 <= minute <= 23 * 60
 
 
 def _xiaoyou_outbox_health(outbox: list[Any], since_ts: float) -> dict[str, Any]:

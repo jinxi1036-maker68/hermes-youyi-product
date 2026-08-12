@@ -114,14 +114,6 @@ def append_message(
 ) -> tuple[dict[str, Any], bool]:
     now = datetime.now().isoformat(timespec="seconds")
     key = str(idempotency_key or "").strip()
-    if key:
-        index = store.read_json(MESSAGE_HISTORY_INDEX_FILE, {})
-        index = index if isinstance(index, dict) else {}
-        existing_id = str(index.get(key) or "")
-        if existing_id:
-            return {"id": existing_id, "idempotency_key": key}, False
-    else:
-        index = {}
     entry = {
         "id": f"msg_{uuid.uuid4().hex}",
         "conversation_id": str(conversation_id),
@@ -141,16 +133,40 @@ def append_message(
         "created_at": now,
         "visible_to_model": not (str(direction) == "outbound" and str(source) in {"system_push", "deterministic_fallback"}),
     }
-    path = store.path_for(MESSAGE_HISTORY_FILE)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    with store._lock:
-        with path.open("a", encoding="utf-8") as handle:
-            handle.write(json.dumps(entry, ensure_ascii=False) + "\n")
     if key:
-        index[key] = entry["id"]
-        if len(index) > MAX_INDEX_ENTRIES:
-            index = dict(list(index.items())[-MAX_INDEX_ENTRIES:])
-        store.write_json(MESSAGE_HISTORY_INDEX_FILE, index)
+        claim: dict[str, str] = {"existing_id": ""}
+
+        def claim_key(value: Any) -> Any:
+            index = value if isinstance(value, dict) else {}
+            existing_id = str(index.get(key) or "")
+            if existing_id:
+                claim["existing_id"] = existing_id
+                from .store import JSON_NO_CHANGE
+
+                return JSON_NO_CHANGE
+            index[key] = entry["id"]
+            if len(index) > MAX_INDEX_ENTRIES:
+                index = dict(list(index.items())[-MAX_INDEX_ENTRIES:])
+            return index
+
+        store.update_json(MESSAGE_HISTORY_INDEX_FILE, {}, claim_key)
+        if claim["existing_id"]:
+            return {"id": claim["existing_id"], "idempotency_key": key}, False
+    try:
+        store.append_jsonl_verified(MESSAGE_HISTORY_FILE, entry)
+    except Exception:
+        if key:
+            def release_key(value: Any) -> Any:
+                index = value if isinstance(value, dict) else {}
+                if str(index.get(key) or "") != entry["id"]:
+                    from .store import JSON_NO_CHANGE
+
+                    return JSON_NO_CHANGE
+                index.pop(key, None)
+                return index
+
+            store.update_json(MESSAGE_HISTORY_INDEX_FILE, {}, release_key)
+        raise
     return entry, True
 
 

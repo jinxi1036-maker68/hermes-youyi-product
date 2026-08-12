@@ -586,10 +586,7 @@ def _blocked_result(run_id: str, platform: str, command: str, query: str, timest
 
 
 def _append_jsonl(store: TuoguanStore, name: str, row: dict[str, Any]) -> None:
-    path = store.path_for(name)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    with path.open("a", encoding="utf-8") as handle:
-        handle.write(json.dumps(row, ensure_ascii=False, separators=(",", ":")) + "\n")
+    store.append_jsonl_verified(name, row)
 
 
 def _read_jsonl(store: TuoguanStore, name: str) -> list[dict[str, Any]]:

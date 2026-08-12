@@ -11,7 +11,7 @@ def system_identity() -> UserIdentity:
         platform="system",
         platform_user_id="autonomous_employee_loop",
         canonical_user_id="autonomous_employee_loop",
-        person_name="Hermes autonomous employee",
+        person_name="小优",
         role="boss",
         approval_state="approved",
     )

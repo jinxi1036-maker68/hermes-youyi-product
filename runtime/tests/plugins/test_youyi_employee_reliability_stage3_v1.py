@@ -58,6 +58,47 @@ def test_jsonl_append_is_locked_flushed_and_read_back(tmp_path: Path):
     assert {row["record_id"] for row in rows} == {f"r-{index}" for index in range(30)}
 
 
+def test_jsonl_update_and_append_share_one_resource_lock(tmp_path: Path):
+    from plugins.tuoguan_core.store import TuoguanStore
+
+    store = TuoguanStore(tmp_path)
+    store.append_jsonl_verified("reply_ledger.jsonl", {"record_id": "base", "audit_ids": []})
+
+    def append_row(index: int) -> None:
+        store.append_jsonl_verified("reply_ledger.jsonl", {"record_id": f"append-{index}"})
+
+    def update_base(index: int) -> None:
+        def mutate(rows: list[dict]) -> list[dict]:
+            base = next(row for row in rows if row.get("record_id") == "base")
+            base.setdefault("audit_ids", []).append(f"audit-{index}")
+            return rows
+
+        store.update_jsonl_verified("reply_ledger.jsonl", mutate)
+
+    with ThreadPoolExecutor(max_workers=8) as pool:
+        futures = [pool.submit(append_row, index) for index in range(15)]
+        futures.extend(pool.submit(update_base, index) for index in range(15))
+        for future in futures:
+            future.result()
+
+    rows = [json.loads(line) for line in (tmp_path / "reply_ledger.jsonl").read_text(encoding="utf-8").splitlines()]
+    assert {row["record_id"] for row in rows if row["record_id"].startswith("append-")} == {
+        f"append-{index}" for index in range(15)
+    }
+    base = next(row for row in rows if row["record_id"] == "base")
+    assert set(base["audit_ids"]) == {f"audit-{index}" for index in range(15)}
+
+
+def test_public_reply_uses_xiaoyou_name_but_preserves_technical_version_reference():
+    from plugins.tuoguan_core.runtime_foundation import _sanitize_external_reply
+
+    assert _sanitize_external_reply("Hermes 已整理了内部工作材料。", used_trusted_tool=True) == "小优已整理了内部工作材料。"
+    assert "Hermes v0.20" in _sanitize_external_reply("Hermes v0.20 是当前底座版本。", used_trusted_tool=True)
+    mixed = _sanitize_external_reply("当前版本正常，但我不是 Hermes 助手；底层是 Hermes v0.20。", used_trusted_tool=True)
+    assert "我不是小优助手" in mixed
+    assert "Hermes v0.20" in mixed
+
+
 def test_self_evolution_is_deduplicated_scoped_and_applied(tmp_path: Path):
     from plugins.tuoguan_core.self_evolution import (
         SELF_EVOLUTION_EVENTS_FILE,

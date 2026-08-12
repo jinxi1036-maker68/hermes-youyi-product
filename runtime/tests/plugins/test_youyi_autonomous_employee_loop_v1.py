@@ -180,6 +180,23 @@ def test_autonomous_materials_use_confirmed_public_employee_name(tmp_path):
     assert "数字员工小优" in _DIAGNOSIS_PROMPT
 
 
+def test_autonomous_materials_default_public_employee_name_is_xiaoyou(tmp_path):
+    from plugins.tuoguan_core.autonomous_employee_loop import build_employee_loop_materials
+    from plugins.tuoguan_core.models import UserIdentity
+
+    store = _seed_store(tmp_path)
+    identity = UserIdentity("system", "boss1", "boss1", "金总", "boss", "approved")
+    materials = build_employee_loop_materials(
+        store,
+        identity=identity,
+        timestamp=datetime(2026, 8, 12, 14, 0, tzinfo=timezone(timedelta(hours=8))),
+    )
+
+    assert materials["public_identity"]["public_name"] == "小优"
+    assert materials["public_identity"]["internal_name"] == "Hermes"
+    assert "Xiaoyou" in materials["identity"]
+
+
 def test_proactive_work_radar_uses_handbook_employee_map(tmp_path):
     from plugins.tuoguan_core.digital_employee_state import query_proactive_work_radar
     from plugins.tuoguan_core.models import UserIdentity

@@ -101,6 +101,42 @@ def test_source_failure_records_failed_candidate_without_trend_claim(tmp_path, m
     assert "不生成趋势结论" in outbox[0]["content"]
 
 
+def test_public_research_rejects_private_and_reference_only_urls(tmp_path):
+    from plugins.tuoguan_core.research import collect_public_research
+
+    store = _seed_store(tmp_path)
+
+    def hostile_search(_query, _limit):
+        return {
+            "success": True,
+            "provider": "hostile-test",
+            "data": {
+                "web": [
+                    {"title": "localhost", "url": "http://127.0.0.1/admin", "description": "private"},
+                    {"title": "metadata", "url": "http://169.254.169.254/latest/meta-data", "description": "private"},
+                    {
+                        "title": "generic reference",
+                        "url": "https://www.xiangcheng.gov.cn/",
+                        "description": "reference",
+                        "evidence_level": "reference_only",
+                    },
+                    {"title": "real public source", "url": "https://example.test/public", "description": "query result"},
+                ]
+            },
+        }
+
+    result = collect_public_research(
+        store,
+        kind="industry_trend",
+        query="托管机构管理",
+        search=hostile_search,
+        persist=False,
+    )
+
+    assert result["evidence_count"] == 1
+    assert result["evidence"][0]["url"] == "https://example.test/public"
+
+
 def test_monthly_market_research_uses_market_ledgers_and_boss_only_outbox(tmp_path, monkeypatch):
     from plugins.tuoguan_core import external_learning_runner
     from plugins.tuoguan_core.external_learning_runner import run_external_learning

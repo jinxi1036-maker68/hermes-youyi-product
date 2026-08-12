@@ -22,6 +22,16 @@ class TuoguanStoreError(RuntimeError):
 
 
 JSON_NO_CHANGE = object()
+_RESOURCE_LOCKS_GUARD = threading.Lock()
+_RESOURCE_LOCKS: dict[str, threading.RLock] = {}
+
+
+def _resource_lock(path: Path) -> threading.RLock:
+    """Share one in-process lock across all store instances for a file."""
+
+    key = str(path.resolve())
+    with _RESOURCE_LOCKS_GUARD:
+        return _RESOURCE_LOCKS.setdefault(key, threading.RLock())
 
 
 def _owner_for_root_write(path: Path) -> tuple[int, int] | None:
@@ -87,31 +97,32 @@ class TuoguanStore:
     def _process_write_lock(self, path: Path):
         lock_path = self.data_dir / f".{path.name}.lock"
         lock_path.parent.mkdir(parents=True, exist_ok=True)
-        deadline = time.monotonic() + 10
-        fd: int | None = None
-        while fd is None:
+        with _resource_lock(path):
+            deadline = time.monotonic() + 10
+            fd: int | None = None
+            while fd is None:
+                try:
+                    fd = os.open(str(lock_path), os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+                    os.write(fd, str(os.getpid()).encode("ascii", errors="ignore"))
+                except (FileExistsError, PermissionError):
+                    if time.monotonic() > deadline:
+                        try:
+                            if lock_path.exists() and time.time() - lock_path.stat().st_mtime > 30:
+                                lock_path.unlink()
+                                continue
+                        except OSError:
+                            pass
+                        raise TuoguanStoreError(f"Timed out waiting for data lock: {path.name}")
+                    time.sleep(0.05)
             try:
-                fd = os.open(str(lock_path), os.O_CREAT | os.O_EXCL | os.O_WRONLY)
-                os.write(fd, str(os.getpid()).encode("ascii", errors="ignore"))
-            except FileExistsError:
-                if time.monotonic() > deadline:
-                    try:
-                        if time.time() - lock_path.stat().st_mtime > 30:
-                            lock_path.unlink()
-                            continue
-                    except OSError:
-                        pass
-                    raise TuoguanStoreError(f"Timed out waiting for data lock: {path.name}")
-                time.sleep(0.05)
-        try:
-            yield
-        finally:
-            if fd is not None:
-                os.close(fd)
-            try:
-                lock_path.unlink()
-            except FileNotFoundError:
-                pass
+                yield
+            finally:
+                if fd is not None:
+                    os.close(fd)
+                try:
+                    lock_path.unlink()
+                except FileNotFoundError:
+                    pass
 
     def write_json(self, name: str, data: Any) -> None:
         from .write_guard import assert_business_write_allowed
@@ -122,8 +133,11 @@ class TuoguanStore:
                 with self._process_write_lock(path):
                     path.parent.mkdir(parents=True, exist_ok=True)
                     preserved_owner = _owner_for_root_write(path)
+                    preserved_mode = (path.stat().st_mode & 0o777) if path.exists() else None
                     self._backup_existing(path)
                     atomic_json_write(path, data)
+                    if preserved_mode is not None:
+                        os.chmod(path, preserved_mode)
                     if preserved_owner is not None:
                         os.chown(path, *preserved_owner)
             except (OSError, TypeError, ValueError, PermissionError) as exc:
@@ -146,8 +160,11 @@ class TuoguanStore:
                     data = current if updated is None else updated
                     path.parent.mkdir(parents=True, exist_ok=True)
                     preserved_owner = _owner_for_root_write(path)
+                    preserved_mode = (path.stat().st_mode & 0o777) if path.exists() else None
                     self._backup_existing(path)
                     atomic_json_write(path, data)
+                    if preserved_mode is not None:
+                        os.chmod(path, preserved_mode)
                     if preserved_owner is not None:
                         os.chown(path, *preserved_owner)
                     return deepcopy(data)
@@ -266,3 +283,67 @@ class TuoguanStore:
                     return True
             except (OSError, TypeError, ValueError, PermissionError) as exc:
                 raise TuoguanStoreError(f"Unable to append {name}: {exc}") from exc
+
+    def update_jsonl_verified(
+        self,
+        name: str,
+        updater: Callable[[list[dict[str, Any]]], Any],
+    ) -> list[dict[str, Any]]:
+        """Atomically update a JSONL resource without racing concurrent appends."""
+
+        from .write_guard import assert_business_write_allowed
+
+        path = self.path_for(name)
+        with self._lock:
+            try:
+                assert_business_write_allowed(self.data_dir, name)
+                with self._process_write_lock(path):
+                    rows: list[dict[str, Any]] = []
+                    if path.exists():
+                        for line_number, line in enumerate(path.read_text(encoding="utf-8-sig").splitlines(), 1):
+                            if not line.strip():
+                                continue
+                            try:
+                                row = json.loads(line)
+                            except json.JSONDecodeError as exc:
+                                raise TuoguanStoreError(
+                                    f"Unable to update {name}: invalid JSON on line {line_number}"
+                                ) from exc
+                            if not isinstance(row, dict):
+                                raise TuoguanStoreError(
+                                    f"Unable to update {name}: line {line_number} is not an object"
+                                )
+                            rows.append(row)
+                    updated = updater(deepcopy(rows))
+                    if updated is JSON_NO_CHANGE:
+                        return deepcopy(rows)
+                    output = rows if updated is None else updated
+                    if not isinstance(output, list) or any(not isinstance(row, dict) for row in output):
+                        raise TuoguanStoreError(f"Unable to update {name}: updater must return object rows")
+                    path.parent.mkdir(parents=True, exist_ok=True)
+                    preserved_owner = _owner_for_root_write(path)
+                    preserved_mode = (path.stat().st_mode & 0o777) if path.exists() else None
+                    self._backup_existing(path)
+                    temp = path.with_name(f".{path.name}.{os.getpid()}.{threading.get_ident()}.tmp")
+                    with temp.open("w", encoding="utf-8", newline="\n") as handle:
+                        for row in output:
+                            handle.write(json.dumps(row, ensure_ascii=False, separators=(",", ":")) + "\n")
+                        handle.flush()
+                        os.fsync(handle.fileno())
+                    os.replace(temp, path)
+                    if preserved_mode is not None:
+                        os.chmod(path, preserved_mode)
+                    if preserved_owner is not None:
+                        os.chown(path, *preserved_owner)
+                    verified: list[dict[str, Any]] = []
+                    for line in path.read_text(encoding="utf-8-sig").splitlines():
+                        if line.strip():
+                            candidate = json.loads(line)
+                            if not isinstance(candidate, dict):
+                                raise TuoguanStoreError(f"JSONL writeback verification failed: {name}")
+                            verified.append(candidate)
+                    if verified != output:
+                        raise TuoguanStoreError(f"JSONL writeback verification failed: {name}")
+                    return deepcopy(verified)
+            except (OSError, TypeError, ValueError, PermissionError) as exc:
+                raise TuoguanStoreError(f"Unable to update {name}: {exc}") from exc

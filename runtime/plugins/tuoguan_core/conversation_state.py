@@ -83,9 +83,12 @@ def remember_conversation_state(
         "expires_at": (now + timedelta(minutes=ttl)).isoformat(timespec="seconds"),
         "source_handler": source_handler,
     }
-    states = _load_states(store)
-    states[identity.canonical_user_id] = state
-    store.write_json(CONVERSATION_STATE_FILE, states)
+    def remember(value: Any) -> dict[str, Any]:
+        states = value if isinstance(value, dict) else {}
+        states[identity.canonical_user_id] = state
+        return states
+
+    store.update_json(CONVERSATION_STATE_FILE, {}, remember)
     return state
 
 
@@ -134,17 +137,30 @@ def load_conversation_state(
     if is_state_expired(state):
         if include_expired:
             return state
-        states.pop(identity.canonical_user_id, None)
-        store.write_json(CONVERSATION_STATE_FILE, states)
+        store.update_json(
+            CONVERSATION_STATE_FILE,
+            {},
+            lambda value: {
+                key: item
+                for key, item in (value.items() if isinstance(value, dict) else ())
+                if key != identity.canonical_user_id
+            },
+        )
         return None
     return state
 
 
 def clear_conversation_state(store: TuoguanStore, identity: UserIdentity) -> None:
-    states = _load_states(store)
-    if identity.canonical_user_id in states:
+    def clear(value: Any) -> Any:
+        states = value if isinstance(value, dict) else {}
+        if identity.canonical_user_id not in states:
+            from .store import JSON_NO_CHANGE
+
+            return JSON_NO_CHANGE
         states.pop(identity.canonical_user_id, None)
-        store.write_json(CONVERSATION_STATE_FILE, states)
+        return states
+
+    store.update_json(CONVERSATION_STATE_FILE, {}, clear)
 
 
 def is_state_expired(state: dict[str, Any]) -> bool:

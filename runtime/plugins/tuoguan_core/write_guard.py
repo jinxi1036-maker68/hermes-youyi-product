@@ -9,7 +9,10 @@ from datetime import datetime
 import hashlib
 import inspect
 import json
+import os
 from pathlib import Path
+import threading
+import time
 from typing import Any, Iterator
 import uuid
 
@@ -88,6 +91,45 @@ class WriteAuthorization:
 _ACTIVE_WRITE: ContextVar[WriteAuthorization | None] = ContextVar(
     "tuoguan_active_business_write", default=None
 )
+_AUDIT_LOCK = threading.RLock()
+
+
+def _append_audit_row(data_dir: Path, row: dict[str, Any]) -> None:
+    """Append security audit evidence using the store-compatible file lock."""
+
+    path = data_dir / "business_action_audit.jsonl"
+    lock_path = data_dir / ".business_action_audit.jsonl.lock"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    serialized = json.dumps(row, ensure_ascii=False, separators=(",", ":"))
+    with _AUDIT_LOCK:
+        deadline = time.monotonic() + 10
+        fd: int | None = None
+        while fd is None:
+            try:
+                fd = os.open(str(lock_path), os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+                os.write(fd, str(os.getpid()).encode("ascii", errors="ignore"))
+            except (FileExistsError, PermissionError):
+                if time.monotonic() > deadline:
+                    try:
+                        if lock_path.exists() and time.time() - lock_path.stat().st_mtime > 30:
+                            lock_path.unlink()
+                            continue
+                    except OSError:
+                        pass
+                    raise PermissionError("Timed out recording business write audit")
+                time.sleep(0.05)
+        try:
+            with path.open("a", encoding="utf-8", newline="\n") as handle:
+                handle.write(serialized + "\n")
+                handle.flush()
+                os.fsync(handle.fileno())
+        finally:
+            if fd is not None:
+                os.close(fd)
+            try:
+                lock_path.unlink()
+            except FileNotFoundError:
+                pass
 
 
 def _guard_config(data_dir: Path) -> dict[str, Any]:
@@ -115,10 +157,7 @@ def _append_critical_audit(data_dir: Path, payload: dict[str, Any]) -> str:
         "created_at": datetime.now().isoformat(timespec="seconds"),
         **payload,
     }
-    path = data_dir / "business_action_audit.jsonl"
-    path.parent.mkdir(parents=True, exist_ok=True)
-    with path.open("a", encoding="utf-8") as handle:
-        handle.write(json.dumps(row, ensure_ascii=False, separators=(",", ":")) + "\n")
+    _append_audit_row(data_dir, row)
     return audit_id
 
 
@@ -166,8 +205,6 @@ def prepare_system_write(
     stamp = datetime.now().strftime("%Y%m%d%H%M%S%f")
     audit_id = f"audit_system_write_{uuid.uuid4().hex}"
     ledger_id = f"system_job:{job_name}:{stamp}"
-    path = data_dir / "business_action_audit.jsonl"
-    path.parent.mkdir(parents=True, exist_ok=True)
     row = {
         "audit_event_id": audit_id,
         "ledger_id": ledger_id,
@@ -179,8 +216,7 @@ def prepare_system_write(
         "allowed_files": sorted(allowed_files),
         "created_at": datetime.now().isoformat(timespec="seconds"),
     }
-    with path.open("a", encoding="utf-8") as handle:
-        handle.write(json.dumps(row, ensure_ascii=False, separators=(",", ":")) + "\n")
+    _append_audit_row(data_dir, row)
     return {
         "operation_id": f"system:{job_name}:{stamp}",
         "ledger_id": ledger_id,

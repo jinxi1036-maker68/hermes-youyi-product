@@ -34,6 +34,10 @@ NOTIFICATION_OUTBOX_FILE = "notification_outbox.json"
 VALID_REPORT_KINDS = {"morning", "evening"}
 REPORT_FRESHNESS_HOURS = 36
 STALE_REPORT_TERMS = ("昨晚", "明天10点", "李老师沟通结果", "一直发", "一直提醒")
+REPORT_DELIVERY_WINDOWS = {
+    "morning": (7 * 60 + 30, 10 * 60 + 30),
+    "evening": (19 * 60 + 30, 23 * 60),
+}
 
 
 def queue_daily_boss_report(
@@ -58,6 +62,15 @@ def queue_daily_boss_report(
             "error": "boss_user_not_found",
             "message": "没有找到老板企业微信 user id，日报没有入队。",
             "dry_run": dry_run,
+        }
+    if not dry_run and not _in_delivery_window(report_kind, timestamp):
+        return {
+            "ok": False,
+            "queued": False,
+            "error": "daily_report_outside_delivery_window",
+            "report_kind": report_kind,
+            "observed_at": timestamp.isoformat(timespec="seconds"),
+            "message": "固定日报只能在已批准的早报或晚报时间窗入队。",
         }
 
     report = build_daily_boss_report(report_kind, store=actual_store, now=timestamp)
@@ -89,6 +102,15 @@ def queue_daily_boss_report(
         def upsert_daily_report(outbox: Any) -> Any:
             outbox = outbox if isinstance(outbox, list) else []
             existing = _find_outbox_item(outbox, notification_id)
+            if (
+                existing
+                and str(existing.get("status") or "") == "sent"
+                and not _in_delivery_window(report_kind, _parse_report_timestamp(existing.get("sent_at") or existing.get("created_at"), timestamp))
+            ):
+                existing.update(row)
+                existing["requeued_after_off_schedule_delivery"] = True
+                outbox_state["queued"] = True
+                return outbox[-2000:]
             if existing and str(existing.get("status") or "") in {"pending", "retry_pending", "sending", "sent"}:
                 outbox_state["existing_status"] = str(existing.get("status") or "")
                 return JSON_NO_CHANGE
@@ -135,6 +157,27 @@ def queue_daily_boss_report(
         "report": report,
         "writeback_verified": True,
     }
+
+
+def _in_delivery_window(kind: str, timestamp: datetime) -> bool:
+    start, end = REPORT_DELIVERY_WINDOWS[_normalize_kind(kind)]
+    minute = timestamp.hour * 60 + timestamp.minute
+    return start <= minute <= end
+
+
+def _parse_report_timestamp(value: Any, fallback: datetime) -> datetime:
+    text = str(value or "").strip()
+    if not text:
+        return fallback
+    try:
+        parsed = datetime.fromisoformat(text.replace("Z", "+00:00"))
+    except ValueError:
+        return fallback
+    if parsed.tzinfo is None and fallback.tzinfo is not None:
+        parsed = parsed.replace(tzinfo=fallback.tzinfo)
+    if fallback.tzinfo is not None:
+        parsed = parsed.astimezone(fallback.tzinfo)
+    return parsed
 
 
 def sync_daily_report_delivery_status(
@@ -961,11 +1004,7 @@ def _safe_auto_effects() -> dict[str, bool]:
 
 
 def _append_jsonl(store: TuoguanStore, filename: str, row: dict[str, Any]) -> None:
-    assert_business_write_allowed(store.data_dir, filename)
-    path = store.path_for(filename)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    with path.open("a", encoding="utf-8") as handle:
-        handle.write(json.dumps(row, ensure_ascii=False, separators=(",", ":")) + "\n")
+    store.append_jsonl_verified(filename, row)
 
 
 def _find_outbox_item(outbox: list[Any], notification_id: str) -> dict[str, Any] | None:

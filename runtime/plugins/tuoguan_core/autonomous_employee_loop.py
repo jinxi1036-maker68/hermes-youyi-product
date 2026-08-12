@@ -214,7 +214,7 @@ def build_employee_loop_materials(store: TuoguanStore, *, identity: UserIdentity
     public_identity = _public_identity_material(store)
     materials = {
         "timestamp": timestamp.isoformat(timespec="seconds"),
-        "identity": public_identity.get("identity") or "Hermes internal product, public employee name Xiaoyou",
+        "identity": public_identity.get("identity") or "Xiaoyou, Youyi digital employee; Hermes is the internal product name",
         "public_identity": public_identity,
         "mission": "understand the institution, protect reality and permissions, help the owner improve renewal, service quality, risk control, execution, and revenue",
         "principles": [
@@ -316,9 +316,10 @@ def _public_identity_material(store: TuoguanStore) -> dict[str, Any]:
     facts = store.read_json("operational_facts.json", {})
     if not isinstance(facts, dict):
         return {
-            "identity": "Hermes as Youyi digital employee",
-            "public_name": "Hermes",
+            "identity": "Xiaoyou, Youyi digital employee; Hermes is the internal product name",
+            "public_name": "小优",
             "internal_name": "Hermes",
+            "usage_rule": "When generating owner/manager/teacher-facing messages, self-identify as 小优.",
             "source": "default",
         }
     for item in reversed(facts.get("facts") or []):
@@ -338,9 +339,10 @@ def _public_identity_material(store: TuoguanStore) -> dict[str, Any]:
                     "confirmed_at": str(item.get("confirmed_at") or item.get("updated_at") or ""),
                 }
     return {
-        "identity": "Hermes as Youyi digital employee",
-        "public_name": "Hermes",
+        "identity": "Xiaoyou, Youyi digital employee; Hermes is the internal product name",
+        "public_name": "小优",
         "internal_name": "Hermes",
+        "usage_rule": "When generating owner/manager/teacher-facing messages, self-identify as 小优.",
         "source": "default",
     }
 
@@ -1744,7 +1746,7 @@ def _relationship_touch_external_allowed(
         return False
     if not target_user_id:
         return False
-    if not _relationship_target_user_allowed_by_policy(target_user_id, role_policy):
+    if not _relationship_target_user_allowed_by_policy(target_user_id, role_policy, role=role):
         return False
     if not _relationship_touch_time_allowed(timestamp, role_policy):
         return False
@@ -1762,11 +1764,18 @@ def _relationship_touch_external_allowed(
     return _relationship_target_role_allowed(store, target_user_id, role) and _relationship_staff_message_is_sendable(candidate, role=role)
 
 
-def _relationship_target_user_allowed_by_policy(target_user_id: str, role_policy: dict[str, Any]) -> bool:
+def _relationship_target_user_allowed_by_policy(
+    target_user_id: str,
+    role_policy: dict[str, Any],
+    *,
+    role: str,
+) -> bool:
     allowed = {str(item).strip() for item in role_policy.get("allowed_target_user_ids") or [] if str(item).strip()}
     blocked = {str(item).strip() for item in role_policy.get("blocked_target_user_ids") or [] if str(item).strip()}
     target = str(target_user_id or "").strip()
     if not target or target in blocked:
+        return False
+    if str(role or "") != "boss" and not allowed:
         return False
     return not allowed or target in allowed
 

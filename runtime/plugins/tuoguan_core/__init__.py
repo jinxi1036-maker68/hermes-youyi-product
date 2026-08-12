@@ -706,8 +706,6 @@ async def _send_notifications(
 def _append_notification_failure(item: dict[str, Any], error: str) -> None:
     try:
         store = TuoguanStore()
-        path = store.path_for("notification_failures.jsonl")
-        path.parent.mkdir(parents=True, exist_ok=True)
         entry = {
             "timestamp": datetime.now().isoformat(timespec="seconds"),
             "touser": str(item.get("touser") or ""),
@@ -715,8 +713,7 @@ def _append_notification_failure(item: dict[str, Any], error: str) -> None:
             "action": str(item.get("action") or ""),
             "error": error,
         }
-        with path.open("a", encoding="utf-8") as fh:
-            fh.write(json.dumps(entry, ensure_ascii=False) + "\n")
+        store.append_jsonl_verified("notification_failures.jsonl", entry)
     except Exception:
         logger.exception("tuoguan_core failed to append notification failure log")
 
@@ -1108,7 +1105,6 @@ def _delivery_receipt(item: dict[str, Any]) -> dict[str, Any]:
 
 
 def _append_notification_audit(store: TuoguanStore, item: dict[str, Any], event: str, result: str) -> None:
-    path = store.path_for("business_action_audit.jsonl")
     payload = {
         "audit_event_id": f"audit_notification_{datetime.now().strftime('%Y%m%d%H%M%S%f')}",
         "tenant_id": current_tenant_id(),
@@ -1121,8 +1117,7 @@ def _append_notification_audit(store: TuoguanStore, item: dict[str, Any], event:
         "reason": str(item.get("last_error") or ""),
         "created_at": datetime.now().isoformat(timespec="seconds"),
     }
-    with path.open("a", encoding="utf-8") as handle:
-        handle.write(json.dumps(payload, ensure_ascii=False, separators=(",", ":")) + "\n")
+    store.append_jsonl_verified("business_action_audit.jsonl", payload)
     try:
         from .runtime_foundation import link_audit_to_ledger
         link_audit_to_ledger(store, str(item.get("ledger_id") or ""), payload["audit_event_id"])

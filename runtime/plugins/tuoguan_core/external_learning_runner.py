@@ -161,17 +161,24 @@ def run_external_learning(
                 operation_id=auth.operation_id,
             )
         if outbox_item:
-            outbox = actual_store.read_json(NOTIFICATION_OUTBOX_FILE, [])
-            if not isinstance(outbox, list):
-                outbox = []
-            existing = next((item for item in outbox if isinstance(item, dict) and str(item.get("id") or "") == outbox_item["id"]), None)
-            if existing and str(existing.get("status") or "") in {"pending", "retry_pending", "sent"}:
-                pass
-            elif existing:
-                existing.update(outbox_item)
-            else:
-                outbox.append(outbox_item)
-            actual_store.write_json(NOTIFICATION_OUTBOX_FILE, outbox[-2000:])
+            def merge_outbox(value: Any) -> list[dict[str, Any]]:
+                outbox = value if isinstance(value, list) else []
+                existing = next(
+                    (
+                        item for item in outbox
+                        if isinstance(item, dict) and str(item.get("id") or "") == outbox_item["id"]
+                    ),
+                    None,
+                )
+                if existing and str(existing.get("status") or "") in {"pending", "retry_pending", "sent"}:
+                    return outbox[-2000:]
+                if existing:
+                    existing.update(outbox_item)
+                else:
+                    outbox.append(outbox_item)
+                return outbox[-2000:]
+
+            actual_store.update_json(NOTIFICATION_OUTBOX_FILE, [], merge_outbox)
         _append_jsonl(
             actual_store,
             WEEKLY_MARKET_REPORT_RUNS_FILE,
@@ -242,7 +249,7 @@ def _industry_candidate(query: str, evidence: list[Any], timestamp: datetime, re
     status = "pending_review" if sources else "source_failed"
     source_titles = "；".join(str(item.get("title") or "") for item in sources[:3])
     summary = (
-        f"Hermes 围绕“{query}”收集到 {len(sources)} 条公开资料线索。"
+        f"小优围绕“{query}”收集到 {len(sources)} 条公开资料线索。"
         + (f" 代表来源：{source_titles}。" if source_titles else " 当前没有稳定公开来源，不能生成趋势结论。")
     )
     return {
@@ -381,13 +388,7 @@ def _report_outbox_item(*, mode: str, timestamp: datetime, owner_id: str, conten
 
 
 def _append_jsonl(store: TuoguanStore, filename: str, row: dict[str, Any]) -> None:
-    from .write_guard import assert_business_write_allowed
-
-    assert_business_write_allowed(store.data_dir, filename)
-    path = store.path_for(filename)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    with path.open("a", encoding="utf-8") as handle:
-        handle.write(json.dumps(row, ensure_ascii=False, separators=(",", ":")) + "\n")
+    store.append_jsonl_verified(filename, row)
 
 
 def _safe_auto_effects() -> dict[str, bool]:

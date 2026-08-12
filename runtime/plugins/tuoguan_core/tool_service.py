@@ -442,29 +442,32 @@ class TuoguanToolService:
         return deepcopy(item) if isinstance(item, dict) else {}
 
     def _write_focus(self, **updates: Any) -> None:
-        data = self.store.read_json("model_focus.json", {})
-        if not isinstance(data, dict):
-            data = {}
-        item = data.get(self._focus_key(), {})
-        if not isinstance(item, dict):
-            item = {}
-        item.update({key: value for key, value in updates.items() if value is not None})
-        item["updated_at"] = datetime.now().isoformat(timespec="seconds")
-        data[self._focus_key()] = item
-        self.store.write_json("model_focus.json", data)
+        focus_key = self._focus_key()
+
+        def mutate(value: Any) -> dict[str, Any]:
+            data = value if isinstance(value, dict) else {}
+            item = data.get(focus_key, {})
+            item = item if isinstance(item, dict) else {}
+            item.update({key: value for key, value in updates.items() if value is not None})
+            item["updated_at"] = datetime.now().isoformat(timespec="seconds")
+            data[focus_key] = item
+            return data
+
+        self.store.update_json("model_focus.json", {}, mutate)
 
     def _write_user_focus(self, user_id: str, **updates: Any) -> None:
-        data = self.store.read_json("model_focus.json", {})
-        if not isinstance(data, dict):
-            data = {}
         key = f"{self.platform}:{str(user_id or '').strip()}"
-        item = data.get(key, {})
-        if not isinstance(item, dict):
-            item = {}
-        item.update({name: value for name, value in updates.items() if value is not None})
-        item["updated_at"] = datetime.now().isoformat(timespec="seconds")
-        data[key] = item
-        self.store.write_json("model_focus.json", data)
+
+        def mutate(value: Any) -> dict[str, Any]:
+            data = value if isinstance(value, dict) else {}
+            item = data.get(key, {})
+            item = item if isinstance(item, dict) else {}
+            item.update({name: value for name, value in updates.items() if value is not None})
+            item["updated_at"] = datetime.now().isoformat(timespec="seconds")
+            data[key] = item
+            return data
+
+        self.store.update_json("model_focus.json", {}, mutate)
 
     def _remember_user_task_context(self, user_id: str, task: dict[str, Any], *, ttl_hours: int = 36) -> None:
         user_id = str(user_id or "").strip()
@@ -1914,7 +1917,11 @@ class TuoguanToolService:
                 trusted_raw = current_raw_text(self.identity.canonical_user_id)
             except Exception:
                 trusted_raw = ""
-            evidence_text = trusted_raw or raw_reply
+            # The explicit tool argument belongs to this invocation. A runtime
+            # raw message is stronger evidence only while the live turn is
+            # still present; stale process memory must never overwrite an
+            # explicit cancellation phrase from the current tool call.
+            evidence_text = raw_reply or trusted_raw
             visible_tasks = self._visible_tasks()
             open_visible = [task for task in visible_tasks if task.get("status") not in _CLOSED_STATUSES]
             supplied_task_id = str(task_id or "").strip()
@@ -3410,7 +3417,12 @@ class TuoguanToolService:
                 if str(item).strip()
             }
             target = str(target_user_id or "").strip()
-            allowed_by_whitelist = role == "boss" or not allowed_user_ids or target in allowed_user_ids
+            # Direct staff outreach is a test-only privilege and therefore
+            # requires an explicit non-empty allowlist. An empty list must fail
+            # closed instead of silently meaning "all staff".
+            allowed_by_whitelist = role == "boss" or bool(
+                target and allowed_user_ids and target in allowed_user_ids
+            )
             external_send_allowed = bool(mode == "direct" and allowed_by_whitelist)
             requires_authorization = not external_send_allowed
             status = "candidate"

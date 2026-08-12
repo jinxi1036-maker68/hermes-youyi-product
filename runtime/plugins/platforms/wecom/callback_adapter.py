@@ -83,7 +83,7 @@ class WecomCallbackAdapter(BasePlatformAdapter):
         self._site: Optional[web.TCPSite] = None
         self._app: Optional[web.Application] = None
         self._http_client: Optional[httpx.AsyncClient] = None
-        self._message_queue: asyncio.Queue[MessageEvent] = asyncio.Queue()
+        self._message_queue: asyncio.Queue[tuple[MessageEvent, str, str]] = asyncio.Queue()
         self._poll_task: Optional[asyncio.Task] = None
         dedupe_path = str(extra.get("dedupe_db_path") or os.getenv("HERMES_WECOM_DEDUPE_DB") or "").strip()
         if not dedupe_path:
@@ -128,7 +128,7 @@ class WecomCallbackAdapter(BasePlatformAdapter):
         # no server-side queue to preserve, so the flag is accepted-and-
         # ignored — but the kwarg MUST be present or the reconnect watcher
         # dies with TypeError and the platform silently stays offline.
-        del is_reconnect
+        reconnecting = bool(is_reconnect)
         if not self._apps:
             logger.warning("[WecomCallback] No callback apps configured")
             return False
@@ -168,6 +168,7 @@ class WecomCallbackAdapter(BasePlatformAdapter):
             self._site = web.TCPSite(self._runner, self._host, self._port)
             await self._site.start()
             self._poll_task = asyncio.create_task(self._poll_loop())
+            await self._recover_inbound_messages(include_owned=reconnecting)
             self._mark_connected()
             logger.info(
                 "[WecomCallback] HTTP server listening on %s:%s%s",
@@ -222,6 +223,11 @@ class WecomCallbackAdapter(BasePlatformAdapter):
         metadata: Optional[Dict[str, Any]] = None,
     ) -> SendResult:
         app = self._resolve_app_for_chat(chat_id)
+        if app is None:
+            return SendResult(
+                success=False,
+                error="wecom_app_scope_unresolved: outbound target is not bound to exactly one app",
+            )
         touser = chat_id.split(":", 1)[1] if ":" in chat_id else chat_id
         try:
             content = self._repair_tuoguan_dashboard_link(chat_id, content)
@@ -300,8 +306,8 @@ class WecomCallbackAdapter(BasePlatformAdapter):
             logger.exception("[WecomCallback] Failed to repair Tuoguan dashboard link")
             return value
 
-    def _resolve_app_for_chat(self, chat_id: str) -> Dict[str, Any]:
-        """Pick the app associated with *chat_id*, falling back sensibly."""
+    def _resolve_app_for_chat(self, chat_id: str) -> Optional[Dict[str, Any]]:
+        """Resolve one app without silently crossing enterprise boundaries."""
         app_name = self._user_app_map.get(chat_id)
         if not app_name and ":" not in chat_id:
             # Legacy bare user_id — try to find a unique match.
@@ -309,7 +315,11 @@ class WecomCallbackAdapter(BasePlatformAdapter):
             if len(matching) == 1:
                 app_name = self._user_app_map.get(matching[0])
         app = self._get_app_by_name(app_name) if app_name else None
-        return app or self._apps[0]
+        if app is not None:
+            return app
+        if len(self._apps) == 1:
+            return self._apps[0]
+        return None
 
     async def get_chat_info(self, chat_id: str) -> Dict[str, Any]:
         return {"name": chat_id, "type": "dm"}
@@ -362,6 +372,7 @@ class WecomCallbackAdapter(BasePlatformAdapter):
                         message_id=event.message_id,
                         user_id=str(getattr(event.source, "user_id", "") or ""),
                         session_id=str(getattr(event.source, "chat_id", "") or ""),
+                        payload={"app_name": app_name, "xml_text": decrypted},
                     )
                     if not receipt["accepted"]:
                         logger.info("[WecomCallback] Durable duplicate MsgId %s, skipping", event.message_id)
@@ -373,10 +384,12 @@ class WecomCallbackAdapter(BasePlatformAdapter):
                         )
                         self._user_app_map[map_key] = app["name"]
                     try:
-                        await self._message_queue.put(event)
-                        self._inbound_receipts.mark_processed(
-                            str(receipt["receipt_key"]),
-                            session_id=str(getattr(event.source, "chat_id", "") or ""),
+                        await self._message_queue.put(
+                            (
+                                event,
+                                str(receipt["receipt_key"]),
+                                str(getattr(event.source, "chat_id", "") or ""),
+                            )
                         )
                     except Exception as exc:
                         self._inbound_receipts.mark_failed(str(receipt["receipt_key"]), type(exc).__name__)
@@ -391,16 +404,78 @@ class WecomCallbackAdapter(BasePlatformAdapter):
                 break
         return web.Response(status=400, text="invalid callback payload")
 
+    async def _recover_inbound_messages(self, *, include_owned: bool = False) -> None:
+        """Requeue callback payloads that survived a process crash."""
+
+        for receipt in self._inbound_receipts.recover_pending(include_owned=include_owned):
+            payload = receipt.get("payload") if isinstance(receipt.get("payload"), dict) else {}
+            app = self._get_app_by_name(str(payload.get("app_name") or receipt.get("app_name") or ""))
+            if app is None:
+                self._inbound_receipts.mark_failed(str(receipt.get("receipt_key") or ""), "recovery_app_missing")
+                continue
+            try:
+                event = self._build_event(app, str(payload.get("xml_text") or ""))
+            except Exception:
+                self._inbound_receipts.mark_failed(str(receipt.get("receipt_key") or ""), "recovery_payload_invalid")
+                logger.exception("[WecomCallback] Failed to rebuild durable inbound event")
+                continue
+            if event is None:
+                self._inbound_receipts.mark_processed(
+                    str(receipt.get("receipt_key") or ""),
+                    session_id=str(receipt.get("session_id") or ""),
+                )
+                continue
+            if event.source and event.source.user_id:
+                map_key = self._user_app_key(str(app.get("corp_id") or ""), event.source.user_id)
+                self._user_app_map[map_key] = str(app.get("name") or "")
+            await self._message_queue.put(
+                (
+                    event,
+                    str(receipt.get("receipt_key") or ""),
+                    str(receipt.get("session_id") or getattr(event.source, "chat_id", "") or ""),
+                )
+            )
+            logger.warning(
+                "[WecomCallback] Recovered unfinished inbound MsgId %s (attempt %s)",
+                receipt.get("message_id"),
+                receipt.get("attempt_count"),
+            )
+
     async def _poll_loop(self) -> None:
         """Drain the message queue and dispatch to the gateway runner."""
         while True:
-            event = await self._message_queue.get()
+            event, receipt_key, session_id = await self._message_queue.get()
             try:
-                task = asyncio.create_task(self.handle_message(event))
+                task = asyncio.create_task(
+                    self._dispatch_claimed_message(event, receipt_key, session_id)
+                )
                 self._background_tasks.add(task)
                 task.add_done_callback(self._background_tasks.discard)
             except Exception:
+                self._inbound_receipts.mark_failed(receipt_key, "dispatch_schedule_failed")
                 logger.exception("[WecomCallback] Failed to enqueue event")
+            finally:
+                self._message_queue.task_done()
+
+    async def _dispatch_claimed_message(
+        self,
+        event: MessageEvent,
+        receipt_key: str,
+        session_id: str,
+    ) -> None:
+        """Mark an inbound receipt processed only after gateway handling ends."""
+
+        try:
+            await self.handle_message(event)
+        except asyncio.CancelledError:
+            self._inbound_receipts.mark_failed(receipt_key, "dispatch_cancelled")
+            raise
+        except Exception as exc:
+            self._inbound_receipts.mark_failed(receipt_key, type(exc).__name__)
+            logger.exception("[WecomCallback] Claimed message dispatch failed")
+        else:
+            if not self._inbound_receipts.mark_processed(receipt_key, session_id=session_id):
+                logger.error("[WecomCallback] Failed to finalize inbound receipt %s", receipt_key)
 
     # ------------------------------------------------------------------
     # XML / crypto helpers

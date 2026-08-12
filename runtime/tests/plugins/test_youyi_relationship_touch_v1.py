@@ -216,6 +216,61 @@ def test_autonomous_loop_can_queue_teacher_and_manager_fact_requests(tmp_path):
     assert outbox[1]["auto_effects"]["sends_manager_messages"] is True
 
 
+def test_direct_staff_policy_without_explicit_allowlist_fails_closed(tmp_path):
+    from plugins.tuoguan_core.autonomous_employee_loop import run_autonomous_employee_loop
+    from plugins.tuoguan_core.store import TuoguanStore
+
+    _write_json(tmp_path, "write_guard_config.json", {"enabled": True})
+    _write_json(
+        tmp_path,
+        "wecom_whitelist.json",
+        {"allowed_users": ["teacher1"], "user_roles": {"teacher1": "teacher"}},
+    )
+    _write_json(
+        tmp_path,
+        "relationship_touch_policy.json",
+        {"teacher": {"mode": "direct", "daily_limit": 2, "allowed_target_user_ids": []}},
+    )
+    _write_json(tmp_path, "notification_outbox.json", [])
+    _write_json(tmp_path, "students.json", {})
+    _write_json(tmp_path, "tasks.json", [])
+
+    def decision_provider(_materials):
+        return {
+            "employee_summary": "需要问老师一个任务事实。",
+            "institution_understanding": "",
+            "goal_progress_view": "",
+            "observations": [],
+            "work_item_updates": [],
+            "questions_to_humans": [],
+            "boss_attention_candidates": [],
+            "relationship_touch_candidates": [{
+                "target_role": "teacher",
+                "target_user_id": "teacher1",
+                "touch_type": "record_relief",
+                "message": "老师，请帮我确认一下今天任务结果是否已经记录？",
+                "reason": "缺老师任务结果。",
+                "value": "补齐任务事实。",
+                "work_related": True,
+                "external_send_allowed": True,
+            }],
+            "institution_fact_gaps": [],
+            "value_progress_entries": [],
+            "agent_delegation_decisions": [],
+            "self_review": {},
+            "external_actions": [],
+        }
+
+    result = run_autonomous_employee_loop(
+        TuoguanStore(tmp_path),
+        now=datetime(2026, 8, 1, 11, 0, tzinfo=timezone(timedelta(hours=8))),
+        decision_provider=decision_provider,
+    )
+
+    assert result["ok"] is True
+    assert json.loads((tmp_path / "notification_outbox.json").read_text(encoding="utf-8")) == []
+
+
 def test_test_mode_policy_allows_only_boss_and_li_teacher(tmp_path):
     from plugins.tuoguan_core.autonomous_employee_loop import run_autonomous_employee_loop
     from plugins.tuoguan_core.store import TuoguanStore

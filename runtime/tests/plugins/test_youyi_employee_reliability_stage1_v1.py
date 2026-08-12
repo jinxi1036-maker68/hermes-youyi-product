@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+import asyncio
 from datetime import datetime, timedelta
 import json
 from concurrent.futures import ThreadPoolExecutor
+from types import SimpleNamespace
 
 
 def test_wecom_receipt_claim_is_durable_and_concurrent(tmp_path):
@@ -35,6 +37,146 @@ def test_failed_wecom_receipt_can_be_reclaimed(tmp_path):
     assert second["reclaimed"] is True
     assert store.mark_processed(second["receipt_key"], session_id="chat:CeShi") is True
     assert store.status_counts() == {"processed": 1}
+
+
+def test_unfinished_wecom_payload_survives_process_restart(tmp_path):
+    from plugins.platforms.wecom.inbound_receipts import WecomInboundReceiptStore
+
+    path = tmp_path / "receipts.sqlite3"
+    first_process = WecomInboundReceiptStore(path)
+    claimed = first_process.claim(
+        app_name="youyi",
+        message_id="msg-durable-payload",
+        user_id="CeShi",
+        session_id="corp:CeShi",
+        payload={"app_name": "youyi", "xml_text": "<xml><MsgId>msg-durable-payload</MsgId></xml>"},
+    )
+    assert claimed["accepted"] is True
+
+    restarted_process = WecomInboundReceiptStore(path)
+    recovered = restarted_process.recover_pending()
+
+    assert len(recovered) == 1
+    assert recovered[0]["receipt_key"] == claimed["receipt_key"]
+    assert recovered[0]["attempt_count"] == 2
+    assert recovered[0]["payload"]["app_name"] == "youyi"
+    assert "msg-durable-payload" in recovered[0]["payload"]["xml_text"]
+    assert restarted_process.recover_pending() == []
+
+
+def test_wecom_receipt_is_finalized_after_dispatch_not_before(tmp_path):
+    from plugins.platforms.wecom.callback_adapter import WecomCallbackAdapter
+
+    adapter = WecomCallbackAdapter.__new__(WecomCallbackAdapter)
+    calls: list[tuple[str, str]] = []
+    adapter._inbound_receipts = SimpleNamespace(
+        mark_processed=lambda key, session_id="": calls.append(("processed", key)) or True,
+        mark_failed=lambda key, error: calls.append(("failed", key)) or True,
+    )
+
+    async def handled(_event):
+        calls.append(("handled", "receipt-1"))
+
+    adapter.handle_message = handled
+    asyncio.run(
+        adapter._dispatch_claimed_message(
+            SimpleNamespace(),
+            "receipt-1",
+            "corp:teacher1",
+        )
+    )
+
+    assert calls == [("handled", "receipt-1"), ("processed", "receipt-1")]
+
+
+def test_wecom_failed_dispatch_keeps_receipt_retryable(tmp_path):
+    from plugins.platforms.wecom.callback_adapter import WecomCallbackAdapter
+
+    adapter = WecomCallbackAdapter.__new__(WecomCallbackAdapter)
+    calls: list[tuple[str, str]] = []
+    adapter._inbound_receipts = SimpleNamespace(
+        mark_processed=lambda key, session_id="": calls.append(("processed", key)) or True,
+        mark_failed=lambda key, error: calls.append(("failed", key)) or True,
+    )
+
+    async def failed(_event):
+        raise RuntimeError("dispatch failed")
+
+    adapter.handle_message = failed
+    asyncio.run(
+        adapter._dispatch_claimed_message(
+            SimpleNamespace(),
+            "receipt-2",
+            "corp:teacher1",
+        )
+    )
+
+    assert calls == [("failed", "receipt-2")]
+
+
+def test_wecom_multi_app_resolution_fails_closed_for_unknown_bare_user():
+    from plugins.platforms.wecom.callback_adapter import WecomCallbackAdapter
+
+    adapter = WecomCallbackAdapter.__new__(WecomCallbackAdapter)
+    adapter._apps = [
+        {"name": "tenant-a", "corp_id": "corp-a"},
+        {"name": "tenant-b", "corp_id": "corp-b"},
+    ]
+    adapter._user_app_map = {}
+
+    assert adapter._resolve_app_for_chat("teacher1") is None
+    adapter._user_app_map["corp-a:teacher1"] = "tenant-a"
+    assert adapter._resolve_app_for_chat("teacher1")["name"] == "tenant-a"
+
+
+def test_completed_runtime_turn_cannot_authorize_or_leak_raw_text(tmp_path):
+    from plugins.tuoguan_core.runtime_foundation import (
+        begin_inbound,
+        clear_runtime_state,
+        current_raw_text,
+        ensure_outbound_reply_recorded,
+        inject_model_context,
+        write_authorization_for,
+    )
+    from plugins.tuoguan_core.store import TuoguanStore
+
+    clear_runtime_state()
+    store = TuoguanStore(tmp_path)
+    manual_context = tmp_path / "manual_context"
+    manual_context.mkdir()
+    (manual_context / "hermes_model_context_injection_allowlist_v1.json").write_text(
+        json.dumps({"runtime_foundation": {"enabled": True}, "allowed_capability_cards": []}),
+        encoding="utf-8",
+    )
+    begin_inbound(
+        store=store,
+        message_id="turn-cleanup-1",
+        conversation_id="corp:boss1",
+        user_id="boss1",
+        role="boss",
+        raw_text="把刚才任务关掉",
+    )
+    inject_model_context(
+        session_id="session-cleanup-1",
+        sender_id="boss1",
+        user_message="把刚才任务关掉",
+    )
+    assert write_authorization_for("boss1", "cancel_task") is not None
+
+    ensure_outbound_reply_recorded(
+        store=store,
+        message_id="turn-cleanup-1",
+        conversation_id="corp:boss1",
+        user_id="boss1",
+        role="boss",
+        raw_text="把刚才任务关掉",
+        final_reply="我需要先用任务工具确认。",
+        entered_model=True,
+        session_id="session-cleanup-1",
+    )
+
+    assert current_raw_text("boss1") == ""
+    assert write_authorization_for("boss1", "cancel_task") is None
 
 
 def test_active_work_context_is_scoped_and_evidence_only(tmp_path):

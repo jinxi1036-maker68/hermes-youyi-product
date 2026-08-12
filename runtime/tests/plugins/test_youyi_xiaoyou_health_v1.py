@@ -245,6 +245,34 @@ def test_xiaoyou_health_summarizes_read_only_operating_signals(tmp_path):
     assert (tmp_path / "notification_outbox.json").read_text(encoding="utf-8") == before_outbox
 
 
+def test_xiaoyou_health_does_not_count_off_schedule_daily_report_as_delivery():
+    from plugins.tuoguan_core.digital_employee_state import _xiaoyou_daily_report_health
+
+    rows = [
+        {
+            "id": "autonomous_daily_report:20260812:evening:deploy_misfire_124550",
+            "notification_type": "autonomous_daily_report",
+            "status": "sent",
+            "sent_at": "2026-08-12T12:45:52+08:00",
+        }
+    ]
+    runs = [
+        {
+            "record_type": "daily_report_delivery_status",
+            "report_kind": "evening",
+            "notification_id": "autonomous_daily_report:20260812:evening",
+            "delivery_status": "sent",
+            "sent_at": "2026-08-12T12:45:52+08:00",
+        }
+    ]
+
+    health = _xiaoyou_daily_report_health(rows, runs, 0.0)
+
+    assert health["sent_last_24h"] is False
+    assert health["sent_count_last_24h"] == 0
+    assert health["by_kind"]["evening"]["status"] == "missing"
+
+
 def test_xiaoyou_health_tool_is_registered_and_permission_scoped(tmp_path):
     from plugins.tuoguan_core.runtime_foundation import MODEL_SELECTED_READ_TOOLS
     from plugins.tuoguan_core.tool_service import TuoguanToolService

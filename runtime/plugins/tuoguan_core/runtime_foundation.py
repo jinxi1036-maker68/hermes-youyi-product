@@ -10,13 +10,13 @@ from copy import deepcopy
 from datetime import datetime
 from typing import Any
 
-from .store import TuoguanStore
+from .store import JSON_NO_CHANGE, TuoguanStore
+from .tenant_context import current_tenant_id
 from .write_guard import changed_protected_hashes, protected_hashes
 from .learning_loop import record_learning_from_ledger
 from .runtime_ownership import allowed_claims_from_result, guard_business_claims
 
 
-TENANT_ID = "youyi_tuoguan"
 _LOCK = threading.RLock()
 _PENDING_BY_USER: dict[str, dict[str, Any]] = {}
 _TURN_BY_SESSION: dict[str, dict[str, Any]] = {}
@@ -208,6 +208,23 @@ def _sanitize_external_reply(
     actor_role: str = "",
 ) -> str:
     value = str(text or "")
+    technical_refs: list[str] = []
+
+    def preserve_technical_name(match: re.Match[str]) -> str:
+        technical_refs.append(match.group(0))
+        return f"__XIAOYOU_TECHNICAL_NAME_{len(technical_refs) - 1}__"
+
+    value = re.sub(
+        r"hermes(?=(?:\s*v?\d|\s*(?:的\s*)?(?:版本|框架|底座|架构|官方文档|技术名称)))",
+        preserve_technical_name,
+        value,
+        flags=re.IGNORECASE,
+    )
+    value = re.sub(r"hermes", "小优", value, flags=re.IGNORECASE)
+    for index, technical_name in enumerate(technical_refs):
+        value = value.replace(f"__XIAOYOU_TECHNICAL_NAME_{index}__", technical_name)
+    value = re.sub(r"(?<=[\u3400-\u9fff])\s+小优", "小优", value)
+    value = re.sub(r"小优\s+(?=[\u3400-\u9fff])", "小优", value)
     lowered = value.lower()
     if any(marker in lowered for marker in _INTERNAL_ERROR_MARKERS):
         return "我刚才连接中断，这次没有处理完整。请稍等一下再发一次，我会重新接着处理。"
@@ -474,10 +491,11 @@ def _looks_like_self_rescue_deflection(raw_text: str, final_reply: str) -> bool:
 def _non_business_dialogue_plan(
     *, actor_user_id: str, actor_role: str, message_id: str, raw_text: str, trace_id: str = ""
 ) -> dict[str, Any]:
-    plan_id = f"plan_{uuid.uuid5(uuid.NAMESPACE_URL, f'{TENANT_ID}:{message_id}:non_business_dialogue').hex[:24]}"
+    tenant_id = current_tenant_id()
+    plan_id = f"plan_{uuid.uuid5(uuid.NAMESPACE_URL, f'{tenant_id}:{message_id}:non_business_dialogue').hex[:24]}"
     return {
         "plan_id": plan_id,
-        "tenant_id": TENANT_ID,
+        "tenant_id": tenant_id,
         "actor_user_id": str(actor_user_id or ""),
         "actor_role": str(actor_role or "unbound"),
         "source_message_id": str(message_id or ""),
@@ -549,10 +567,7 @@ def should_clarify_without_tool(*, store: TuoguanStore, user_id: str, raw_text: 
 
 
 def _append_jsonl(store: TuoguanStore, filename: str, payload: dict[str, Any]) -> None:
-    path = store.data_dir / filename
-    path.parent.mkdir(parents=True, exist_ok=True)
-    with _LOCK, path.open("a", encoding="utf-8") as handle:
-        handle.write(json.dumps(payload, ensure_ascii=False, separators=(",", ":")) + "\n")
+    store.append_jsonl_verified(filename, payload)
 
 
 def foundation_enabled(store: TuoguanStore) -> bool:
@@ -624,7 +639,7 @@ def begin_inbound(*, store: TuoguanStore, message_id: str, conversation_id: str,
         "source_message_id": str(message_id or ""),
         "conversation_id": str(conversation_id or user_id),
         "data_dir": str(store.data_dir.resolve()),
-        "tenant_id": TENANT_ID,
+        "tenant_id": current_tenant_id(),
         "channel": "wecom_callback",
         "user_id": user_id,
         "role": role,
@@ -661,6 +676,8 @@ def begin_inbound(*, store: TuoguanStore, message_id: str, conversation_id: str,
 def current_raw_text(user_id: str) -> str:
     with _LOCK:
         item = _PENDING_BY_USER.get(str(user_id or ""), {})
+        if item.get("completed_at"):
+            return ""
         return str(item.get("raw_text") or "")
 
 
@@ -749,7 +766,7 @@ def write_authorization_for(user_id: str, operation: str) -> dict[str, str] | No
         session_user = session_user.split(":", 1)[1].strip()
     with _LOCK:
         item = _PENDING_BY_USER.get(str(user_id or ""))
-        if not item:
+        if not item or item.get("completed_at"):
             return None
         entered_model = bool(item.get("entered_model"))
         same_session_user = bool(session_user) and session_user == str(user_id or "")
@@ -771,30 +788,21 @@ def write_authorization_for(user_id: str, operation: str) -> dict[str, str] | No
 def link_audit_to_ledger(store: TuoguanStore, ledger_id: str, audit_id: str) -> None:
     if not ledger_id or not audit_id:
         return
-    path = store.data_dir / "reply_ledger.jsonl"
-    if not path.exists():
+    if not (store.data_dir / "reply_ledger.jsonl").exists():
         return
-    with _LOCK:
-        lines = path.read_text(encoding="utf-8").splitlines()
+
+    def attach(rows: list[dict[str, Any]]) -> Any:
         changed = False
-        output: list[str] = []
-        for line in lines:
-            try:
-                item = json.loads(line)
-            except ValueError:
-                output.append(line)
-                continue
-            if item.get("ledger_id") == ledger_id:
+        for item in rows:
+            if str(item.get("ledger_id") or "") == str(ledger_id):
                 ids = list(item.get("audit_event_ids") or [])
                 if audit_id not in ids:
                     ids.append(audit_id)
                     item["audit_event_ids"] = ids
                     changed = True
-                output.append(json.dumps(item, ensure_ascii=False, separators=(",", ":")))
-            else:
-                output.append(line)
-        if changed:
-            path.write_text("\n".join(output) + "\n", encoding="utf-8")
+        return rows if changed else JSON_NO_CHANGE
+
+    store.update_jsonl_verified("reply_ledger.jsonl", attach)
 
 
 
@@ -829,7 +837,7 @@ def _autonomous_work_context(sender_id: str, actor_role: str = "") -> str:
     if not any((total, waiting_count, pending_wakeup_count, unknown_count, due_count)):
         return ""
     lines = [
-        "【Hermes 自主工作状态材料】以下只提供当前工作状态、等待、唤醒、到期关注和结果未知材料，不规定下一步动作，也不是流程或工具指令。",
+        "【小优自主工作状态材料】以下只提供当前工作状态、等待、唤醒、到期关注和结果未知材料，不规定下一步动作，也不是流程或工具指令。",
         f"当前可见自主事项 {total} 条；等待 {waiting_count} 条；待处理唤醒 {pending_wakeup_count} 条；到期关注候选 {due_count} 条；结果未知动作 {unknown_count} 条。",
     ]
     for item in (brief.get("waiting_items") or [])[:3]:
@@ -1210,7 +1218,7 @@ def _audit(store: TuoguanStore, item: dict[str, Any], event: str, result: str, *
     _append_jsonl(store, "business_action_audit.jsonl", {
         "audit_event_id": audit_id,
         "ledger_id": item["ledger_id"],
-        "tenant_id": TENANT_ID,
+        "tenant_id": current_tenant_id(),
         "channel": "wecom_callback",
         "actor_user_id": item["user_id"],
         "actor_role": item["role"],
@@ -1294,6 +1302,7 @@ def ensure_outbound_reply_recorded(
             for line in reversed(path.read_text(encoding="utf-8").splitlines()[-200:]):
                 try:
                     if str(json.loads(line).get("message_id") or "") == message_id:
+                        _finish_runtime_turn(user_id=user_id, session_id=session_id, message_id=message_id)
                         return
                 except ValueError:
                     continue
@@ -1314,7 +1323,7 @@ def ensure_outbound_reply_recorded(
         "message_id": message_id,
         "source_message_id": message_id,
         "conversation_id": str(conversation_id or user_id),
-        "tenant_id": TENANT_ID,
+        "tenant_id": current_tenant_id(),
         "channel": "wecom_callback",
         "user_id": str(user_id or ""),
         "role": str(role or "unbound"),
@@ -1422,6 +1431,22 @@ def ensure_outbound_reply_recorded(
     item["audit_event_ids"] = [audit_id]
     _append_jsonl(store, "reply_ledger.jsonl", item)
     _record_learning_safely(store, item)
+    _finish_runtime_turn(user_id=user_id, session_id=session_id, message_id=message_id)
+
+
+def _finish_runtime_turn(*, user_id: str, session_id: str, message_id: str) -> None:
+    """Discard only the completed turn, preserving any newer concurrent turn."""
+
+    normalized_message_id = str(message_id or "")
+    with _LOCK:
+        pending = _PENDING_BY_USER.get(str(user_id or ""))
+        if pending and str(pending.get("message_id") or "") == normalized_message_id:
+            pending["completed_at"] = pending.get("completed_at") or _now()
+            _PENDING_BY_USER.pop(str(user_id or ""), None)
+        turn = _TURN_BY_SESSION.get(str(session_id or ""))
+        if turn and str(turn.get("message_id") or "") == normalized_message_id:
+            turn["completed_at"] = turn.get("completed_at") or _now()
+            _TURN_BY_SESSION.pop(str(session_id or ""), None)
 
 
 def mark_outbound_reply_delivered(
@@ -1432,20 +1457,18 @@ def mark_outbound_reply_delivered(
     source_message_id = str(source_message_id or "")
     if not source_message_id:
         return False
-    path = store.data_dir / "reply_ledger.jsonl"
-    if not path.exists():
+    if not (store.data_dir / "reply_ledger.jsonl").exists():
         return False
-    with _LOCK:
-        lines = path.read_text(encoding="utf-8").splitlines()
-        for index in range(len(lines) - 1, -1, -1):
-            try:
-                item = json.loads(lines[index])
-            except ValueError:
-                continue
+    delivered = False
+
+    def attach_delivery(rows: list[dict[str, Any]]) -> Any:
+        nonlocal delivered
+        for item in reversed(rows):
             if str(item.get("message_id") or "") != source_message_id:
                 continue
             if item.get("delivery_status") == "delivered":
-                return True
+                delivered = True
+                return JSON_NO_CHANGE
             item["delivery_status"] = "delivered"
             item["delivery_confirmed_at"] = _now()
             item["platform_message_id"] = str(platform_message_id or "")
@@ -1457,10 +1480,12 @@ def mark_outbound_reply_delivered(
                 platform_message_id=str(platform_message_id or ""),
             )
             item["audit_event_ids"] = list(item.get("audit_event_ids") or []) + [audit_id]
-            lines[index] = json.dumps(item, ensure_ascii=False, separators=(",", ":"))
-            path.write_text("\n".join(lines) + "\n", encoding="utf-8")
-            return True
-    return False
+            delivered = True
+            return rows
+        return JSON_NO_CHANGE
+
+    store.update_jsonl_verified("reply_ledger.jsonl", attach_delivery)
+    return delivered
 
 
 def transform_final_response(*, store: TuoguanStore, session_id: str, response_text: str) -> str | None:

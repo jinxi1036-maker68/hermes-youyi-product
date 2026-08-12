@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from datetime import datetime
 import html
+import ipaddress
 import json
 import re
 import urllib.parse
@@ -70,12 +71,35 @@ def _normalize_result(item: dict[str, Any], *, query: str, provider: str, now: d
         "description": _limit_text(description, 500),
         "query": str(query or "").strip(),
         "provider": provider,
+        "evidence_level": str(item.get("evidence_level") or "public_search_candidate"),
         "collected_at": _now_iso(now),
     }
 
 
 def _valid_public_url(url: str) -> bool:
-    return str(url or "").startswith(("http://", "https://"))
+    try:
+        parsed = urllib.parse.urlparse(str(url or "").strip())
+    except ValueError:
+        return False
+    if parsed.scheme not in {"http", "https"} or not parsed.hostname or parsed.username or parsed.password:
+        return False
+    hostname = parsed.hostname.rstrip(".").lower()
+    if hostname in {"localhost", "localhost.localdomain"} or hostname.endswith((".local", ".internal")):
+        return False
+    try:
+        address = ipaddress.ip_address(hostname)
+    except ValueError:
+        return True
+    return not any(
+        (
+            address.is_private,
+            address.is_loopback,
+            address.is_link_local,
+            address.is_multicast,
+            address.is_reserved,
+            address.is_unspecified,
+        )
+    )
 
 
 def _ddgs_search(query: str, limit: int = 5) -> dict[str, Any]:
@@ -200,8 +224,8 @@ def collect_public_research(
         if fallback.get("success"):
             result = fallback
         elif normalized_kind in {"competitor", "local_market"}:
-            result = {"success": True, "data": {"web": XIANGCHENG_PUBLIC_FALLBACK}}
-            errors.append("used curated Xiangcheng public-source fallback")
+            result = {"success": False, "data": {"web": []}}
+            errors.append("curated Xiangcheng reference links are not query evidence")
         else:
             result = fallback
             if fallback.get("error"):
@@ -217,7 +241,11 @@ def collect_public_research(
             if not isinstance(raw, dict):
                 continue
             item = _normalize_result(raw, query=search_query, provider=str(result.get("provider") or "public_search"), now=now)
-            if item["title"] and _valid_public_url(item["url"]):
+            if (
+                item["title"]
+                and _valid_public_url(item["url"])
+                and item["evidence_level"] != "reference_only"
+            ):
                 evidence.append(item)
             if len(evidence) >= max(1, min(int(limit or 5), 12)):
                 break
@@ -244,10 +272,7 @@ def collect_public_research(
     pending_id = ""
     if persist and normalized_kind in {"knowledge", "industry_trend", "platform_signal"} and evidence:
         pending_id = f"pending_{uuid.uuid4().hex[:12]}"
-        pending = store.read_json("pending_knowledge.json", [])
-        if not isinstance(pending, list):
-            pending = []
-        pending.append({
+        pending_row = {
             "id": pending_id,
             "kind": normalized_kind,
             "query": search_query,
@@ -255,8 +280,16 @@ def collect_public_research(
             "status": "pending_review",
             "created_at": _now_iso(now),
             "auto_effects": payload["auto_effects"],
-        })
-        store.write_json("pending_knowledge.json", pending[-500:])
+        }
+
+        def append_pending(value: Any) -> list[dict[str, Any]]:
+            pending = value if isinstance(value, list) else []
+            if any(isinstance(row, dict) and str(row.get("id") or "") == pending_id for row in pending):
+                return pending[-500:]
+            pending.append(pending_row)
+            return pending[-500:]
+
+        store.update_json("pending_knowledge.json", [], append_pending)
     payload["pending_id"] = pending_id
     return payload
 

@@ -95,6 +95,51 @@ def test_daily_report_is_idempotent_for_same_day_and_kind(tmp_path):
     assert len(outbox) == 1
 
 
+def test_evening_report_refuses_off_schedule_delivery(tmp_path):
+    from plugins.tuoguan_core.daily_reporter import queue_daily_boss_report
+
+    store = _seed_store(tmp_path)
+    cn_tz = timezone(timedelta(hours=8))
+    result = queue_daily_boss_report("evening", store=store, now=datetime(2026, 8, 12, 12, 45, tzinfo=cn_tz))
+
+    assert result["ok"] is False
+    assert result["error"] == "daily_report_outside_delivery_window"
+    assert json.loads((tmp_path / "notification_outbox.json").read_text(encoding="utf-8")) == []
+
+
+def test_scheduled_report_recovers_same_day_off_schedule_delivery(tmp_path):
+    from plugins.tuoguan_core.daily_reporter import queue_daily_boss_report
+
+    store = _seed_store(tmp_path)
+    cn_tz = timezone(timedelta(hours=8))
+    notification_id = "autonomous_daily_report:20260812:evening"
+    _write_json(
+        tmp_path,
+        "notification_outbox.json",
+        [
+            {
+                "id": notification_id,
+                "status": "sent",
+                "notification_type": "autonomous_daily_report",
+                "report_kind": "evening",
+                "touser": "boss1",
+                "created_at": "2026-08-12T12:45:00+08:00",
+                "sent_at": "2026-08-12T12:45:05+08:00",
+            }
+        ],
+    )
+
+    result = queue_daily_boss_report("evening", store=store, now=datetime(2026, 8, 12, 21, 0, tzinfo=cn_tz))
+
+    assert result["ok"] is True
+    assert result["queued"] is True
+    outbox = json.loads((tmp_path / "notification_outbox.json").read_text(encoding="utf-8"))
+    assert len(outbox) == 1
+    assert outbox[0]["id"] == notification_id
+    assert outbox[0]["status"] == "pending"
+    assert outbox[0]["requeued_after_off_schedule_delivery"] is True
+
+
 def test_dry_run_does_not_write_outbox(tmp_path):
     from plugins.tuoguan_core.daily_reporter import queue_daily_boss_report
 
