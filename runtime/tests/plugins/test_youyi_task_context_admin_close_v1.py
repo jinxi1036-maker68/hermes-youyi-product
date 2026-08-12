@@ -116,6 +116,42 @@ def test_boss_can_cancel_just_created_task_by_focus_and_clear_context(tmp_path):
     assert all(item.get("task_id") != created["task_id"] for item in focus.values())
 
 
+def test_update_task_refuses_cancel_intent_and_points_to_cancel_tool(tmp_path):
+    from plugins.tuoguan_core.tool_service import TuoguanToolService
+
+    store = _seed_store(tmp_path)
+    service = TuoguanToolService(
+        store=store,
+        platform="wecom_callback",
+        user_id="boss1",
+        user_name="金总",
+        chat_id="boss1",
+        session_key="boss1",
+    )
+    created = service.create_task(
+        title="今天下午4:30跟小金家长沟通",
+        assignee_user_id="teacher1",
+        operation_id="op-create-wrong-update-cancel",
+        due_at="2026-08-09T16:30:00+08:00",
+        level="B",
+        student_name="小金",
+    )
+
+    result = service.update_task(
+        task_id=created["task_id"],
+        reply="把这个测试任务直接关掉，不用再提醒",
+        operation_id="op-update-wrong-tool-cancel",
+    )
+
+    assert result["ok"] is True
+    assert result["data"]["result_action"] == "wrong_tool_for_cancel_intent"
+    assert result["data"]["suggested_tool"] == "tuoguan_cancel_task"
+    assert result["data"]["no_write_performed"] is True
+    saved = store.load_tasks()[0]
+    assert saved["status"] == "pending"
+    assert "cancelled_at" not in saved
+
+
 def test_parent_communication_manual_assignment_closes_from_natural_teacher_evidence(tmp_path):
     from plugins.tuoguan_core.tool_service import TuoguanToolService
 

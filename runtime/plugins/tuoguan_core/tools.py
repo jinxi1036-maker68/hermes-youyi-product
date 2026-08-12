@@ -248,11 +248,11 @@ TUOGUAN_DASHBOARD_LINK_SCHEMA = _schema(
 )
 
 TUOGUAN_UPDATE_TASK_SCHEMA = _schema(
-    "保存任务反馈、任务处理进展或完成信息，并推进任务闭环。工具按明确任务 id、点名对象和可信任务上下文解析目标任务，并保护无关 S 级安全任务不被普通任务话术误修改。",
+    "保存任务反馈、任务处理进展或完成信息，并推进任务闭环。不要用本工具取消、关闭、删除任务或停止提醒；老板/店长/老师明确说取消、关闭、删掉、不用做、不用再提醒时，必须改用 tuoguan_cancel_task。本工具按明确任务 id、点名对象和可信任务上下文解析目标任务，并保护无关 S 级安全任务不被普通任务话术误修改。",
     _identity_props(
         {
             "task_id": {"type": "string", "description": "任务 id，可为空；为空时系统按本轮可信任务上下文解析。"},
-            "reply": {"type": "string", "description": "老师或负责人本次补充内容。"},
+            "reply": {"type": "string", "description": "老师或负责人本次补充内容。取消、关闭、删除或停止提醒类原话不要传给本工具，应调用 tuoguan_cancel_task。"},
             "operation_id": {"type": "string", "description": "幂等写入 id。"},
         }
     ),

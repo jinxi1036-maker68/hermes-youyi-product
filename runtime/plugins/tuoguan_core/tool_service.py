@@ -198,6 +198,51 @@ def _parse_iso(value: Any) -> datetime | None:
     return parsed.astimezone()
 
 
+def _looks_like_task_cancel_intent(text: str) -> bool:
+    compact = "".join(str(text or "").split())
+    if not compact:
+        return False
+    status_question_terms = (
+        "取消了吗",
+        "关闭了吗",
+        "关掉了吗",
+        "删掉了吗",
+        "删除了吗",
+        "还会提醒吗",
+        "为什么不能取消",
+        "为什么不能关闭",
+        "为什么不能删除",
+    )
+    if any(term in compact for term in status_question_terms):
+        return False
+    cancel_terms = (
+        "取消",
+        "撤销",
+        "撤回",
+        "作废",
+        "终止",
+        "关闭",
+        "关掉",
+        "关了",
+        "闭关",
+        "删掉",
+        "删除",
+        "不用做",
+        "不用再做",
+        "不做了",
+        "不用处理",
+        "不用管",
+        "先不用管",
+        "别提醒",
+        "不要提醒",
+        "不用再提醒",
+        "不要再提醒",
+        "停止提醒",
+        "停掉提醒",
+    )
+    return any(term in compact for term in cancel_terms)
+
+
 class TuoguanToolService:
     """Execute tutoring operations under a trusted gateway identity."""
 
@@ -1872,6 +1917,37 @@ class TuoguanToolService:
             evidence_text = trusted_raw or raw_reply
             visible_tasks = self._visible_tasks()
             open_visible = [task for task in visible_tasks if task.get("status") not in _CLOSED_STATUSES]
+            supplied_task_id = str(task_id or "").strip()
+            if _looks_like_task_cancel_intent(evidence_text):
+                candidates = [
+                    {
+                        "task_id": str(task.get("id") or ""),
+                        "title": str(task.get("title") or task.get("task_name") or "未命名任务"),
+                        "status": str(task.get("status") or ""),
+                        "student_name": str(task.get("student_name") or ""),
+                        "assignee_userid": str(task.get("assignee_userid") or ""),
+                    }
+                    for task in open_visible[:8]
+                ]
+                return self._ok(
+                    "update_task",
+                    data={
+                        "result_action": "wrong_tool_for_cancel_intent",
+                        "reason_code": "use_tuoguan_cancel_task",
+                        "suggested_tool": "tuoguan_cancel_task",
+                        "task_id": supplied_task_id,
+                        "candidate_task_count": len(open_visible),
+                        "candidate_tasks": candidates,
+                        "writeback_verified": True,
+                        "idempotency_verified": True,
+                        "no_write_performed": True,
+                    },
+                    message=(
+                        "这是取消、关闭或停止提醒任务的意图，不能用任务更新工具处理。"
+                        "请改用 tuoguan_cancel_task；如果任务不明确，先用学生、老师或任务内容定位。"
+                    ),
+                    already_applied=True,
+                )
             compact_evidence = "".join(evidence_text.split()).rstrip("。！？!?")
             generic_complete = compact_evidence in {
                 "这个任务已经完成",
@@ -1910,7 +1986,6 @@ class TuoguanToolService:
                 if str(task.get("student_name") or "")
                 and str(task.get("student_name") or "").replace("测试", "") in evidence_text.replace("测试", "")
             ]
-            supplied_task_id = str(task_id or "").strip()
             resolved_task_id = ""
             explicit_task_id_in_text = bool(supplied_task_id and supplied_task_id in evidence_text)
             focus = self._read_focus()

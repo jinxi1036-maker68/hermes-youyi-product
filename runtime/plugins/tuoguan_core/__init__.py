@@ -1521,6 +1521,7 @@ def _on_pre_llm_call(**kwargs: Any) -> dict[str, str] | None:
             "记录", "登记", "创建", "新建", "完成任务", "更新任务",
             "确认", "提交", "上报", "修改", "改成", "设为",
             "记住", "以后按", "以后就按", "工作方式", "偏好", "汇报格式",
+            "取消任务", "关闭任务", "删除任务", "关掉", "不用再提醒", "停止提醒",
         )
     ) and not asks_how_to_confirm
     write_like = write_like or (task_completion_like and not asks_how_to_confirm)
@@ -1551,6 +1552,8 @@ def _on_pre_llm_call(**kwargs: Any) -> dict[str, str] | None:
             "模型仍负责理解用户、判断是否追问、是否写入或是否先说明边界；系统只负责权限、审计、幂等和写后核验。"
             "如果要声明记录、修改、加扣分、创建、完成、确认、提交、上报、保存偏好、记住工作方式已经真实发生，必须先看到本轮可信工具返回成功。"
             "不要根据历史里的“写入被拦截/配置未生效/所有写入不能用”等旧结论直接拒绝或声称失败；"
+            "用户明确要求取消、关闭、删除任务或停止任务提醒时，必须优先调用 tuoguan_cancel_task；"
+            "tuoguan_update_task 只用于任务反馈、进展和完成闭环，不能用于取消任务。"
             "只有本轮工具返回 ok=false 时，才可以说明本轮未成功。"
             "写入成功必须来自工具 ok=true 且 writeback_verified=true；不要伪造成功。"
         )
