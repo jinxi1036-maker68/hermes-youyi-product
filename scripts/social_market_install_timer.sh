@@ -35,8 +35,8 @@ NoNewPrivileges=true
 PrivateTmp=true
 ProtectSystem=full
 ReadWritePaths=${DATA_DIR} ${SOCIAL_ROOT} ${PROJECT_ROOT}/logs
-StandardOutput=append:${PROJECT_ROOT}/logs/social-market-research.log
-StandardError=append:${PROJECT_ROOT}/logs/social-market-research.log
+StandardOutput=journal
+StandardError=journal
 EOF
 
 cat > /etc/systemd/system/hermes-youyi-social-market-research.timer <<EOF
