@@ -119,6 +119,9 @@ ALLOWED_STATUSES = {
     "superseded",
     "verified",
     "failed",
+    "fixed",
+    "expired",
+    "needs_retest",
 }
 
 

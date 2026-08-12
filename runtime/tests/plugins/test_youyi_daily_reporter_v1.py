@@ -302,6 +302,37 @@ def test_daily_report_does_not_surface_stale_owner_attention_as_today_focus(tmp_
     assert len(report["content"]) <= 700
 
 
+def test_daily_report_does_not_render_empty_json_detail(tmp_path):
+    from plugins.tuoguan_core.daily_reporter import build_daily_boss_report
+
+    store = _seed_store(tmp_path)
+    _append_jsonl(
+        tmp_path,
+        "hermes_work_items.jsonl",
+        [
+            {
+                "record_type": "work_item",
+                "work_item_id": "work-empty-json",
+                "tenant_id": "youyi_tuoguan",
+                "focus_key": "goal:empty_json",
+                "title": "已合并到主工作项，不再独立推进。",
+                "status": "active",
+                "current_phase": {},
+                "current_waiting": {},
+                "next_actions": [{}],
+                "created_at": "2026-08-12T08:00:00+08:00",
+                "updated_at": "2026-08-12T08:00:00+08:00",
+            }
+        ],
+    )
+    cn_tz = timezone(timedelta(hours=8))
+    report = build_daily_boss_report("morning", store=store, now=datetime(2026, 8, 12, 8, 30, tzinfo=cn_tz))
+
+    assert report["ok"] is True
+    assert "{}" not in report["content"]
+    assert "今天先看 。" not in report["content"]
+
+
 def test_daily_report_does_not_apply_high_risk_evolution_detail(tmp_path):
     from plugins.tuoguan_core.daily_reporter import build_daily_boss_report
     from plugins.tuoguan_core.models import UserIdentity

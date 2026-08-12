@@ -4880,6 +4880,7 @@ def query_xiaoyou_health(
     outbox_health = _xiaoyou_outbox_health(outbox, since_ts)
     autonomous_loop = _xiaoyou_autonomous_loop_health(store, since_ts)
     runtime_learning = _xiaoyou_runtime_learning_health(store, since_ts)
+    social_market = _xiaoyou_social_market_health(store, since_ts)
     attention = query_attention_threads(store, identity=identity, include_closed=False, limit=limit)
     fact_gaps = query_fact_gap_candidates(store, identity=identity, limit=limit)
     staff_voice = (
@@ -4910,6 +4911,8 @@ def query_xiaoyou_health(
     tool_failure_count = int(((evolution.get("health_signals") or {}).get("tool_failure_candidate_count") or 0)) if isinstance(evolution, dict) else 0
     if tool_failure_count:
         issues.append(f"有 {tool_failure_count} 条工具失败/能力缺口候选等待复盘。")
+    if social_market["latest_status"] in {"backend_unavailable", "source_failed"}:
+        issues.append(f"最近一次社交市场采集状态为 {social_market['latest_status']}，小优不能把它写成市场趋势。")
     fact_gap_count = int(fact_gaps.get("candidate_count") or 0) if isinstance(fact_gaps, dict) else 0
     if fact_gap_count:
         issues.append(f"有 {fact_gap_count} 条机构事实缺口候选，需要小优按事实归属人择机补齐。")
@@ -4956,9 +4959,12 @@ def query_xiaoyou_health(
             "next_day_context": deepcopy(next_context[:5]),
             "pending_review_count": pending_review,
             "tool_failure_candidate_count": tool_failure_count,
+            "tool_failure_status_counts": deepcopy(runtime_learning.get("tool_failure_status_counts") or {}),
+            "fixed_or_verified_failure_count": int(runtime_learning.get("fixed_or_verified_failure_count") or 0),
             "recent_workstyle_preference_count": len(evolution.get("recent_workstyle_preferences") or []) if isinstance(evolution, dict) else 0,
             "status_counts": deepcopy(runtime_learning.get("evolution_status_counts") or {}),
         },
+        "market_learning": social_market,
         "runtime_learning": runtime_learning,
         "issues": issues[:8],
         "actions_taken": [],
@@ -5024,9 +5030,12 @@ def _xiaoyou_runtime_learning_health(store: TuoguanStore, since_ts: float) -> di
         if key:
             folded_evolution[key] = row
     status_counts: dict[str, int] = {}
+    tool_failure_status_counts: dict[str, int] = {}
     for row in folded_evolution.values():
         status = str(row.get("status") or "candidate")
         status_counts[status] = status_counts.get(status, 0) + 1
+        if str(row.get("candidate_type") or "") == "tool_failure_or_bug":
+            tool_failure_status_counts[status] = tool_failure_status_counts.get(status, 0) + 1
     receipt_health: dict[str, Any] = {"available": False, "total_count": 0, "duplicate_or_retry_count": 0, "failed_count": 0, "claimed_count": 0}
     try:
         from hermes_constants import get_hermes_home
@@ -5043,7 +5052,45 @@ def _xiaoyou_runtime_learning_health(store: TuoguanStore, since_ts: float) -> di
         "core_skill_missing_count": max(0, len(model_rows) - len(core_loaded)),
         "workstyle_application_count": len(workstyle_applied),
         "evolution_status_counts": status_counts,
+        "tool_failure_status_counts": tool_failure_status_counts,
+        "fixed_or_verified_failure_count": sum(
+            count for status, count in tool_failure_status_counts.items()
+            if status in {"fixed", "verified", "expired"}
+        ),
         "inbound_receipts": receipt_health,
+    }
+
+
+def _xiaoyou_social_market_health(store: TuoguanStore, since_ts: float) -> dict[str, Any]:
+    runs = [
+        row for row in _read_jsonl(store, "social_market_research_runs.jsonl")
+        if _ts(row.get("created_at") or row.get("collected_at")) >= since_ts
+    ]
+    all_runs = _read_jsonl(store, "social_market_research_runs.jsonl")
+    latest = all_runs[-1] if all_runs else {}
+    candidates = [
+        row for row in _read_jsonl(store, "social_market_research_candidates.jsonl")
+        if _ts(row.get("collected_at") or row.get("created_at")) >= since_ts
+    ]
+    status_counts: dict[str, int] = {}
+    platform_counts: dict[str, int] = {}
+    for row in runs:
+        status = str(row.get("status") or "unknown")
+        platform = str(row.get("platform") or "unknown")
+        status_counts[status] = status_counts.get(status, 0) + 1
+        platform_counts[platform] = platform_counts.get(platform, 0) + 1
+    return {
+        "read_only": True,
+        "run_count_last_24h": len(runs),
+        "candidate_count_last_24h": len(candidates),
+        "status_counts_last_24h": status_counts,
+        "platform_counts_last_24h": platform_counts,
+        "latest_status": str(latest.get("status") or "missing"),
+        "latest_platform": str(latest.get("platform") or ""),
+        "latest_query": str(latest.get("query") or "")[:120],
+        "latest_at": str(latest.get("created_at") or latest.get("collected_at") or ""),
+        "latest_error_count": len(latest.get("errors") or []) if isinstance(latest.get("errors"), list) else 0,
+        "external_observation_only": True,
     }
 
 
@@ -5148,6 +5195,11 @@ def _render_xiaoyou_health(health: dict[str, Any]) -> str:
             f"- 员工声音：近24小时 {staff_voice.get('signal_count_last_24h') or 0} 条；"
             f"高风险开放 {staff_voice.get('high_or_urgent_open_count') or 0} 条。"
         )
+    market = health.get("market_learning") if isinstance(health.get("market_learning"), dict) else {}
+    lines.append(
+        f"- 市场学习：近24小时采集运行 {market.get('run_count_last_24h') or 0} 次；"
+        f"候选 {market.get('candidate_count_last_24h') or 0} 条；最近状态 {market.get('latest_status') or 'unknown'}。"
+    )
     issues = health.get("issues") if isinstance(health.get("issues"), list) else []
     if issues:
         lines.append("- 需要关注：" + "；".join(str(item) for item in issues[:3]))

@@ -1177,7 +1177,7 @@ TUOGUAN_QUERY_SELF_EVOLUTION_LEDGER_SCHEMA = _schema(
     "只读查询小优自我进化账本：最近学到的工作方式、错误修正、工具失败、机构事实缺口、手册候选、明日重点和 multi-agent 建议采纳记录。它只提供经验和审核材料，不自动改变制度、权限、手册、家长外发或模型下一步。",
     _identity_props({
         "candidate_type": {"type": "string", "enum": ["", "person_preference_candidate", "institution_fact_gap", "self_correction", "tool_failure_or_bug", "handbook_method_candidate", "tomorrow_focus", "multi_agent_adoption"], "default": "", "description": "可选，筛选候选类型。"},
-        "status": {"type": "string", "enum": ["", "candidate", "ready_for_application", "applied", "pending_review", "needs_confirmation", "rejected", "superseded"], "default": "", "description": "可选，筛选处理状态。"},
+        "status": {"type": "string", "enum": ["", "candidate", "ready_for_application", "applied", "pending_review", "needs_confirmation", "rejected", "superseded", "verified", "failed", "fixed", "expired", "needs_retest"], "default": "", "description": "可选，筛选处理状态。"},
         "limit": {"type": "integer", "default": 30, "description": "最多返回记录数。"},
     }),
     ["user_id"],

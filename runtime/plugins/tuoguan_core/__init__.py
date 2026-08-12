@@ -1486,7 +1486,7 @@ def _on_pre_llm_call(**kwargs: Any) -> dict[str, str] | None:
     except Exception:
         logger.exception("tuoguan_core failed to append role layer context")
     compact_raw = "".join(raw_text.split())
-    ambiguous_retry = compact_raw in {
+    short_context_reference = compact_raw in {
         "你再试一下",
         "再试一下",
         "试一下",
@@ -1497,7 +1497,32 @@ def _on_pre_llm_call(**kwargs: Any) -> dict[str, str] | None:
         "嗯",
         "对",
         "可以",
+        "什么意思",
+        "啥意思",
+        "什么意思啊",
+        "这个",
+        "刚才那个",
+        "上面那个",
+        "展开",
+        "展开一下",
+        "详细说",
+        "说重点",
+        "关掉",
+        "关闭",
+        "取消",
+        "不用了",
+        "不用再提醒",
     }
+    active_context = ""
+    if short_context_reference:
+        try:
+            from .active_work_context import query_active_work_context, render_active_work_context
+
+            active_result = query_active_work_context(_router().store, identity=identity, limit=6)
+            active_context = render_active_work_context(active_result)
+        except Exception:
+            logger.exception("tuoguan_core failed to build active work context")
+            active_context = ""
     asks_how_to_confirm = any(term in compact_raw for term in ("怎么确认", "如何确认", "需要我怎么确认", "你需要我怎么确认"))
     task_completion_like = (
         compact_raw in {
@@ -1525,19 +1550,12 @@ def _on_pre_llm_call(**kwargs: Any) -> dict[str, str] | None:
         )
     ) and not asks_how_to_confirm
     write_like = write_like or (task_completion_like and not asks_how_to_confirm)
-    if ambiguous_retry:
-        try:
-            from .active_work_context import query_active_work_context, render_active_work_context
-
-            active_result = query_active_work_context(_router().store, identity=identity, limit=5)
-            active_context = render_active_work_context(active_result)
-        except Exception:
-            logger.exception("tuoguan_core failed to build active work context")
-            active_context = ""
+    if short_context_reference and not write_like:
         if active_context:
             context_parts.append(active_context)
             context_parts.append(
                 "【短回复衔接规则】短回复本身不是拒绝执行的理由。先结合本轮原话、最近主动外发和上述活动线程判断指向；"
+                "“什么意思/这个/展开”优先解释最近活动；“继续/可以”优先沿最近活动推进；"
                 "相关时自然衔接，并在真实写入前调用对应可信工具。若多个线程同样可能或没有任何证据，只追问一个最关键的区分问题。"
             )
         else:
@@ -1546,6 +1564,8 @@ def _on_pre_llm_call(**kwargs: Any) -> dict[str, str] | None:
             )
         return {"context": "\n\n".join(context_parts)}
     if write_like:
+        if active_context:
+            context_parts.append(active_context)
         context_parts.append(
             "【优益当前轮写入规则】如果用户本轮明确要求记录、修改、加扣分、创建、完成、确认、提交或上报，"
             "必须调用对应 tuoguan_ 可信工具，以本轮工具结果为唯一执行依据。"

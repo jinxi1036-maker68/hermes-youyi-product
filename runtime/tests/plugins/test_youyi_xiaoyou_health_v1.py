@@ -132,6 +132,43 @@ def _seed_store(tmp_path: Path):
                 "status": "pending_review",
                 "created_at": "2026-08-09T01:10:00+08:00",
             },
+            {
+                "record_type": "self_evolution_event",
+                "evolution_event_id": "evo3",
+                "tenant_id": "youyi_tuoguan",
+                "candidate_type": "tool_failure_or_bug",
+                "summary": "取消任务工具授权旧失败已经修复。",
+                "risk_level": "medium",
+                "status": "fixed",
+                "created_at": "2026-08-09T01:20:00+08:00",
+            },
+        ],
+    )
+    _append_jsonl(
+        tmp_path,
+        "social_market_research_runs.jsonl",
+        [
+            {
+                "run_id": "social-run-1",
+                "platform": "douyin",
+                "query": "项城托管招生",
+                "status": "completed",
+                "created_at": "2026-08-09T10:10:00+08:00",
+            }
+        ],
+    )
+    _append_jsonl(
+        tmp_path,
+        "social_market_research_candidates.jsonl",
+        [
+            {
+                "candidate_id": "social-candidate-1",
+                "platform": "douyin",
+                "query": "项城托管招生",
+                "title": "本地同行招生短视频",
+                "status": "candidate",
+                "collected_at": "2026-08-09T10:12:00+08:00",
+            }
         ],
     )
     _append_jsonl(
@@ -198,6 +235,11 @@ def test_xiaoyou_health_summarizes_read_only_operating_signals(tmp_path):
     assert result["evolution"]["next_day_context_count"] == 1
     assert result["evolution"]["pending_review_count"] == 1
     assert result["evolution"]["tool_failure_candidate_count"] == 1
+    assert result["evolution"]["fixed_or_verified_failure_count"] == 1
+    assert result["evolution"]["tool_failure_status_counts"]["fixed"] == 1
+    assert result["market_learning"]["run_count_last_24h"] == 1
+    assert result["market_learning"]["candidate_count_last_24h"] == 1
+    assert result["market_learning"]["latest_status"] == "completed"
     assert result["actions_taken"] == []
     assert result["boundary"]["sends_messages"] is False
     assert (tmp_path / "notification_outbox.json").read_text(encoding="utf-8") == before_outbox

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import datetime, timedelta
 import json
 from concurrent.futures import ThreadPoolExecutor
 
@@ -67,6 +68,79 @@ def test_active_work_context_is_scoped_and_evidence_only(tmp_path):
     assert "下一工具" not in json.dumps(result, ensure_ascii=False)
 
 
+def test_active_work_context_unifies_outbound_daily_market_and_tool_evidence(tmp_path):
+    from plugins.tuoguan_core.active_work_context import query_active_work_context, render_active_work_context
+    from plugins.tuoguan_core.models import UserIdentity
+    from plugins.tuoguan_core.store import TuoguanStore
+
+    now = datetime.now().astimezone()
+    recent = (now - timedelta(minutes=20)).isoformat(timespec="seconds")
+    (tmp_path / "notification_outbox.json").write_text(
+        json.dumps(
+            [
+                {
+                    "id": "owner_attention_recent",
+                    "notification_type": "autonomous_owner_attention",
+                    "status": "sent",
+                    "touser": "boss1",
+                    "summary": "金钟两个进度卡在同一个点，需要老板确认。",
+                    "sent_at": recent,
+                },
+                {
+                    "id": "daily_recent",
+                    "notification_type": "autonomous_daily_report",
+                    "status": "sent",
+                    "touser": "boss1",
+                    "summary": "小优早报",
+                    "sent_at": recent,
+                },
+            ],
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    (tmp_path / "reply_ledger.jsonl").write_text(
+        json.dumps(
+            {
+                "ledger_id": "ledger-tool-1",
+                "user_id": "boss1",
+                "raw_text": "关闭小金任务",
+                "final_reply": "已关闭任务。",
+                "used_tool_registry_entry": "tuoguan_cancel_task",
+                "writeback_verified": True,
+                "completed_at": recent,
+            },
+            ensure_ascii=False,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "social_market_research_candidates.jsonl").write_text(
+        json.dumps(
+            {
+                "candidate_id": "market-1",
+                "platform": "douyin",
+                "title": "项城托管招生短视频观察",
+                "status": "candidate",
+                "collected_at": recent,
+            },
+            ensure_ascii=False,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    identity = UserIdentity("wecom_callback", "boss1", "boss1", "金总", "boss", "approved")
+
+    result = query_active_work_context(TuoguanStore(tmp_path), identity=identity, limit=6)
+    types = {item["context_type"] for item in result["contexts"]}
+    rendered = render_active_work_context(result)
+
+    assert {"recent_outbound", "daily_report", "recent_tool_result", "social_market_research"} <= types
+    assert "当前时间=" in rendered
+    assert "金钟两个进度卡在同一个点" in rendered
+    assert "tuoguan_cancel_task" in rendered
+
+
 def test_short_reply_receives_active_task_evidence(tmp_path, monkeypatch):
     from types import SimpleNamespace
 
@@ -105,3 +179,57 @@ def test_short_reply_receives_active_task_evidence(tmp_path, monkeypatch):
     assert "当前活动工作线程" in result["context"]
     assert "确认李老师任务结果" in result["context"]
     assert "短回复本身不是拒绝执行的理由" in result["context"]
+
+
+def test_short_question_and_cancel_reply_receive_recent_outbound_anchor(tmp_path, monkeypatch):
+    from datetime import datetime, timedelta
+    from types import SimpleNamespace
+
+    from gateway.config import Platform
+    import plugins.tuoguan_core as plugin
+    from plugins.tuoguan_core.models import UserIdentity
+    from plugins.tuoguan_core.runtime_foundation import clear_runtime_state
+    from plugins.tuoguan_core.store import TuoguanStore
+
+    clear_runtime_state()
+    recent = (datetime.now().astimezone() - timedelta(minutes=10)).isoformat(timespec="seconds")
+    (tmp_path / "notification_outbox.json").write_text(
+        json.dumps(
+            [
+                {
+                    "id": "owner_attention_recent",
+                    "notification_type": "autonomous_owner_attention",
+                    "status": "sent",
+                    "touser": "boss1",
+                    "summary": "金钟两个进度卡在同一个点，需要老板确认。",
+                    "sent_at": recent,
+                }
+            ],
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    identity = UserIdentity("wecom_callback", "boss1", "boss1", "金总", "boss", "approved")
+    store = TuoguanStore(tmp_path)
+    fake_router = SimpleNamespace(store=store, identities=SimpleNamespace(resolve=lambda *args, **kwargs: identity))
+    monkeypatch.setattr(plugin, "_router", lambda: fake_router)
+
+    question = plugin._on_pre_llm_call(
+        platform=Platform.WECOM_CALLBACK,
+        sender_id="boss1",
+        session_id="session-short-question",
+        turn_id="turn-short-question",
+        user_message="什么意思",
+    )
+    cancel = plugin._on_pre_llm_call(
+        platform=Platform.WECOM_CALLBACK,
+        sender_id="boss1",
+        session_id="session-short-cancel",
+        turn_id="turn-short-cancel",
+        user_message="关掉",
+    )
+
+    assert question is not None and "金钟两个进度卡在同一个点" in question["context"]
+    assert "什么意思/这个/展开" in question["context"]
+    assert cancel is not None and "金钟两个进度卡在同一个点" in cancel["context"]
+    assert "tuoguan_cancel_task" in cancel["context"]

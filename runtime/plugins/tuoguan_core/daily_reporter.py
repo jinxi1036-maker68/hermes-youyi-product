@@ -1037,15 +1037,21 @@ def _text_from_any(value: Any) -> str:
     if value is None:
         return ""
     if isinstance(value, str):
-        return _limit_text(_public_text(value.strip()), 180)
+        cleaned = _public_text(value.strip())
+        return "" if cleaned in {"", "{}", "[]", "null", "None"} else _limit_text(cleaned, 180)
     if isinstance(value, (int, float, bool)):
         return str(value)
     if isinstance(value, dict):
+        if not value:
+            return ""
         for key in ("text", "summary", "name", "title", "reason", "status", "phase", "value", "description"):
             if str(value.get(key) or "").strip():
                 return _limit_text(str(value[key]).strip(), 180)
-        return _limit_text(_public_text(json.dumps(value, ensure_ascii=False, sort_keys=True)), 180)
+        rendered = _public_text(json.dumps(value, ensure_ascii=False, sort_keys=True))
+        return "" if rendered in {"{}", "[]"} else _limit_text(rendered, 180)
     if isinstance(value, list):
+        if not value:
+            return ""
         parts = [_text_from_any(item) for item in value[:3]]
         return _limit_text("；".join(part for part in parts if part), 180)
     return _limit_text(_public_text(str(value).strip()), 180)
