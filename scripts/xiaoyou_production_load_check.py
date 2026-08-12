@@ -58,6 +58,9 @@ def _package_dirs(base: Path) -> list[Path]:
             path = Path(value)
             if path.exists() and path not in output:
                 output.append(path)
+    home_plugin = base / "home-proddata" / "plugins" / "tuoguan_core"
+    if home_plugin not in output:
+        output.append(home_plugin)
     return output
 
 
@@ -80,6 +83,9 @@ def _wecom_package_dirs(base: Path) -> list[Path]:
             path = Path(value)
             if path.exists() and path not in output:
                 output.append(path)
+    core_plugin = base / "hermes-agent" / "plugins" / "platforms" / "wecom"
+    if core_plugin not in output:
+        output.append(core_plugin)
     return output
 
 
@@ -191,6 +197,7 @@ def _hash_matrix(base: Path) -> dict[str, Any]:
         for package_dir in package_dirs:
             key = "site_packages:" + str(package_dir)
             entries[key] = _hash_file(package_dir / name)
+        missing = [key for key, value in entries.items() if not value.get("exists")]
         existing_hashes = {
             value["sha256"]
             for value in entries.values()
@@ -198,7 +205,8 @@ def _hash_matrix(base: Path) -> dict[str, Any]:
         }
         matrix["files"][name] = {
             "entries": entries,
-            "hash_consistent": len(existing_hashes) <= 1,
+            "hash_consistent": not missing and len(existing_hashes) == 1,
+            "missing_entries": missing,
             "hash_count": len(existing_hashes),
         }
     return matrix
