@@ -4,8 +4,10 @@ import argparse
 import json
 import os
 from pathlib import Path
+import re
 import subprocess
 import sys
+import tempfile
 from typing import Any
 
 
@@ -26,19 +28,16 @@ PY_COMPILE_TARGETS = [
     "scripts/tenant_acceptance_check.py",
     "scripts/xiaoyou_regression_gate.py",
     "scripts/xiaoyou_production_load_check.py",
+    "scripts/xiaoyou_deploy_guard.py",
+    "runtime/plugins/platforms/wecom/callback_adapter.py",
+    "runtime/plugins/platforms/wecom/inbound_receipts.py",
+    "runtime/plugins/platforms/wecom/wecom_crypto.py",
 ]
 
 PYTEST_TARGETS = [
-    "runtime/tests/plugins/test_youyi_task_context_admin_close_v1.py",
-    "runtime/tests/plugins/test_youyi_employee_reliability_stage1_v1.py",
-    "runtime/tests/plugins/test_youyi_xiaoyou_health_v1.py",
-    "runtime/tests/plugins/test_youyi_model_mainline_hardening.py",
-    "runtime/tests/plugins/test_youyi_owner_attention_reply_anchor_v1.py",
-    "runtime/tests/plugins/test_youyi_relationship_touch_v1.py",
-    "runtime/tests/plugins/test_youyi_workstyle_profile_v1.py",
-    "runtime/tests/plugins/test_youyi_daily_reporter_v1.py",
-    "runtime/tests/plugins/test_youyi_self_evolution_v1.py",
-    "runtime/tests/plugins/test_youyi_social_market_research_v1.py",
+    "runtime/tests/plugins",
+    "runtime/tests/test_tenant_initializer_v0.py",
+    "runtime/tests/test_tenant_acceptance_check_v0.py",
 ]
 
 RISKY_TRACKED_PATTERNS = (
@@ -99,22 +98,69 @@ def _git_diff_check() -> dict[str, Any]:
 
 
 def _sensitive_scan() -> dict[str, Any]:
-    listed = _run(["git", "ls-files"])
-    if listed["returncode"] != 0:
-        return listed
+    list_command = ["git", "ls-files", "--cached", "--others", "--exclude-standard"]
+    completed = subprocess.run(
+        list_command,
+        cwd=ROOT,
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+    )
+    if completed.returncode != 0:
+        return {"cmd": list_command, "returncode": completed.returncode, "output_tail": completed.stdout[-4000:]}
     hits: list[str] = []
-    for line in str(listed.get("output_tail") or "").splitlines():
+    secret_hits: list[str] = []
+    secret_patterns = (
+        re.compile(r"\b(?:sk|wk)-[A-Za-z0-9_-]{20,}\b"),
+        re.compile(r"(?i)\b(?:api[_ -]?key|corp[_ -]?secret|access[_ -]?token)\s*[:=]\s*['\"]?[A-Za-z0-9_./+-]{24,}"),
+    )
+    for line in completed.stdout.splitlines():
         lowered = line.lower()
         if any(pattern in lowered for pattern in RISKY_TRACKED_PATTERNS):
-            if lowered.startswith("runtime/tests/") or lowered.startswith("work/commercialization/"):
+            if not (lowered.startswith("runtime/tests/") or lowered.startswith("work/commercialization/")):
+                hits.append(line)
+        path = ROOT / line
+        try:
+            if not path.is_file() or path.stat().st_size > 2_000_000:
                 continue
-            hits.append(line)
+            content = path.read_text(encoding="utf-8")
+        except (OSError, UnicodeError):
+            continue
+        if any(pattern.search(content) for pattern in secret_patterns):
+            secret_hits.append(line)
+    all_hits = [*hits, *[f"content:{path}" for path in secret_hits]]
     return {
-        "cmd": ["git", "ls-files", "<risk-patterns>"],
-        "returncode": 1 if hits else 0,
-        "hits": hits[:80],
-        "output_tail": "\n".join(hits[:80]),
+        "cmd": [*list_command, "<risk-patterns>"],
+        "returncode": 1 if all_hits else 0,
+        "hits": all_hits[:80],
+        "output_tail": "\n".join(all_hits[:80]),
     }
+
+
+def _demo_tenant_acceptance() -> dict[str, Any]:
+    profile = ROOT / "work" / "commercialization" / "demo_tenant_profile.json"
+    if not profile.exists():
+        return {"cmd": ["demo_tenant_acceptance"], "returncode": 2, "output_tail": "demo tenant profile missing"}
+    with tempfile.TemporaryDirectory(prefix="xiaoyou-gate-") as temp_root:
+        initialized = _run([
+            sys.executable,
+            str(ROOT / "scripts" / "tenant_initializer.py"),
+            "--tenant-profile",
+            str(profile),
+            "--platform-root",
+            temp_root,
+            "--force",
+        ])
+        if initialized["returncode"] != 0:
+            return initialized
+        accepted = _run([
+            sys.executable,
+            str(ROOT / "scripts" / "tenant_acceptance_check.py"),
+            "--tenant-root",
+            str(Path(temp_root) / "tenants" / "demo_tuoguan"),
+        ])
+        accepted["initializer_output_tail"] = initialized["output_tail"]
+        return accepted
 
 
 def main() -> int:
@@ -133,6 +179,7 @@ def main() -> int:
         ("py_compile", _py_compile),
         ("git_diff_check", _git_diff_check),
         ("sensitive_scan", _sensitive_scan),
+        ("demo_tenant_acceptance", _demo_tenant_acceptance),
     ):
         result = func()
         results["checks"][name] = result

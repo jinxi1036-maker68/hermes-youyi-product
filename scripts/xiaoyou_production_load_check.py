@@ -26,6 +26,11 @@ KEY_FILES = [
     "digital_employee_state.py",
     "daily_reporter.py",
 ]
+WECOM_KEY_FILES = [
+    "callback_adapter.py",
+    "inbound_receipts.py",
+    "wecom_crypto.py",
+]
 
 
 def _sha256(path: Path) -> str:
@@ -60,6 +65,24 @@ def _runtime_dir(base: Path) -> Path:
     return base / "runtime" / "plugins" / "tuoguan_core"
 
 
+def _wecom_runtime_dir(base: Path) -> Path:
+    return base / "runtime" / "plugins" / "platforms" / "wecom"
+
+
+def _wecom_package_dirs(base: Path) -> list[Path]:
+    patterns = [
+        base / ".venv" / "lib" / "python*" / "site-packages" / "plugins" / "platforms" / "wecom",
+        base / ".venv" / "lib64" / "python*" / "site-packages" / "plugins" / "platforms" / "wecom",
+    ]
+    output: list[Path] = []
+    for pattern in patterns:
+        for value in glob.glob(str(pattern)):
+            path = Path(value)
+            if path.exists() and path not in output:
+                output.append(path)
+    return output
+
+
 def _venv_python(base: Path) -> Path:
     return base / ".venv" / "bin" / "python"
 
@@ -80,6 +103,9 @@ mods = [
   "plugins.tuoguan_core.tool_service",
   "plugins.tuoguan_core.runtime_foundation",
   "plugins.tuoguan_core.digital_employee_state",
+  "plugins.platforms.wecom.callback_adapter",
+  "plugins.platforms.wecom.inbound_receipts",
+  "plugins.platforms.wecom.wecom_crypto",
 ]
 out = {}
 for name in mods:
@@ -178,6 +204,25 @@ def _hash_matrix(base: Path) -> dict[str, Any]:
     return matrix
 
 
+def _wecom_hash_matrix(base: Path) -> dict[str, Any]:
+    runtime = _wecom_runtime_dir(base)
+    package_dirs = _wecom_package_dirs(base)
+    matrix: dict[str, Any] = {"runtime_dir": str(runtime), "package_dirs": [str(path) for path in package_dirs], "files": {}}
+    for name in WECOM_KEY_FILES:
+        entries = {"runtime": _hash_file(runtime / name)}
+        for package_dir in package_dirs:
+            entries["site_packages:" + str(package_dir)] = _hash_file(package_dir / name)
+        missing = [key for key, value in entries.items() if not value.get("exists")]
+        existing_hashes = {value["sha256"] for value in entries.values() if value.get("exists")}
+        matrix["files"][name] = {
+            "entries": entries,
+            "hash_consistent": not missing and len(existing_hashes) == 1,
+            "missing_entries": missing,
+            "hash_count": len(existing_hashes),
+        }
+    return matrix
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="Read-only Xiaoyou production load-path check.")
     parser.add_argument("--base", type=Path, default=DEFAULT_BASE)
@@ -191,6 +236,7 @@ def main() -> int:
         "read_only": True,
         "base": str(args.base),
         "hash_matrix": _hash_matrix(args.base),
+        "wecom_hash_matrix": _wecom_hash_matrix(args.base),
         "import_probe": _import_probe(args.base),
         "version_probe": _version_probe(args.base),
         "model_config": _model_config_scan(config_paths),
@@ -201,7 +247,13 @@ def main() -> int:
         if not row.get("hash_consistent")
     ]
     report["hash_mismatch_files"] = hash_failures
-    if hash_failures or not report["import_probe"].get("available") or not report["model_config"].get("agnes_25_seen"):
+    wecom_hash_failures = [
+        name
+        for name, row in report["wecom_hash_matrix"]["files"].items()
+        if not row.get("hash_consistent")
+    ]
+    report["wecom_hash_mismatch_files"] = wecom_hash_failures
+    if hash_failures or wecom_hash_failures or not report["import_probe"].get("available") or not report["model_config"].get("agnes_25_seen"):
         report["ok"] = False
     print(json.dumps(report, ensure_ascii=False, indent=2))
     return 1 if args.strict and not report["ok"] else 0
