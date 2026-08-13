@@ -13,6 +13,7 @@ import argparse
 import asyncio
 import json
 import os
+import re
 from typing import Any
 
 from .digital_employee_state import (
@@ -448,7 +449,7 @@ def _render_ultra_morning_report(
         f"今日重点：{_strip_report_prefix(focus)}",
     ]
     if proactivity_health:
-        rows.append(f"异常：{_strip_report_prefix(_limit_text(proactivity_health[0], 54))}")
+        rows.append(f"异常：{_strip_report_prefix(_limit_report_text(proactivity_health[0], 54))}")
     rows.append(_style_closing_line(workstyle))
     return _limit_message(_join_style_lines(rows, workstyle), _style_limit(workstyle))
 
@@ -923,7 +924,7 @@ def _join_style_lines(lines: list[str], workstyle: dict[str, Any]) -> str:
 
 def _first_safe_report_text(lines: list[str], fallback: str, *, limit: int = 110) -> str:
     for line in lines:
-        text = _limit_text(str(line or ""), limit)
+        text = _limit_report_text(str(line or ""), limit)
         if text and not _looks_like_internal_structured_text(text):
             return text
     return fallback
@@ -1111,6 +1112,17 @@ def _limit_text(text: str, limit: int) -> str:
     if len(normalized) <= limit:
         return normalized
     return normalized[: max(0, limit - 1)].rstrip() + "…"
+
+
+def _limit_report_text(text: str, limit: int) -> str:
+    normalized = " ".join(str(text or "").split())
+    if len(normalized) <= limit:
+        return normalized
+    for match in re.finditer(r"[。！？!?；;]", normalized):
+        end = match.end()
+        if 12 <= end <= limit:
+            return normalized[:end].strip()
+    return _limit_text(normalized, limit)
 
 
 def _limit_message(text: str, limit: int) -> str:

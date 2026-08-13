@@ -339,6 +339,22 @@ def test_morning_report_does_not_relabel_yesterday_relative_time_as_today(tmp_pa
     assert "8月12日21:01" in report["content"]
 
 
+def test_ultra_report_limit_keeps_complete_sentence():
+    from plugins.tuoguan_core.daily_reporter import _first_safe_report_text
+
+    result = _first_safe_report_text(
+        [
+            "今天带入：避免重复错误：老板反问但未提供信息时，应主动追问具体缺口，而非等待。"
+            "8月11日21:01老板反问，但主工作项仍停滞，下一次应主动明确提问。"
+        ],
+        "无新增重点。",
+        limit=58,
+    )
+
+    assert result == "今天带入：避免重复错误：老板反问但未提供信息时，应主动追问具体缺口，而非等待。"
+    assert "…" not in result
+
+
 def test_daily_report_does_not_surface_stale_owner_attention_as_today_focus(tmp_path):
     from plugins.tuoguan_core.daily_reporter import build_daily_boss_report
 
