@@ -25,8 +25,11 @@ from plugins.tuoguan_core.digital_employee_state import (  # noqa: E402
 )
 from plugins.tuoguan_core.models import UserIdentity  # noqa: E402
 from plugins.tuoguan_core.proactive_work import (  # noqa: E402
+    GOAL_ACTIONS_FILE,
     PROACTIVE_AUTHORIZATIONS_FILE,
+    query_goal_actions,
     query_proactive_authorizations,
+    submit_goal_action,
     submit_proactive_authorization,
 )
 from plugins.tuoguan_core.store import TuoguanStore  # noqa: E402
@@ -90,11 +93,23 @@ def build_plan(store: TuoguanStore) -> dict[str, Any]:
         authorization_additions.append({"role": "boss", "users": ["JinWenJie"], "daily_limit": 2})
     if ("teacher", ("CeShi",)) not in active_pairs:
         authorization_additions.append({"role": "teacher", "users": ["CeShi"], "daily_limit": 2})
+    goal_doc = store.read_json("goal_operator_goals.json", {"goals": []})
+    active_goals = [
+        row for row in (goal_doc.get("goals") or [] if isinstance(goal_doc, dict) else [])
+        if isinstance(row, dict) and str(row.get("status") or "") in {"confirmed", "in_progress"}
+    ]
+    existing_actions = query_goal_actions(store, identity=identity, include_closed=True, limit=100)
+    action_goal_ids = {str(row.get("goal_id") or "") for row in existing_actions.get("goal_actions") or []}
+    goal_action_seed_goal_ids = [
+        str(row.get("goal_id") or "") for row in active_goals
+        if str(row.get("goal_id") or "") and str(row.get("goal_id") or "") not in action_goal_ids
+    ]
     return {
         "stale_relationship_touch_ids": [str(row.get("candidate_id") or "") for row in stale_touches],
         "semantic_mismatch_preference_ids": [str(row.get("preference_id") or row.get("event_id") or "") for row in mismatches],
         "stale_work_focus_keys": [str(row.get("focus_key") or "") for row in stale_work],
         "authorization_additions": authorization_additions,
+        "goal_action_seed_goal_ids": goal_action_seed_goal_ids,
     }
 
 
@@ -108,6 +123,7 @@ def apply_plan(store: TuoguanStore, plan: dict[str, Any]) -> dict[str, Any]:
         HERMES_WORK_ITEMS_FILE,
         WORKSTYLE_FILE,
         SELF_EVOLUTION_FILE,
+        GOAL_ACTIONS_FILE,
     }
     with authorized_system_write(store.data_dir, job_name="repair_proactive_employee_state_v1", allowed_files=allowed):
         for candidate_id in plan.get("stale_relationship_touch_ids") or []:
@@ -160,6 +176,18 @@ def apply_plan(store: TuoguanStore, plan: dict[str, Any]) -> dict[str, Any]:
                 daily_limit=int(addition.get("daily_limit") or 1),
                 rollout_stage="pilot_jin_and_li",
                 source_text="2026-08-13 老板明确授权小优主动找金总和李老师，并自主判断询问对象、时间和具体工作事实。",
+            ))
+        for goal_id in plan.get("goal_action_seed_goal_ids") or []:
+            results.append(submit_goal_action(
+                store,
+                identity=identity,
+                goal_id=str(goal_id),
+                action_type="query_internal_data",
+                summary="重新核对这个既有目标的当前事实基线、已完成证据和第一项真实缺口。",
+                operation_id=f"repair-proactive:goal-action:{goal_id}",
+                evidence_requirement="列出当前已知、未知、事实归属人和第一项可执行行动；旧学生名单和旧责任关系不能直接用于派任务。",
+                escalation_path=["manager_for_operating_fact", "boss_if_blocked_or_high_risk"],
+                source_text="真实数字员工闭环上线前，既有确认目标缺少持久行动账本。",
             ))
     return {
         "ok": all(item.get("ok") for item in results),

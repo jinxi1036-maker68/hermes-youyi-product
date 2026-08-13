@@ -23,6 +23,11 @@ def test_repair_is_append_only_and_converts_authorization_semantics(tmp_path):
     _write_json(tmp_path, "students.json", {})
     _write_json(
         tmp_path,
+        "goal_operator_goals.json",
+        {"goals": [{"goal_id": "goal1", "status": "confirmed", "goal_text": "提高续费稳定性", "owner_user_id": "JinWenJie"}]},
+    )
+    _write_json(
+        tmp_path,
         "wecom_whitelist.json",
         {
             "super_users": ["JinWenJie"],
@@ -77,6 +82,7 @@ def test_repair_is_append_only_and_converts_authorization_semantics(tmp_path):
     assert plan["semantic_mismatch_preference_ids"] == ["pref_wrong_tone"]
     assert plan["stale_work_focus_keys"] == ["goal:goal1"]
     assert len(plan["authorization_additions"]) == 2
+    assert plan["goal_action_seed_goal_ids"] == ["goal1"]
 
     result = apply_plan(store, plan)
     assert result["ok"] is True
@@ -91,3 +97,6 @@ def test_repair_is_append_only_and_converts_authorization_semantics(tmp_path):
     assert preference["preference_count"] == 0
     auth_rows = (tmp_path / "proactive_authorizations.jsonl").read_text(encoding="utf-8")
     assert "CeShi" in auth_rows and "JinWenJie" in auth_rows
+    action_rows = (tmp_path / "goal_actions.jsonl").read_text(encoding="utf-8")
+    assert "goal1" in action_rows
+    assert "query_internal_data" in action_rows
