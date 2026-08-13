@@ -527,16 +527,24 @@ class TuoguanRouter:
             return None
         selected = self._selected_task_from_reply(identity, open_tasks, text)
         if selected is not None:
-            result = apply_task_reply(
-                tasks,
-                identity.canonical_user_id,
-                "开始",
-                task_id=str(selected.get("id") or ""),
-            )
-            self._remember_active_task_context(identity, selected, candidates=[])
+            result_holder: dict[str, Any] = {}
+
+            def start_selected(current: dict[str, Any]) -> None:
+                result_holder["result"] = apply_task_reply(
+                    [current],
+                    identity.canonical_user_id,
+                    "开始",
+                    task_id=str(current.get("id") or ""),
+                )
+
+            persisted = self.store.update_task(str(selected.get("id") or ""), start_selected)
+            result = result_holder.get("result")
+            if persisted is None or result is None:
+                return RouteResult(handled=True, reply="任务在开始前发生变化，请重新发送“任务”查看当前待办。")
+            self._remember_active_task_context(identity, persisted, candidates=[])
             self._clear_pending_next_task_context(identity)
-            self.store.save_tasks(tasks)
-            self._append_task_closure_ledger(tasks, result.task_id)
+            self._record_legacy_router_coaching(identity, persisted, result, text="开始")
+            self._append_task_closure_ledger(self.store.load_tasks(), result.task_id)
             return RouteResult(handled=True, reply=result.reply)
         intent = classify_task_reply(text)["intent"]
         context_task = self._active_task_from_context(identity, open_tasks)
@@ -563,26 +571,49 @@ class TuoguanRouter:
             and not self._looks_like_task_evidence(text, task)
         ):
             return None
-        result = apply_task_reply(
-            tasks,
-            identity.canonical_user_id,
-            text,
-            task_id=str(task.get("id") or ""),
-        )
+        result_holder: dict[str, Any] = {}
+
+        def update_current(current: dict[str, Any]) -> None:
+            result_holder["result"] = apply_task_reply(
+                [current],
+                identity.canonical_user_id,
+                text,
+                task_id=str(current.get("id") or ""),
+            )
+
+        persisted = self.store.update_task(str(task.get("id") or ""), update_current)
+        result = result_holder.get("result")
+        if persisted is None or result is None:
+            return RouteResult(handled=True, reply="任务在更新前发生变化，请重新发送“任务”查看当前状态。")
+        task = persisted
         if result.action in {"started", "fact_added", "needs_closure_evidence", "closure_ready", "helped"}:
             self._remember_active_task_context(identity, task, candidates=[])
         elif result.action in {"completed", "cancelled"}:
             self._clear_active_task_context(identity)
             self._clear_pending_student_confirm_context(identity)
-        self.store.save_tasks(tasks)
-        self._append_task_closure_ledger(tasks, result.task_id)
+            self._suppress_pending_notifications_for_task(
+                str(task.get("id") or ""),
+                reason=f"task_{result.action}",
+            )
+        self._record_legacy_router_coaching(identity, task, result, text=text)
+        current_tasks = self.store.load_tasks()
+        self._append_task_closure_ledger(current_tasks, result.task_id)
         self._refresh_dashboard_cache_best_effort()
-        if result.action == "completed" and "回复“继续”即可开始" in result.reply:
-            self._remember_pending_next_task_context(identity, tasks)
+        reply_text = result.reply
+        if result.action == "completed":
+            next_task = current_task_for_user(current_tasks, identity.canonical_user_id)
+            if next_task is not None:
+                self._remember_pending_next_task_context(identity, current_tasks)
+                reply_text = (
+                    f"{reply_text.rstrip()}\n当前还有 1 个 {next_task.get('level') or 'C'} 级任务待处理："
+                    f"{next_task.get('title') or '未命名任务'}。回复“继续”即可开始。"
+                )
+            else:
+                self._clear_pending_next_task_context(identity)
         elif result.action in {"started", "cancelled"}:
             self._clear_pending_next_task_context(identity)
         notifications = self._task_completion_notifications(task, identity) if result.action == "completed" else []
-        return RouteResult(handled=True, reply=result.reply, notifications=notifications)
+        return RouteResult(handled=True, reply=reply_text, notifications=notifications)
 
     def _start_task_by_id(
         self,
@@ -605,16 +636,25 @@ class TuoguanRouter:
         if task is None:
             self._clear_pending_next_task_context(identity)
             return RouteResult(handled=True, reply="刚才提示的下一个任务已经不存在或已处理，请发送“任务”查看当前待办。")
-        result = apply_task_reply(
-            tasks,
-            identity.canonical_user_id,
-            "开始",
-            task_id=str(task.get("id") or ""),
-        )
+        result_holder: dict[str, Any] = {}
+
+        def start_current(current: dict[str, Any]) -> None:
+            result_holder["result"] = apply_task_reply(
+                [current],
+                identity.canonical_user_id,
+                "开始",
+                task_id=str(current.get("id") or ""),
+            )
+
+        persisted = self.store.update_task(str(task.get("id") or ""), start_current)
+        result = result_holder.get("result")
+        if persisted is None or result is None:
+            return RouteResult(handled=True, reply="任务在开始前发生变化，请重新发送“任务”查看当前待办。")
+        task = persisted
         self._remember_active_task_context(identity, task, candidates=[])
         self._clear_pending_next_task_context(identity)
-        self.store.save_tasks(tasks)
-        self._append_task_closure_ledger(tasks, result.task_id)
+        self._record_legacy_router_coaching(identity, task, result, text="开始")
+        self._append_task_closure_ledger(self.store.load_tasks(), result.task_id)
         self._refresh_dashboard_cache_best_effort()
         title = str(task.get("title") or "未命名任务")
         reply = result.reply if title in result.reply else f"已进入任务：{title}\n{result.reply}"
@@ -1741,8 +1781,11 @@ class TuoguanRouter:
             "source_type": "manual_assignment",
             "source_label": source_label,
             "assigned_by": identity.canonical_user_id,
+            "created_by": identity.canonical_user_id,
             "assigned_by_name": identity.person_name or identity.platform_user_id,
+            "created_by_name": identity.person_name or identity.platform_user_id,
             "assigned_by_role": identity.role,
+            "created_by_role": identity.role,
             "assigned_at": stamp,
             "type": task_type,
             "level": level,
@@ -1761,6 +1804,11 @@ class TuoguanRouter:
                 source_text=text,
                 student_name=student_name,
                 due_at=due_at,
+                business_goal=title,
+                assignee_user_id=assignee_userid,
+                assignee_name=assignee_name,
+                assigned_by_user_id=identity.canonical_user_id,
+                assigned_by_role=identity.role,
             ),
             "source_meta": {
                 "kind": "manual_assignment",
@@ -1816,7 +1864,7 @@ class TuoguanRouter:
         reply = (
             f"已安排{level}级任务给{assignee_name}：{title}。\n"
             f"截止：{due_at.replace('T', ' ')}\n"
-            "我已通知执行人，后续闭环会进入任务证据和工资依据。"
+            "我已通知执行人，后续闭环会进入任务证据和工作记录。"
         )
         return RouteResult(handled=True, reply=reply, notifications=[notification])
 
@@ -2637,15 +2685,43 @@ class TuoguanRouter:
                     continue
                 if str(item.get("task_id") or "") != task_id:
                     continue
-                if str(item.get("status") or "") not in {"pending", "retry_pending", "sending"}:
+                status = str(item.get("status") or "")
+                if status not in {"pending", "retry_pending", "sending"}:
                     continue
-                item["status"] = "suppressed"
-                item["suppressed_at"] = now
-                item["suppressed_reason"] = reason
+                if status == "sending":
+                    item["status"] = "result_unknown"
+                    item["result_unknown_at"] = now
+                    item["last_error"] = f"{reason}_while_send_in_flight"
+                else:
+                    item["status"] = "suppressed"
+                    item["suppressed_at"] = now
+                    item["suppressed_reason"] = reason
                 changed = True
             return outbox[-2000:] if changed else JSON_NO_CHANGE
 
         self.store.update_json("notification_outbox.json", [], suppress)
+
+    def _record_legacy_router_coaching(
+        self,
+        identity: UserIdentity,
+        task: dict[str, Any],
+        result: Any,
+        *,
+        text: str,
+    ) -> None:
+        if identity.role != "teacher" or str(task.get("assignee_userid") or "") != identity.canonical_user_id:
+            return
+        from .teacher_coaching import record_teacher_coaching_event
+
+        stamp = str(task.get("updated_at") or datetime.now().astimezone().isoformat(timespec="seconds"))
+        record_teacher_coaching_event(
+            self.store,
+            task=task,
+            teacher_user_id=identity.canonical_user_id,
+            action=str(getattr(result, "action", "") or ""),
+            operation_id=f"legacy-router:{task.get('id')}:{stamp}:{len(str(text or ''))}",
+            missing_fields=closure_missing_fields(task, str(task.get("evidence_summary") or "")),
+        )
 
     def _remember_supervisor_task(
         self,

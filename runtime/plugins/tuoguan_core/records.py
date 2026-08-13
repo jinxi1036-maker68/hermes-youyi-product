@@ -10,6 +10,7 @@ from typing import Any
 from .dashboard_builder import refresh_dashboard_cache
 from .record_evaluation import evaluate_record
 from .store import TuoguanStore
+from .tasks import build_task_contract
 
 
 class StudentRecognitionError(ValueError):
@@ -380,9 +381,11 @@ def build_task_draft(
     record_types = list(analysis.get("record_types") or [])
     task_type = _primary_type(record_types)
     timestamp = created.isoformat(timespec="seconds")
-    return {
+    title = _task_title(str(analysis["student_name"]), task_type)
+    due_at = (created + due_delta).isoformat(timespec="seconds")
+    task = {
         "id": f"task_{uuid.uuid4().hex[:12]}",
-        "title": _task_title(str(analysis["student_name"]), task_type),
+        "title": title,
         "type": task_type,
         "level": level,
         "status": "pending",
@@ -391,6 +394,8 @@ def build_task_draft(
         "program_id": analysis.get("program_id") or "regular_tuoguan",
         "assignee_userid": assignee_userid,
         "assignee_role": "teacher",
+        "source_type": "verified_student_record",
+        "source_authority": "verified_business_record",
         "source_text": analysis.get("source_text") or "",
         "trigger_reason": analysis.get("trigger_reason") or "",
         "analysis_engine": analysis.get("analysis_engine") or "",
@@ -399,7 +404,7 @@ def build_task_draft(
         "missing_fields": list(analysis.get("missing_fields") or []),
         "record_types": record_types,
         "tags": list(analysis.get("tags") or []),
-        "due_at": (created + due_delta).isoformat(timespec="seconds"),
+        "due_at": due_at,
         "next_remind_at": (created + remind_delta).isoformat(timespec="seconds"),
         "defer_count": 0,
         "escalation_count": 0,
@@ -409,6 +414,17 @@ def build_task_draft(
         "created_at": timestamp,
         "updated_at": timestamp,
     }
+    task["task_contract"] = build_task_contract(
+        title=title,
+        source_text=str(analysis.get("source_text") or ""),
+        student_name=str(analysis["student_name"]),
+        due_at=due_at,
+        business_goal=str(analysis.get("trigger_reason") or title),
+        assignee_user_id=assignee_userid,
+        assigned_by_role="system",
+        known_facts=[str(value) for value in analysis.get("evidence_spans") or [] if str(value)],
+    )
+    return task
 
 
 def save_analysis(

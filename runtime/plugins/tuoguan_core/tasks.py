@@ -148,6 +148,65 @@ def _as_dict(value: Any) -> dict[str, Any]:
     return value if isinstance(value, dict) else {}
 
 
+def _normalized_role(value: Any) -> str:
+    role = str(value or "").strip().lower()
+    return {"owner": "boss", "super_admin": "boss", "store_manager": "manager"}.get(role, role)
+
+
+def task_assignment_authority(store: Any, task: dict[str, Any]) -> dict[str, Any]:
+    """Resolve whether an open task has a trusted assignment source."""
+
+    assigner_id = str(task.get("created_by") or task.get("assigned_by") or "").strip()
+    role = _normalized_role(
+        task.get("created_by_role")
+        or task.get("assigned_by_role")
+        or _as_dict(task.get("source_meta")).get("actor_role")
+    )
+    evidence_source = "task"
+    if not role and assigner_id:
+        whitelist = store.read_json("wecom_whitelist.json", {})
+        whitelist = whitelist if isinstance(whitelist, dict) else {}
+        roles = whitelist.get("user_roles") if isinstance(whitelist.get("user_roles"), dict) else {}
+        role = _normalized_role(roles.get(assigner_id))
+        if not role and assigner_id in {str(value) for value in whitelist.get("super_users") or []}:
+            role = "boss"
+        evidence_source = "wecom_whitelist.json"
+    if not role and str(task.get("source_label") or "") in {"老板安排", "店长安排"}:
+        role = "boss" if str(task.get("source_label")) == "老板安排" else "manager"
+        evidence_source = "legacy_source_label"
+    authorized_goal_task = bool(
+        task.get("created_autonomously_within_goal")
+        and str(task.get("goal_id") or "")
+        and str(task.get("goal_action_id") or "")
+    )
+    verified_system_task = bool(
+        str(task.get("source_type") or "") in {
+            "verified_student_record", "system_risk", "periodic_operation", "trial_lead_follow_up",
+        }
+        or str(task.get("analysis_engine") or "").strip()
+    )
+    trusted = role in {"boss", "manager"} or authorized_goal_task or verified_system_task
+    if authorized_goal_task:
+        evidence_source = "boss_confirmed_goal_action"
+    elif verified_system_task and role not in {"boss", "manager"}:
+        evidence_source = "verified_business_record"
+    return {
+        "trusted": trusted,
+        "assigner_user_id": assigner_id,
+        "assigner_role": role or ("system" if verified_system_task else "unknown"),
+        "evidence_source": evidence_source,
+    }
+
+
+def task_is_valid_for_companion(store: Any, task: dict[str, Any], user_id: str) -> bool:
+    return bool(
+        isinstance(task, dict)
+        and str(task.get("assignee_userid") or "") == str(user_id or "")
+        and str(task.get("status") or "") not in _CLOSED_STATUSES
+        and task_assignment_authority(store, task).get("trusted")
+    )
+
+
 def _is_parent_follow_up_task(task: dict[str, Any]) -> bool:
     task_type = _task_type(task)
     task_text = "".join(
@@ -178,6 +237,12 @@ def build_task_contract(
     student_name: str = "",
     due_at: str = "",
     evidence_requirement: str = "",
+    business_goal: str = "",
+    assignee_user_id: str = "",
+    assignee_name: str = "",
+    assigned_by_user_id: str = "",
+    assigned_by_role: str = "",
+    known_facts: list[str] | None = None,
 ) -> dict[str, Any]:
     """Build evidence material for coaching without deciding the model's workflow."""
 
@@ -208,23 +273,47 @@ def build_task_contract(
     explicit_requirement = str(evidence_requirement or "").strip()
     if explicit_requirement:
         success_criteria.insert(0, explicit_requirement)
+    task_object = {
+        "object_type": "student" if student_name else "institution_work",
+        "student_name": str(student_name or "").strip(),
+    }
+    normalized_known_facts = [str(value).strip() for value in known_facts or [] if str(value).strip()]
+    normalized_known_facts.extend(
+        value
+        for value in (
+            f"任务对象：{student_name}" if student_name else "",
+            f"截止时间：{due_at}" if due_at else "",
+        )
+        if value and value not in normalized_known_facts
+    )
     return {
-        "version": 1,
+        "version": 2,
         "objective": str(title or "").strip(),
+        "business_goal": str(business_goal or title or "").strip(),
         "original_instruction": str(source_text or title or "").strip(),
         "task_domain": domain,
         "student_name": str(student_name or "").strip(),
+        "task_object": task_object,
+        "responsible_actor": {
+            "user_id": str(assignee_user_id or "").strip(),
+            "name": str(assignee_name or "").strip(),
+            "role": "teacher" if assignee_user_id else "",
+        },
+        "assignment_authority": {
+            "user_id": str(assigned_by_user_id or "").strip(),
+            "role": _normalized_role(assigned_by_role),
+        },
         "due_at": str(due_at or "").strip(),
-        "known_facts": [
-            value
-            for value in (
-                f"任务对象：{student_name}" if student_name else "",
-                f"截止时间：{due_at}" if due_at else "",
-            )
-            if value
-        ],
+        "known_facts": normalized_known_facts,
         "success_criteria": success_criteria,
+        "success_evidence": success_criteria,
         "coaching_mode": "adaptive_companion",
+        "coaching_stages": ["prepare_facts", "guide_next_step", "collect_result", "verify_closure"],
+        "closure_conditions": {
+            "evidence_complete": True,
+            "writeback_verified": True,
+            "closed_task_stops_followups": True,
+        },
         "training_goal": "陪老师完成当前任务，同时让老师理解本类任务的判断方法。",
         "truth_boundary": "只使用任务原话和可信查询结果；缺事实时先查证或只问一个关键问题，不得编造。",
     }
@@ -248,12 +337,13 @@ def task_companion_context(store: Any, *, identity: Any, raw_text: str = "") -> 
             item
             for item in tasks
             if str(item.get("id") or "") == task_id
-            and str(item.get("status") or "") not in _CLOSED_STATUSES
+            and task_is_valid_for_companion(store, item, user_id)
         ),
         None,
     )
     if task is None:
-        task = current_task_for_user(tasks, user_id)
+        eligible = [item for item in tasks if task_is_valid_for_companion(store, item, user_id)]
+        task = current_task_for_user(eligible, user_id)
     if task is None:
         return ""
     contract = task.get("task_contract") if isinstance(task.get("task_contract"), dict) else build_task_contract(
@@ -262,6 +352,11 @@ def task_companion_context(store: Any, *, identity: Any, raw_text: str = "") -> 
         student_name=str(task.get("student_name") or ""),
         due_at=str(task.get("due_at") or ""),
         evidence_requirement=str(task.get("evidence_requirement") or ""),
+        business_goal=str(task.get("business_goal") or ""),
+        assignee_user_id=str(task.get("assignee_userid") or ""),
+        assignee_name=str(task.get("assignee_name") or ""),
+        assigned_by_user_id=str(task.get("created_by") or task.get("assigned_by") or ""),
+        assigned_by_role=str(task.get("created_by_role") or task.get("assigned_by_role") or ""),
     )
     student = str(task.get("student_name") or contract.get("student_name") or "")
     criteria = [str(value) for value in contract.get("success_criteria") or [] if str(value)]
@@ -277,6 +372,28 @@ def task_companion_context(store: Any, *, identity: Any, raw_text: str = "") -> 
     ]
     if criteria:
         lines.append("完成证据：" + "；".join(criteria) + "。")
+    authority = task_assignment_authority(store, task)
+    lines.append(
+        f"任务来源校验：角色={authority.get('assigner_role') or 'unknown'}；"
+        f"证据={authority.get('evidence_source') or 'unknown'}；当前执行人已与本轮身份核对。"
+    )
+    try:
+        from .teacher_coaching import query_teacher_coaching_context
+
+        growth = query_teacher_coaching_context(
+            store,
+            teacher_user_id=user_id,
+            task_domain=str(contract.get("task_domain") or ""),
+            limit=4,
+        )
+    except Exception:
+        growth = {}
+    mastered = [str(value) for value in growth.get("mastered_points") or [] if str(value)]
+    if mastered:
+        lines.append(
+            "同类任务已验证掌握点：" + "、".join(mastered[:3])
+            + "。本轮不要机械重复已掌握内容，只在当前卡点提供必要帮助。"
+        )
     lines.extend([
         "这是当前任务的可信证据材料，不是固定 Router；若用户明确点名了另一项任务或学生，以本轮明确对象为准。",
         "在当前任务未切换前，代词“他/她/这个”和“怎么说/不知道怎么做”优先指当前任务对象；不得从旧会话或全员学生列表带入其他学生姓名、电话或历史任务。",

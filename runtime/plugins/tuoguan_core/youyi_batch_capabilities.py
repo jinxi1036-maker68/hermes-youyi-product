@@ -174,10 +174,40 @@ def create_trial_lead(
         ("次日下午转化跟进任务", (now + timedelta(days=1)).replace(hour=16, minute=0, second=0, microsecond=0)),
     ]
     task_ids: list[str] = []
+    from .tasks import build_task_contract
+
     for title, due in specs:
         task_id = f"task_{uuid.uuid4().hex[:12]}"
         task_ids.append(task_id)
-        tasks.append({"id": task_id, "title": f"{name}｜{title}", "type": "trial_lead_follow_up", "level": "A", "status": "pending", "student_name": name, "assignee_userid": recorder_user_id, "trial_lead_id": lead_id, "due_at": _stamp(due), "created_at": _stamp(now), "tenant_id": current_tenant_id(), "channel": channel, "source": "试听线索自动生成"})
+        task_title = f"{name}｜{title}"
+        due_at = _stamp(due)
+        tasks.append({
+            "id": task_id,
+            "title": task_title,
+            "type": "trial_lead_follow_up",
+            "level": "A",
+            "status": "pending",
+            "student_name": name,
+            "assignee_userid": recorder_user_id,
+            "trial_lead_id": lead_id,
+            "due_at": due_at,
+            "created_at": _stamp(now),
+            "tenant_id": current_tenant_id(),
+            "channel": channel,
+            "source": "试听线索自动生成",
+            "source_type": "trial_lead_follow_up",
+            "source_authority": "verified_trial_lead",
+            "task_contract": build_task_contract(
+                title=task_title,
+                source_text=f"试听线索 {name} 的{title}",
+                student_name=name,
+                due_at=due_at,
+                business_goal="完成试听服务与转化跟进",
+                assignee_user_id=recorder_user_id,
+                assigned_by_role="system",
+                known_facts=[f"试听线索编号：{lead_id}"],
+            ),
+        })
     def append_lead(current: Any) -> list[dict[str, Any]]:
         current = current if isinstance(current, list) else []
         if not any(isinstance(item, dict) and item.get("lead_id") == lead_id for item in current):
@@ -204,6 +234,10 @@ def create_assigned_task(
     channel: str = "wecom_callback",
     source_text: str = "",
     evidence_requirement: str = "",
+    created_by_role: str = "",
+    created_by_name: str = "",
+    business_goal: str = "",
+    known_facts: list[str] | None = None,
 ) -> dict[str, Any]:
     if not str(title).strip() or not str(assignee_user_id).strip():
         return {"ok": False, "reason_code": "missing_required_fields", "writeback_verified": False}
@@ -221,6 +255,8 @@ def create_assigned_task(
         "student_name": student_name,
         "assignee_userid": assignee_user_id,
         "created_by": created_by,
+        "created_by_role": str(created_by_role or ""),
+        "created_by_name": str(created_by_name or ""),
         "due_at": due_at,
         "created_at": _stamp(),
         "tenant_id": current_tenant_id(),
@@ -233,6 +269,11 @@ def create_assigned_task(
             student_name=student_name,
             due_at=due_at,
             evidence_requirement=evidence_requirement,
+            business_goal=business_goal,
+            assignee_user_id=assignee_user_id,
+            assigned_by_user_id=created_by,
+            assigned_by_role=created_by_role,
+            known_facts=known_facts,
         ),
     }
     selected: dict[str, Any] = {}

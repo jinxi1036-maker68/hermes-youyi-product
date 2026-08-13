@@ -95,6 +95,7 @@ MODULE_OWNERSHIP = (
             "self_evolution.py", "social_market_research.py", "staff_config.py",
             "staff_conversation_activity.py", "staff_directory.py", "store.py", "student_daily_records.py",
             "student_record_guidance.py", "student_resolver.py", "system_self_knowledge.py", "tasks.py",
+            "teacher_coaching.py",
             "temporal_grounding.py", "tenant_context.py", "tool_service.py", "tools.py", "turn_trace.py",
             "work_context_snapshot.py",
             "workstyle_profiles.py", "write_guard.py",
@@ -175,6 +176,7 @@ STATE_RESOURCE_OWNERS: dict[str, str] = {
     "reply_ledger.jsonl": "runtime_observability_domain",
     "turn_traces.jsonl": "runtime_observability_domain",
     "tool_operations.json": "execution_receipt_domain",
+    "teacher_coaching_events.jsonl": "teacher_coaching_domain",
 }
 
 COMPATIBILITY_PROJECTIONS = {

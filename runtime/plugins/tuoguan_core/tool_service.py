@@ -653,17 +653,129 @@ class TuoguanToolService:
                     continue
                 if str(item.get("task_id") or "") != normalized_id:
                     continue
-                if str(item.get("status") or "") not in {"pending", "retry_pending", "sending"}:
+                status = str(item.get("status") or "")
+                if status not in {"pending", "retry_pending", "sending"}:
                     continue
-                item["status"] = "suppressed"
-                item["suppressed_at"] = stamp
-                item["suppressed_reason"] = reason
+                if status == "sending":
+                    item["status"] = "result_unknown"
+                    item["result_unknown_at"] = stamp
+                    item["last_error"] = f"{reason}_while_send_in_flight"
+                else:
+                    item["status"] = "suppressed"
+                    item["suppressed_at"] = stamp
+                    item["suppressed_reason"] = reason
                 changed = True
                 changed_count["value"] += 1
             return rows if changed else JSON_NO_CHANGE
 
         self.store.update_json("notification_outbox.json", [], suppress)
         return int(changed_count["value"])
+
+    def _retire_task_linked_work(self, task: dict[str, Any], *, operation_id: str, reason: str) -> dict[str, Any]:
+        """Stop open task-linked proactive work without deleting its evidence."""
+
+        from .digital_employee_state import _fold_relationship_touch_candidates, update_relationship_touch_candidate_status
+        from .proactive_work import query_goal_actions, submit_goal_action
+
+        task_id = str(task.get("id") or "")
+        system_identity = UserIdentity(
+            platform="system",
+            platform_user_id="task_lifecycle",
+            canonical_user_id="task_lifecycle",
+            person_name="小优任务生命周期",
+            role="boss",
+            approval_state="approved",
+        )
+        retired_touch_ids: list[str] = []
+        for candidate in _fold_relationship_touch_candidates(self.store).values():
+            if str(candidate.get("related_task_id") or "") != task_id:
+                continue
+            if str(candidate.get("status") or "") in {"resolved", "expired", "superseded", "suppressed"}:
+                continue
+            candidate_id = str(candidate.get("candidate_id") or "")
+            updated = update_relationship_touch_candidate_status(
+                self.store,
+                identity=system_identity,
+                candidate_id=candidate_id,
+                status="superseded",
+                operation_id=f"{operation_id}:retire_touch:{candidate_id}",
+                failure_reason=reason,
+                source_text=f"task_id={task_id}; reason={reason}",
+            )
+            if updated.get("writeback_verified"):
+                retired_touch_ids.append(candidate_id)
+
+        retired_outbox = {"suppressed": 0, "result_unknown": 0}
+        if retired_touch_ids:
+            retired_notification_ids = {
+                f"relationship_touch:{candidate_id}" for candidate_id in retired_touch_ids
+            }
+            stamp = datetime.now().astimezone().isoformat(timespec="seconds")
+
+            def retire_outbox(rows: Any) -> Any:
+                rows = rows if isinstance(rows, list) else []
+                changed = False
+                for item in rows:
+                    if not isinstance(item, dict) or str(item.get("id") or "") not in retired_notification_ids:
+                        continue
+                    status = str(item.get("status") or "")
+                    if status in {"pending", "retry_pending"}:
+                        item["status"] = "suppressed"
+                        item["suppressed_at"] = stamp
+                        item["suppressed_reason"] = reason
+                        retired_outbox["suppressed"] += 1
+                        changed = True
+                    elif status == "sending":
+                        item["status"] = "result_unknown"
+                        item["result_unknown_at"] = stamp
+                        item["last_error"] = f"{reason}_while_send_in_flight"
+                        retired_outbox["result_unknown"] += 1
+                        changed = True
+                return rows if changed else JSON_NO_CHANGE
+
+            self.store.update_json("notification_outbox.json", [], retire_outbox)
+
+        goal_action_id = str(task.get("goal_action_id") or "")
+        goal_action_update: dict[str, Any] = {}
+        if (
+            goal_action_id
+            and str(task.get("goal_id") or "")
+            and str(task.get("status") or "") in {"cancelled", "expired", "superseded"}
+        ):
+            actions = query_goal_actions(
+                self.store,
+                identity=system_identity,
+                goal_id=str(task.get("goal_id") or ""),
+                include_closed=True,
+                limit=100,
+            )
+            action = next(
+                (
+                    item for item in actions.get("goal_actions") or []
+                    if str(item.get("goal_action_id") or "") == goal_action_id
+                ),
+                None,
+            )
+            if isinstance(action, dict) and str(action.get("status") or "") not in {"verified", "resolved", "cancelled", "superseded"}:
+                goal_action_update = submit_goal_action(
+                    self.store,
+                    identity=system_identity,
+                    goal_id=str(task.get("goal_id") or ""),
+                    action_type=str(action.get("action_type") or "create_low_risk_task"),
+                    summary=str(action.get("summary") or task.get("title") or "任务生命周期收口"),
+                    operation_id=f"{operation_id}:retire_goal_action",
+                    goal_action_id=goal_action_id,
+                    status="cancelled" if str(task.get("status") or "") == "cancelled" else "superseded",
+                    source_text=f"task_id={task_id}; task_status={task.get('status')}; reason={reason}",
+                )
+        return {
+            "retired_relationship_touch_ids": retired_touch_ids,
+            "retired_relationship_outbox": retired_outbox,
+            "goal_action_update": goal_action_update,
+            "writeback_verified": bool(
+                not goal_action_update or goal_action_update.get("writeback_verified")
+            ),
+        }
 
     @staticmethod
     def _looks_like_goal_workspace_task_misuse(*, raw_text: str, title: str, operation_id: str, assignee_user_id: str, student_name: str) -> bool:
@@ -1396,6 +1508,9 @@ class TuoguanToolService:
                 channel=self.platform,
                 source_text=trusted_task_source,
                 evidence_requirement=evidence_requirement,
+                created_by_role=self.identity.role,
+                created_by_name=self.identity.person_name,
+                business_goal=str(title or "").strip(),
             )
             if result.get("ok") and not result.get("already_applied"):
                 task = result.get("task") if isinstance(result.get("task"), dict) else {}
@@ -1423,6 +1538,8 @@ class TuoguanToolService:
                 criteria = [str(value) for value in task_contract.get("success_criteria") or [] if str(value)]
                 content = (
                     f"你收到一项新任务：{task.get('title') or title}\n"
+                    f"原始要求：{task_contract.get('original_instruction') or task.get('source_text') or title}\n"
+                    f"任务目标：{task_contract.get('business_goal') or task.get('title') or title}\n"
                     f"等级：{task.get('level') or level}\n"
                     f"截止：{task.get('due_at') or due_at or '请尽快处理'}\n"
                     f"安排人：{self.identity.person_name or self.identity.canonical_user_id}\n"
@@ -1430,7 +1547,8 @@ class TuoguanToolService:
                     "回复“开始”后，小优会结合这项任务陪你一步一步处理；遇到不会说或不会做的地方可以直接问。"
                 )
                 if criteria:
-                    content += "\n完成时需要说明：" + "；".join(criteria[:4])
+                    content += "\n完成时至少需要说明：" + "；".join(criteria[:4])
+                    content += "\n以上是最低闭环证据，不会缩窄老板原要求；实际处理仍以原始要求和现场事实为准。"
                 try:
                     from .runtime_foundation import current_ledger_id
                     ledger_id = current_ledger_id(self.identity.canonical_user_id)
@@ -1872,6 +1990,11 @@ class TuoguanToolService:
                 return self._error("task_not_found", "任务在更新前已不存在，请重新查询。")
             suppressed = self._suppress_pending_notifications_for_task(target_id, reason="task_cancelled")
             cleared = self._clear_task_context_for_task(target_id)
+            linked_work = self._retire_task_linked_work(
+                persisted or target,
+                operation_id=operation_id,
+                reason="task_cancelled",
+            )
             result_action = str(result_holder.get("action") or "cancelled")
             persisted_status = str(persisted.get("status") or "") if isinstance(persisted, dict) else ""
             verified = bool(
@@ -1889,7 +2012,8 @@ class TuoguanToolService:
                     "result_action": result_action,
                     "suppressed_notification_count": suppressed,
                     "cleared_context": cleared,
-                    "writeback_verified": verified,
+                    "linked_work": linked_work,
+                    "writeback_verified": bool(verified and linked_work.get("writeback_verified")),
                     "idempotency_verified": True,
                 },
                 message=(
@@ -2457,6 +2581,26 @@ class TuoguanToolService:
             result_reply = str(update_result.get("reply") or "已更新任务。")
             current_missing = update_result.get("missing") if isinstance(update_result.get("missing"), list) else []
             task_verified = isinstance(persisted, dict) and str(persisted.get("updated_at") or persisted.get("completed_at") or persisted.get("evidence_summary") or "") != ""
+            coaching_event: dict[str, Any] = {
+                "ok": True,
+                "recorded": False,
+                "reason_code": "not_teacher_task_interaction",
+                "writeback_verified": True,
+            }
+            if (
+                self.identity.role == "teacher"
+                and str(target.get("assignee_userid") or "") == self.identity.canonical_user_id
+            ):
+                from .teacher_coaching import record_teacher_coaching_event
+
+                coaching_event = record_teacher_coaching_event(
+                    self.store,
+                    task=target,
+                    teacher_user_id=self.identity.canonical_user_id,
+                    action=result_action,
+                    operation_id=operation_id,
+                    missing_fields=current_missing,
+                )
             final_message = result_reply
             if task_verified and str(target.get("status") or "") in _CLOSED_STATUSES:
                 completion_prefix = result_reply.rstrip("。")
@@ -2509,12 +2653,36 @@ class TuoguanToolService:
                         f"{final_message.rstrip('。')}。任务记录已经更新，但关联目标进度反查失败，"
                         "我暂时不能说目标已同步推进。"
                     )
-            self._write_focus(
-                task_id=str(target.get("id") or ""),
-                student_name=str(target.get("student_name") or ""),
-                focus_source="explicit_task_interaction" if (mentioned or supplied_task_id or valid_focus) else "",
-                focus_expires_at=(datetime.now().astimezone() + timedelta(minutes=30)).isoformat(timespec="seconds") if (mentioned or supplied_task_id or valid_focus) else "",
-            )
+            closed_cleanup: dict[str, Any] = {
+                "suppressed_notification_count": 0,
+                "cleared_context": {},
+                "linked_work": {},
+                "writeback_verified": True,
+            }
+            if str(target.get("status") or "") in _CLOSED_STATUSES:
+                suppressed = self._suppress_pending_notifications_for_task(
+                    str(target.get("id") or ""),
+                    reason="task_closed",
+                )
+                cleared = self._clear_task_context_for_task(str(target.get("id") or ""))
+                linked_work = self._retire_task_linked_work(
+                    target,
+                    operation_id=operation_id,
+                    reason="task_closed",
+                )
+                closed_cleanup = {
+                    "suppressed_notification_count": suppressed,
+                    "cleared_context": cleared,
+                    "linked_work": linked_work,
+                    "writeback_verified": bool(linked_work.get("writeback_verified")),
+                }
+            else:
+                self._write_focus(
+                    task_id=str(target.get("id") or ""),
+                    student_name=str(target.get("student_name") or ""),
+                    focus_source="explicit_task_interaction" if (mentioned or supplied_task_id or valid_focus) else "",
+                    focus_expires_at=(datetime.now().astimezone() + timedelta(minutes=30)).isoformat(timespec="seconds") if (mentioned or supplied_task_id or valid_focus) else "",
+                )
             return self._ok(
                 "update_task",
                 data={
@@ -2523,9 +2691,13 @@ class TuoguanToolService:
                     "writeback_verified": bool(
                         task_verified
                         and (not goal_action_id or goal_action_update.get("writeback_verified"))
+                        and coaching_event.get("writeback_verified")
+                        and closed_cleanup.get("writeback_verified")
                     ),
                     "task_writeback_verified": task_verified,
                     "goal_action_update": goal_action_update,
+                    "teacher_coaching_event": coaching_event,
+                    "closed_task_cleanup": closed_cleanup,
                     "missing_fields": current_missing,
                 },
                 message=final_message,

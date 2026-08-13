@@ -451,15 +451,13 @@ def _active_task_collaboration_allowed(
         return False
     if str(task.get("assignee_userid") or "") != str(user_id or ""):
         return False
-    assigner_role = str(task.get("assigned_by_role") or "")
-    assigner_id = str(task.get("created_by") or task.get("assigned_by") or "")
-    if not assigner_role and assigner_id:
-        assigner_role = _staff_role(store, assigner_id)
-    if assigner_role in {"super_admin", "owner"}:
-        assigner_role = "boss"
-    if assigner_role not in {"boss", "manager"}:
+    from .tasks import task_assignment_authority
+
+    authority = task_assignment_authority(store, task)
+    assigner_id = str(authority.get("assigner_user_id") or "")
+    if not authority.get("trusted"):
         return False
-    if not assigner_id:
+    if not assigner_id and str(authority.get("assigner_role") or "") != "system":
         return False
     # A formal task may require same-evening collaboration after the ordinary
     # relationship window. It still fails closed overnight.
@@ -1506,6 +1504,12 @@ def _execute_low_risk_goal_task(
         channel="autonomous_goal_action",
         source_text=str(action.get("source_text") or summary),
         evidence_requirement=str(action.get("evidence_requirement") or ""),
+        created_by_role="boss",
+        created_by_name="小优（老板确认目标内执行）",
+        business_goal=str((_goal_is_active(store, str(action.get("goal_id") or "")) or {}).get("goal_text") or summary),
+        known_facts=[
+            str(value) for value in action.get("known_facts") or [] if str(value)
+        ],
     )
     if not created.get("ok"):
         return created

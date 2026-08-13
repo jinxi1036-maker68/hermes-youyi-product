@@ -30,7 +30,7 @@ from .programs import (
     student_program_ids,
     user_program_ids,
 )
-from .tasks import closure_missing_fields
+from .tasks import build_task_contract, closure_missing_fields
 
 
 CACHE_FILE = "dashboard_cache.json"
@@ -400,6 +400,17 @@ def _create_periodic_task(
         "created_at": stamp,
         "updated_at": stamp,
     }
+    task["task_contract"] = build_task_contract(
+        title=title,
+        source_text=source_text,
+        student_name=student_name,
+        due_at=due_at,
+        evidence_requirement=close_requirement,
+        business_goal=source_label,
+        assignee_user_id=_student_teacher(profile),
+        assigned_by_role="system",
+        known_facts=[source_text],
+    )
     tasks.append(task)
     open_tasks.append(task)
     created.append(task)
@@ -468,6 +479,17 @@ def ensure_priority_followup_tasks(
             "created_at": stamp,
             "updated_at": stamp,
         }
+        task["task_contract"] = build_task_contract(
+            title=str(task["title"]),
+            source_text=str(task["source_text"]),
+            student_name=student_name,
+            due_at=str(task["due_at"]),
+            evidence_requirement=reason,
+            business_goal="及时识别并推进重点学生服务风险",
+            assignee_user_id=teacher_id,
+            assigned_by_role="system",
+            known_facts=[str(task["source_text"]), reason],
+        )
         tasks.append(task)
         open_tasks.append(task)
         created.append(task)
