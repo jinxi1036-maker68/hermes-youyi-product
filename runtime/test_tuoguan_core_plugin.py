@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 from datetime import datetime, timedelta
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
@@ -12,6 +13,15 @@ import pytest
 from gateway.config import Platform
 from gateway.platforms.base import MessageEvent
 from gateway.session import SessionSource
+
+
+pytestmark = pytest.mark.skipif(
+    os.getenv("HERMES_RUN_LEGACY_ROUTER_TESTS") != "1",
+    reason=(
+        "historical v0.19 fixed-router contract; current production is model-led and "
+        "is covered by runtime/tests/plugins plus the Xiaoyou regression gate"
+    ),
+)
 
 
 @pytest.fixture(autouse=True)

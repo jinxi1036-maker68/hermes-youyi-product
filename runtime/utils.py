@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import os
 import tempfile
+import time
 from pathlib import Path
 from typing import Any
 
@@ -24,7 +25,16 @@ def atomic_json_write(path: str | Path, data: Any) -> None:
         with os.fdopen(fd, "w", encoding="utf-8") as handle:
             json.dump(data, handle, ensure_ascii=False, indent=2)
             handle.write("\n")
-        os.replace(tmp_name, target)
+            handle.flush()
+            os.fsync(handle.fileno())
+        for attempt in range(7):
+            try:
+                os.replace(tmp_name, target)
+                break
+            except PermissionError:
+                if attempt == 6:
+                    raise
+                time.sleep(0.01 * (2**attempt))
     except Exception:
         try:
             os.unlink(tmp_name)

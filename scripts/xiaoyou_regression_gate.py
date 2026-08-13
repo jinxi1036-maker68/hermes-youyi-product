@@ -14,6 +14,7 @@ from typing import Any
 ROOT = Path(__file__).resolve().parents[1]
 
 PY_COMPILE_TARGETS = [
+    "runtime/utils.py",
     "runtime/plugins/tuoguan_core/__init__.py",
     "runtime/plugins/tuoguan_core/tool_service.py",
     "runtime/plugins/tuoguan_core/tools.py",

@@ -12,6 +12,27 @@ def _write_json(path: Path, name: str, payload) -> None:
     (path / name).write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
 
 
+def test_atomic_json_write_retries_transient_replace_denial(tmp_path, monkeypatch):
+    import utils
+
+    target = tmp_path / "state.json"
+    original_replace = utils.os.replace
+    attempts = 0
+
+    def flaky_replace(source, destination):
+        nonlocal attempts
+        attempts += 1
+        if attempts < 4:
+            raise PermissionError("transient file lock")
+        return original_replace(source, destination)
+
+    monkeypatch.setattr(utils.os, "replace", flaky_replace)
+    utils.atomic_json_write(target, {"ok": True})
+
+    assert attempts == 4
+    assert json.loads(target.read_text(encoding="utf-8")) == {"ok": True}
+
+
 def test_update_json_preserves_concurrent_outbox_appends(tmp_path):
     from plugins.tuoguan_core.store import TuoguanStore
     from plugins.tuoguan_core.write_guard import authorized_system_write
