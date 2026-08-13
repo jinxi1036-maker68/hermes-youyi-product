@@ -135,10 +135,15 @@ from .digital_employee_state import (
 )
 
 
-_CLOSED_STATUSES = {"completed", "cancelled", "closed", "done", "closed_by_admin", "completed_by_admin"}
+_CLOSED_STATUSES = {
+    "completed", "cancelled", "closed", "done", "closed_by_admin", "completed_by_admin",
+    "superseded", "expired",
+}
 
 _MISSING_FIELD_LABELS = {
     "parent_attitude": "家长的反馈或态度",
+    "renewal_reason": "家长为什么暂缓、犹豫或不续费；没说原因也要如实说明",
+    "teacher_response": "老师当时怎样回应家长",
     "next_step": "下一步跟进安排",
     "child_status": "孩子当前状态",
     "action_taken": "老师已经采取的处理措施",
@@ -496,6 +501,25 @@ class TuoguanToolService:
         item = data.get(self._focus_key(), {})
         return deepcopy(item) if isinstance(item, dict) else {}
 
+    def _active_open_task(self) -> dict[str, Any] | None:
+        visible = [
+            task
+            for task in self._visible_tasks()
+            if str(task.get("status") or "") not in _CLOSED_STATUSES
+        ]
+        by_id = {str(task.get("id") or ""): task for task in visible}
+        active = self.store.read_json("active_task_context.json", {})
+        active_item = active.get(self.identity.canonical_user_id, {}) if isinstance(active, dict) else {}
+        preferred_ids = [
+            str(active_item.get("task_id") or "") if isinstance(active_item, dict) else "",
+            str(self._read_focus().get("task_id") or ""),
+        ]
+        for task_id in preferred_ids:
+            if task_id and task_id in by_id:
+                return deepcopy(by_id[task_id])
+        current = current_task_for_user(visible, self.identity.canonical_user_id)
+        return deepcopy(current) if isinstance(current, dict) else None
+
     def _write_focus(self, **updates: Any) -> None:
         focus_key = self._focus_key()
 
@@ -659,6 +683,22 @@ class TuoguanToolService:
     @staticmethod
     def _relative_due_at(text: str) -> str:
         return parse_business_due_at(text, allow_default=False)
+
+    def _trusted_runtime_raw_text(self, operation: str) -> str:
+        """Return the live inbound text only when runtime ownership matches this store."""
+
+        try:
+            from .runtime_foundation import current_raw_text, write_authorization_for
+
+            runtime_auth = write_authorization_for(self.identity.canonical_user_id, operation)
+            if not runtime_auth:
+                return ""
+            authorized_dir = str(runtime_auth.get("data_dir") or "")
+            if authorized_dir and authorized_dir != str(self.store.data_dir.resolve()):
+                return ""
+            return current_raw_text(self.identity.canonical_user_id)
+        except Exception:
+            return ""
 
     def _operation(
         self,
@@ -971,6 +1011,32 @@ class TuoguanToolService:
         if requested and alias_name and requested != alias_name:
             return self._error("ambiguous_target", "student_name 与 name 指向不同学生，请只保留一个明确姓名。")
         requested = requested or alias_name
+        try:
+            from .runtime_foundation import current_raw_text
+            raw_text = current_raw_text(self.identity.canonical_user_id) or current_raw_text(self.user_id)
+        except Exception:
+            raw_text = ""
+        scope_reason = "explicit_student" if requested else ""
+        active_task: dict[str, Any] | None = None
+        if not requested and self.identity.role == "teacher":
+            compact_raw = "".join(str(raw_text or "").split())
+            visible_names = sorted(self._visible_students(), key=len, reverse=True)
+            explicit_names = [candidate for candidate in visible_names if candidate and candidate in str(raw_text or "")]
+            if len(explicit_names) == 1:
+                requested = explicit_names[0]
+                scope_reason = "student_named_in_current_message"
+            elif any(
+                term in compact_raw
+                for term in (
+                    "他家长", "她家长", "这个任务", "当前任务", "怎么说", "怎么沟通",
+                    "不知道怎么", "不会说", "帮我写", "开始处理", "开始这个",
+                )
+            ):
+                active_task = self._active_open_task()
+                active_student = str((active_task or {}).get("student_name") or "").strip()
+                if active_student:
+                    requested = active_student
+                    scope_reason = "active_task_student"
         safe_limit = max(1, min(int(limit or 30), 100))
         target_identity = self.identity
         requested_teacher = str(teacher_name or "").strip()
@@ -999,11 +1065,6 @@ class TuoguanToolService:
             self._write_focus(student_name=requested)
         else:
             scope = str(query_scope or "").strip().lower()
-            try:
-                from .runtime_foundation import current_raw_text
-                raw_text = current_raw_text(self.identity.canonical_user_id) or current_raw_text(self.user_id)
-            except Exception:
-                raw_text = ""
             if "暑假班" in str(raw_text or ""):
                 scope = "summer"
             if scope == "summer":
@@ -1060,6 +1121,8 @@ class TuoguanToolService:
                 "data_version": data_version,
                 "scope_user_id": target_identity.canonical_user_id,
                 "scope_person_name": target_identity.person_name,
+                "scope_reason": scope_reason or "visible_scope",
+                "active_task": deepcopy(active_task) if scope_reason == "active_task_student" and active_task else None,
             },
             message=f"查询到 {len(names)} 名有权限查看的学生，返回 {len(payload)} 名。",
         )
@@ -1270,11 +1333,7 @@ class TuoguanToolService:
                 return self._error("goal_task_person_daily_limit", "这位老师今天已经有一个该目标的新子任务，本轮不再重复创建。")
             if len(existing_goal_tasks) >= 3:
                 return self._error("goal_task_institution_daily_limit", "今天全机构已经创建三个目标子任务，本轮不再追加。")
-        try:
-            from .runtime_foundation import current_raw_text
-            raw_text_for_boundary = current_raw_text(self.identity.canonical_user_id)
-        except Exception:
-            raw_text_for_boundary = ""
+        raw_text_for_boundary = self._trusted_runtime_raw_text("create_task")
         if self._looks_like_goal_workspace_task_misuse(
             raw_text=raw_text_for_boundary,
             title=title,
@@ -1287,11 +1346,15 @@ class TuoguanToolService:
                 "这是长期经营目标或批量覆盖计划，不是单个内部任务。请改用 tuoguan_goal_workspace 保存目标、确认阶段或查询下一步；不要把本工具失败当作最终结果。",
             )
         if not due_at:
-            try:
-                from .runtime_foundation import current_raw_text
-                due_at = self._relative_due_at(current_raw_text(self.identity.canonical_user_id))
-            except Exception:
-                due_at = ""
+            due_at = self._relative_due_at(raw_text_for_boundary) if raw_text_for_boundary else ""
+        trusted_task_source = str(title or "").strip()
+        candidate_source = str(raw_text_for_boundary or "").strip()
+        if candidate_source and (
+            (student_name and str(student_name) in candidate_source)
+            or trusted_task_source in candidate_source
+            or candidate_source in trusted_task_source
+        ):
+            trusted_task_source = candidate_source
         def execute() -> dict[str, Any]:
             result = create_assigned_task(
                 self.store,
@@ -1302,6 +1365,8 @@ class TuoguanToolService:
                 level=level,
                 student_name=student_name,
                 channel=self.platform,
+                source_text=trusted_task_source,
+                evidence_requirement=evidence_requirement,
             )
             if result.get("ok") and not result.get("already_applied"):
                 task = result.get("task") if isinstance(result.get("task"), dict) else {}
@@ -1325,16 +1390,18 @@ class TuoguanToolService:
                             str(persisted.get("goal_id") or "") == str(goal_id)
                             and str(persisted.get("goal_action_id") or "") == str(goal_action_id or "")
                         )
+                task_contract = task.get("task_contract") if isinstance(task.get("task_contract"), dict) else {}
+                criteria = [str(value) for value in task_contract.get("success_criteria") or [] if str(value)]
                 content = (
                     f"你收到一项新任务：{task.get('title') or title}\n"
                     f"等级：{task.get('level') or level}\n"
                     f"截止：{task.get('due_at') or due_at or '请尽快处理'}\n"
                     f"安排人：{self.identity.person_name or self.identity.canonical_user_id}\n"
                     f"关联学生：{task.get('student_name') or student_name or '无'}\n"
-                    "请直接回复处理进展；完成后可说“这个任务已经完成”。"
+                    "回复“开始”后，小优会结合这项任务陪你一步一步处理；遇到不会说或不会做的地方可以直接问。"
                 )
-                if evidence_requirement:
-                    content += f"\n闭环证据：{str(evidence_requirement).strip()}"
+                if criteria:
+                    content += "\n完成时需要说明：" + "；".join(criteria[:4])
                 try:
                     from .runtime_foundation import current_ledger_id
                     ledger_id = current_ledger_id(self.identity.canonical_user_id)
@@ -1934,6 +2001,32 @@ class TuoguanToolService:
                 "permission_denied",
                 f"当前账号无权记录学生“{name}”。",
             )
+        if self.identity.role == "teacher":
+            inbound_text = self._trusted_runtime_raw_text("record_student")
+            compact_inbound = "".join(str(inbound_text or "").split())
+            active_task = self._active_open_task()
+            active_student = str((active_task or {}).get("student_name") or "").strip()
+            task_result_like = any(
+                term in compact_inbound
+                for term in (
+                    "已沟通", "沟通过了", "家长说", "家长反馈", "已经处理", "处理完了",
+                    "任务完成", "完成了", "结果是", "回复说", "反馈的是", "家长态度",
+                    "开学再考虑", "续费考虑", "暂时不续", "确定续费",
+                )
+            )
+            if active_task and task_result_like and (not name or not active_student or name == active_student):
+                result = self._error(
+                    "wrong_tool_for_active_task_update",
+                    "这条消息是当前任务的处理结果，不应另建学生记录任务。请改用 tuoguan_update_task，并把 reply 保持为老师本轮原话。",
+                )
+                result["data"] = {
+                    "suggested_tool": "tuoguan_update_task",
+                    "task_id": str(active_task.get("id") or ""),
+                    "student_name": active_student,
+                    "trusted_reply": str(inbound_text or ""),
+                    "no_write_performed": True,
+                }
+                return result
 
         def execute() -> dict[str, Any]:
             text = str(content or "").strip()
@@ -2068,16 +2161,12 @@ class TuoguanToolService:
                 str(task.get("id") or "") for task in self._visible_tasks()
             }
             raw_reply = str(reply or "").strip()
-            try:
-                from .runtime_foundation import current_raw_text
-                trusted_raw = current_raw_text(self.identity.canonical_user_id)
-            except Exception:
-                trusted_raw = ""
+            trusted_raw = self._trusted_runtime_raw_text("update_task")
             # The explicit tool argument belongs to this invocation. A runtime
             # raw message is stronger evidence only while the live turn is
             # still present; stale process memory must never overwrite an
             # explicit cancellation phrase from the current tool call.
-            evidence_text = raw_reply or trusted_raw
+            evidence_text = trusted_raw or raw_reply
             visible_tasks = self._visible_tasks()
             open_visible = [task for task in visible_tasks if task.get("status") not in _CLOSED_STATUSES]
             supplied_task_id = str(task_id or "").strip()
@@ -2302,6 +2391,10 @@ class TuoguanToolService:
                     current_result = apply_task_reply([current], actor, evidence_text)
                     result_action = current_result.action
                     result_reply = current_result.reply
+                closure_gaps = closure_missing_fields(
+                    current,
+                    str(current.get("evidence_summary") or evidence_text),
+                )
                 auto_parent_complete = bool(
                     not current_is_safety
                     and (str(current.get("type") or "") in {"parent_anxiety", "parent_complaint", "renewal_risk"} or "家长沟通" in str(current.get("title") or ""))
@@ -2309,6 +2402,7 @@ class TuoguanToolService:
                     and any(word in compact_evidence for word in ("家长", "妈妈", "爸爸"))
                     and any(word in compact_evidence for word in ("知道", "表示", "说", "反馈", "关注", "考虑", "同意", "认可"))
                     and any(word in compact_evidence for word in ("后期", "后续", "继续", "再", "关注", "跟进", "观察"))
+                    and not closure_gaps
                 )
                 if auto_parent_complete:
                     fields = current.get("closure_fields") if isinstance(current.get("closure_fields"), dict) else {}
@@ -2317,7 +2411,7 @@ class TuoguanToolService:
                     completion_requested = True
                     result_action = "completed"
                     result_reply = "家长沟通结果和后续安排已记录，任务已完成。"
-                current_missing = [] if auto_parent_complete else closure_missing_fields(current, str(current.get("evidence_summary") or evidence_text))
+                current_missing = [] if auto_parent_complete else closure_gaps
                 if completion_requested and not current_is_safety and not current_missing:
                     stamp = datetime.now().isoformat(timespec="seconds")
                     current["status"] = "completed"
@@ -2342,7 +2436,7 @@ class TuoguanToolService:
                     "你可以直接回复“继续下一个任务”，我会带你进入下一项。"
                 )
             elif current_missing:
-                missing_text = "、".join(_MISSING_FIELD_LABELS.get(item, item) for item in current_missing)
+                missing_text = "、".join(_MISSING_FIELD_LABELS.get(item, item) for item in current_missing[:1])
                 final_message = (
                     f"已记录你刚才的反馈，但这个任务还没有完成。还需要补充：{missing_text}。"
                     "你直接按实际情况继续说，我会接着记录并告诉你何时完成。"
@@ -2420,6 +2514,29 @@ class TuoguanToolService:
         if denied:
             return denied
         student = str(student_name or "").strip()
+        if self.identity.role == "teacher":
+            try:
+                from .runtime_foundation import current_raw_text
+                inbound_text = current_raw_text(self.identity.canonical_user_id) or current_raw_text(self.user_id)
+            except Exception:
+                inbound_text = ""
+            active_task = self._active_open_task()
+            active_student = str((active_task or {}).get("student_name") or "").strip()
+            explicit_other = bool(student and student in str(inbound_text or ""))
+            if active_task and active_student and student and student != active_student and not explicit_other:
+                result = self._error(
+                    "active_task_entity_mismatch",
+                    f"当前任务对象是“{active_student}”，不能从旧会话切到“{student}”。请按当前任务学生重新调用本工具。",
+                )
+                result["data"] = {
+                    "task_id": str(active_task.get("id") or ""),
+                    "expected_student_name": active_student,
+                    "rejected_student_name": student,
+                    "no_write_performed": True,
+                }
+                return result
+            if active_task and active_student and not student:
+                student = active_student
         student_data: dict[str, Any] | None = None
         if student:
             query = self.query_students(student_name=student)
@@ -3622,6 +3739,7 @@ class TuoguanToolService:
         action_type: str = "ask_work_fact",
         goal_id: str = "",
         goal_action_id: str = "",
+        related_task_id: str = "",
         evidence_requirement: str = "",
         execute_if_authorized: bool = False,
     ) -> dict[str, Any]:
@@ -3644,6 +3762,34 @@ class TuoguanToolService:
                 if str(item).strip()
             }
             target = str(target_user_id or "").strip()
+            task_ref = str(related_task_id or "").strip()
+            if not task_ref and str(action_type or "") in {"ask_task_fact", "ask_task_result", "task_companion_followup"}:
+                focus_task_id = str(self._read_focus().get("task_id") or "")
+                open_target_tasks = [
+                    task
+                    for task in self._visible_tasks()
+                    if str(task.get("assignee_userid") or "") == target
+                    and str(task.get("status") or "") not in _CLOSED_STATUSES
+                ]
+                if focus_task_id and any(str(task.get("id") or "") == focus_task_id for task in open_target_tasks):
+                    task_ref = focus_task_id
+                else:
+                    context_text = f"{message}{reason}{source_text}"
+                    named = [
+                        task
+                        for task in open_target_tasks
+                        if str(task.get("student_name") or "")
+                        and str(task.get("student_name") or "") in context_text
+                    ]
+                    if len(named) == 1:
+                        task_ref = str(named[0].get("id") or "")
+                    elif len(open_target_tasks) == 1:
+                        task_ref = str(open_target_tasks[0].get("id") or "")
+                if not task_ref:
+                    return self._error(
+                        "active_task_reference_required",
+                        "这是任务内追问，但当前无法唯一确定任务。请先查询任务并传 related_task_id，不能把它当普通主动消息发送。",
+                    )
             # Direct staff outreach is a test-only privilege and therefore
             # requires an explicit non-empty allowlist. An empty list must fail
             # closed instead of silently meaning "all staff".
@@ -3675,6 +3821,7 @@ class TuoguanToolService:
                 action_type=action_type,
                 goal_id=goal_id,
                 goal_action_id=goal_action_id,
+                related_task_id=task_ref,
                 evidence_requirement=evidence_requirement,
             )
             if not result.get("ok"):

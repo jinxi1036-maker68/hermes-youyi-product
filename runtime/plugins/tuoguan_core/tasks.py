@@ -9,7 +9,10 @@ from typing import Any
 from .models import TaskReplyResult
 
 
-_CLOSED_STATUSES = {"completed", "cancelled", "closed", "done", "closed_by_admin", "completed_by_admin"}
+_CLOSED_STATUSES = {
+    "completed", "cancelled", "closed", "done", "closed_by_admin", "completed_by_admin",
+    "superseded", "expired",
+}
 _LEVEL_ORDER = {"S": 0, "A": 1, "B": 2, "C": 3}
 
 
@@ -157,6 +160,135 @@ def _is_parent_follow_up_task(task: dict[str, Any]) -> bool:
     )
 
 
+def _is_renewal_task(task: dict[str, Any]) -> bool:
+    task_text = "".join(
+        str(task.get(key) or "")
+        for key in ("type", "title", "source_text", "trigger_reason")
+    )
+    return _task_type(task) == "renewal_risk" or _contains_any(
+        task_text,
+        ("续费", "续托", "退费", "流失"),
+    )
+
+
+def build_task_contract(
+    *,
+    title: str,
+    source_text: str = "",
+    student_name: str = "",
+    due_at: str = "",
+    evidence_requirement: str = "",
+) -> dict[str, Any]:
+    """Build evidence material for coaching without deciding the model's workflow."""
+
+    task = {
+        "title": str(title or "").strip(),
+        "source_text": str(source_text or title or "").strip(),
+        "student_name": str(student_name or "").strip(),
+        "due_at": str(due_at or "").strip(),
+    }
+    if _is_renewal_task(task):
+        domain = "renewal_conversation"
+        success_criteria = [
+            "核实家长当前续费态度",
+            "了解犹豫、暂缓或拒绝的真实原因；若家长未说明，要明确记录为待核实",
+            "记录老师如何回应家长关切",
+            "约定下一次跟进的时间或触发条件",
+        ]
+    elif _is_parent_follow_up_task(task):
+        domain = "parent_communication"
+        success_criteria = [
+            "说明实际沟通动作",
+            "记录家长的真实反馈和态度",
+            "记录老师的回应及下一步安排",
+        ]
+    else:
+        domain = "general_internal_task"
+        success_criteria = ["说明实际处理动作", "记录真实结果", "明确下一步安排"]
+    explicit_requirement = str(evidence_requirement or "").strip()
+    if explicit_requirement:
+        success_criteria.insert(0, explicit_requirement)
+    return {
+        "version": 1,
+        "objective": str(title or "").strip(),
+        "original_instruction": str(source_text or title or "").strip(),
+        "task_domain": domain,
+        "student_name": str(student_name or "").strip(),
+        "due_at": str(due_at or "").strip(),
+        "known_facts": [
+            value
+            for value in (
+                f"任务对象：{student_name}" if student_name else "",
+                f"截止时间：{due_at}" if due_at else "",
+            )
+            if value
+        ],
+        "success_criteria": success_criteria,
+        "coaching_mode": "adaptive_companion",
+        "training_goal": "陪老师完成当前任务，同时让老师理解本类任务的判断方法。",
+        "truth_boundary": "只使用任务原话和可信查询结果；缺事实时先查证或只问一个关键问题，不得编造。",
+    }
+
+
+def task_companion_context(store: Any, *, identity: Any, raw_text: str = "") -> str:
+    """Return the current teacher task as evidence, never as a fixed router."""
+
+    role = str(getattr(identity, "role", "") or "")
+    if role not in {"teacher", "manager"}:
+        return ""
+    user_id = str(getattr(identity, "canonical_user_id", "") or "")
+    if not user_id:
+        return ""
+    tasks = [item for item in store.load_tasks() if isinstance(item, dict)]
+    active = store.read_json("active_task_context.json", {})
+    active = active.get(user_id, {}) if isinstance(active, dict) else {}
+    task_id = str(active.get("task_id") or "") if isinstance(active, dict) else ""
+    task = next(
+        (
+            item
+            for item in tasks
+            if str(item.get("id") or "") == task_id
+            and str(item.get("status") or "") not in _CLOSED_STATUSES
+        ),
+        None,
+    )
+    if task is None:
+        task = current_task_for_user(tasks, user_id)
+    if task is None:
+        return ""
+    contract = task.get("task_contract") if isinstance(task.get("task_contract"), dict) else build_task_contract(
+        title=str(task.get("title") or ""),
+        source_text=str(task.get("source_text") or active.get("original_owner_text") or task.get("title") or ""),
+        student_name=str(task.get("student_name") or ""),
+        due_at=str(task.get("due_at") or ""),
+        evidence_requirement=str(task.get("evidence_requirement") or ""),
+    )
+    student = str(task.get("student_name") or contract.get("student_name") or "")
+    criteria = [str(value) for value in contract.get("success_criteria") or [] if str(value)]
+    raw = "".join(str(raw_text or "").split())
+    asks_for_help = any(
+        term in raw
+        for term in ("开始", "怎么", "不会", "不知道", "帮我", "话术", "说什么", "下一步", "他家长", "她家长")
+    )
+    lines = [
+        "【当前任务陪伴材料】",
+        f"当前开放任务：id={task.get('id') or ''}；标题={task.get('title') or ''}；状态={task.get('status') or ''}；截止={task.get('due_at') or '未设置'}。",
+        f"任务对象：{student or '未指定'}；老板/店长原话：{contract.get('original_instruction') or task.get('title') or ''}。",
+    ]
+    if criteria:
+        lines.append("完成证据：" + "；".join(criteria) + "。")
+    lines.extend([
+        "这是当前任务的可信证据材料，不是固定 Router；若用户明确点名了另一项任务或学生，以本轮明确对象为准。",
+        "在当前任务未切换前，代词“他/她/这个”和“怎么说/不知道怎么做”优先指当前任务对象；不得从旧会话或全员学生列表带入其他学生姓名、电话或历史任务。",
+        f"需要查学生资料时必须按 student_name={student or '当前任务学生'} 精确查询，不能先查全员再猜对象。",
+        "老师说开始、不会做或不知道怎么说时，小优要进入陪伴式工作：先说明当前一步和目的，结合可信事实给可执行示例，再根据老师反馈继续下一步；不同任务由模型自行调整陪伴方式。",
+        "陪伴不是替老师编造事实或一次发完模板；缺少关键事实时先查工具，仍缺时只问一个最关键问题。老师反馈结果时必须用 tuoguan_update_task 按原话更新当前任务，不能用学生记录工具另建一条任务。",
+    ])
+    if asks_for_help:
+        lines.append("本轮老师正在寻求当前任务帮助；优先围绕当前任务继续，不要泛泛列功能，也不要让老师自己重新解释任务对象。")
+    return "\n".join(lines)
+
+
 def _is_new_student_task(task: dict[str, Any], keyword: str) -> bool:
     task_type = _task_type(task)
     return "新生跟进" in task_type and keyword in task_type
@@ -200,9 +332,26 @@ def closure_missing_fields(task: dict[str, Any], evidence: str) -> list[str]:
             ),
         ):
             missing.append("parent_attitude")
+        if _is_renewal_task(task) and not _contains_any(
+            text,
+            (
+                "原因", "因为", "主要是", "顾虑", "担心", "价格", "费用", "距离", "接送",
+                "时间安排", "孩子意愿", "孩子不想", "效果", "服务", "安排没定", "还没定",
+                "未说明原因", "没说原因", "没有说原因", "不愿说明",
+            ),
+        ):
+            missing.append("renewal_reason")
+        if _is_renewal_task(task) and not _contains_any(
+            text,
+            (
+                "我说", "我回复", "我回应", "我告诉", "我解释", "我建议", "我答复",
+                "我跟家长说", "我和家长说", "我给家长说", "我先", "我已说明",
+            ),
+        ):
+            missing.append("teacher_response")
         if not _contains_any(
             text,
-            ("下一步", "明天", "后天", "再反馈", "再联系", "继续", "跟进", "观察两天"),
+            ("下一步", "明天", "后天", "开学", "再考虑", "再反馈", "再联系", "继续", "跟进", "观察两天"),
         ):
             missing.append("next_step")
     elif task_type == "safety_incident":
@@ -440,6 +589,8 @@ def _merge_general_closure_fields(task: dict[str, Any], evidence: str) -> None:
 def _closure_prompt(task: dict[str, Any], missing: list[str]) -> str:
     labels = {
         "parent_attitude": "家长现在是什么态度",
+        "renewal_reason": "家长为什么暂缓、犹豫或不续费；如果家长没有说，也请如实说明",
+        "teacher_response": "你当时怎样回应了家长",
         "next_step": "下一步准备何时跟进",
         "parent_informed": "家长是否已知情",
         "child_status": "孩子当前状态如何",
@@ -448,7 +599,8 @@ def _closure_prompt(task: dict[str, Any], missing: list[str]) -> str:
         "result": "具体处理结果和时间",
     }
     prefix = "安全任务需要严格闭环。" if task.get("type") == "safety_incident" else "还差一点闭环信息。"
-    questions = "；".join(labels[item] for item in missing)
+    selected = missing if task.get("type") == "safety_incident" else missing[:1]
+    questions = "；".join(labels[item] for item in selected)
     return f"{prefix}\n请补充：{questions}。"
 
 
@@ -525,6 +677,17 @@ def _start_guidance(task: dict[str, Any]) -> str:
                     "信息齐了再回复“完成了”。",
                 ]
             )
+        if _is_renewal_task(task):
+            return "\n".join(
+                [
+                    f"好，我们开始处理 {student} 的续费沟通。",
+                    "",
+                    f"当前任务：{source}",
+                    "",
+                    "我会陪你一步一步完成，不是只等你最后报结果。第一步先准备孩子近期真实表现；第二步了解家长真正顾虑；第三步根据顾虑回应；最后约定下次跟进时间。",
+                    "现在先告诉我：你目前掌握的孩子近期真实表现是什么？如果系统里已有可信记录，我也可以先帮你查，再一起组织开场。",
+                ]
+            )
         return "\n".join(
             [
                 "好，我们按家长沟通任务处理。",
@@ -563,7 +726,7 @@ def _help_script(task: dict[str, Any]) -> str:
             "并会继续观察后续有没有不舒服或异常反应。\n\n"
             "发送后请补充：家长是否知情、孩子当前状态、处理措施和后续安排。"
         )
-    if task.get("type") == "renewal_risk":
+    if _is_renewal_task(task):
         return "\n".join(
             [
                 "可以，按续费电话沟通来打，不要一上来催续费。",
@@ -606,6 +769,8 @@ def _fact_added_reply(task: dict[str, Any], missing: list[str]) -> str:
         return "已记录。可以继续补充，或回复“完成了”让我检查闭环信息。"
     labels = {
         "parent_attitude": "家长当前态度",
+        "renewal_reason": "家长暂缓/犹豫的原因",
+        "teacher_response": "老师当时的回应",
         "next_step": "下一步跟进安排",
         "parent_informed": "家长是否已知情",
         "child_status": "孩子当前状态",

@@ -74,6 +74,192 @@ def test_model_created_task_persists_teacher_context_for_natural_completion(tmp_
     assert focus["wecom_callback:teacher1"]["focus_source"] == "task_created"
 
 
+def test_renewal_task_persists_full_companion_contract(tmp_path):
+    from plugins.tuoguan_core.tool_service import TuoguanToolService
+
+    store = _seed_store(tmp_path)
+    service = TuoguanToolService(
+        store=store,
+        platform="wecom_callback",
+        user_id="boss1",
+        user_name="金总",
+        chat_id="boss1",
+        session_key="boss1",
+    )
+
+    result = service.create_task(
+        title="今晚8点联系李依晨家长沟通下学期续费事宜",
+        assignee_user_id="teacher1",
+        operation_id="op-renewal-contract",
+        due_at="2026-08-13T20:00:00+08:00",
+        student_name="李依晨",
+    )
+
+    assert result["ok"] is True
+    task = store.load_tasks()[0]
+    assert task["source_text"] == "今晚8点联系李依晨家长沟通下学期续费事宜"
+    assert task["task_contract"]["task_domain"] == "renewal_conversation"
+    assert task["task_contract"]["coaching_mode"] == "adaptive_companion"
+    assert any("真实原因" in item for item in task["task_contract"]["success_criteria"])
+    assert any("陪你一步一步" in item["content"] for item in json.loads((tmp_path / "notification_outbox.json").read_text(encoding="utf-8")))
+
+
+def test_teacher_contextual_student_query_is_scoped_to_active_task(tmp_path, monkeypatch):
+    from plugins.tuoguan_core import runtime_foundation
+    from plugins.tuoguan_core.tasks import task_companion_context
+    from plugins.tuoguan_core.tool_service import TuoguanToolService
+
+    store = _seed_store(tmp_path)
+    _write_json(
+        tmp_path,
+        "students.json",
+        {
+            "小金": {"teacher": "teacher1", "phone": "old-student"},
+            "李依晨": {"teacher": "teacher1", "phone": "current-student"},
+        },
+    )
+    boss = TuoguanToolService(store=store, platform="wecom_callback", user_id="boss1", user_name="金总", chat_id="boss1", session_key="boss1")
+    created = boss.create_task(
+        title="今晚8点联系李依晨家长沟通下学期续费事宜",
+        assignee_user_id="teacher1",
+        operation_id="op-current-liyichen",
+        due_at="2026-08-13T20:00:00+08:00",
+        student_name="李依晨",
+    )
+    teacher = TuoguanToolService(store=store, platform="wecom_callback", user_id="teacher1", user_name="李老师", chat_id="teacher1", session_key="wecom_callback:teacher1")
+    monkeypatch.setattr(runtime_foundation, "current_raw_text", lambda _user_id: "我怎么给他家长沟通呀")
+
+    queried = teacher.query_students()
+    assert queried["ok"] is True
+    assert queried["data"]["scope_reason"] == "active_task_student"
+    assert [item["name"] for item in queried["data"]["students"]] == ["李依晨"]
+    assert queried["data"]["active_task"]["id"] == created["task_id"]
+
+    context = task_companion_context(store, identity=teacher.identity, raw_text="我不知道怎么说")
+    assert "任务对象：李依晨" in context
+    assert "小金" not in context
+    assert "陪伴式工作" in context
+
+
+def test_parent_script_rejects_student_from_old_session(tmp_path, monkeypatch):
+    from plugins.tuoguan_core import runtime_foundation
+    from plugins.tuoguan_core.tool_service import TuoguanToolService
+
+    store = _seed_store(tmp_path)
+    _write_json(tmp_path, "students.json", {"小金": {"teacher": "teacher1"}, "李依晨": {"teacher": "teacher1"}})
+    boss = TuoguanToolService(store=store, platform="wecom_callback", user_id="boss1", user_name="金总", chat_id="boss1", session_key="boss1")
+    boss.create_task(
+        title="今晚联系李依晨家长沟通续费",
+        assignee_user_id="teacher1",
+        operation_id="op-entity-guard-task",
+        student_name="李依晨",
+    )
+    teacher = TuoguanToolService(store=store, platform="wecom_callback", user_id="teacher1", user_name="李老师", chat_id="teacher1", session_key="wecom_callback:teacher1")
+    monkeypatch.setattr(runtime_foundation, "current_raw_text", lambda _user_id: "我不知道怎么说")
+
+    result = teacher.parent_script_context(request="帮我准备沟通内容", student_name="小金")
+
+    assert result["ok"] is False
+    assert result["error"] == "active_task_entity_mismatch"
+    assert result["data"]["expected_student_name"] == "李依晨"
+
+
+def test_active_task_result_cannot_create_duplicate_record_task(tmp_path, monkeypatch):
+    from plugins.tuoguan_core.tool_service import TuoguanToolService
+
+    store = _seed_store(tmp_path)
+    _write_json(tmp_path, "students.json", {"李依晨": {"teacher": "teacher1", "program_id": "regular_tuoguan"}})
+    boss = TuoguanToolService(store=store, platform="wecom_callback", user_id="boss1", user_name="金总", chat_id="boss1", session_key="boss1")
+    created = boss.create_task(
+        title="今晚联系李依晨家长沟通续费",
+        assignee_user_id="teacher1",
+        operation_id="op-no-duplicate-task",
+        student_name="李依晨",
+    )
+    teacher = TuoguanToolService(store=store, platform="wecom_callback", user_id="teacher1", user_name="李老师", chat_id="teacher1", session_key="wecom_callback:teacher1")
+    teacher._approved = lambda: None
+    monkeypatch.setattr(teacher, "_trusted_runtime_raw_text", lambda _operation: "我已经沟通过了，他家长说到开学的时候再考虑")
+
+    result = teacher.record_student(
+        student_name="李依晨",
+        content="家长态度中立，需要后续跟进。",
+        operation_id="op-wrong-record-tool",
+    )
+
+    assert result["ok"] is False
+    assert result["error"] == "wrong_tool_for_active_task_update"
+    assert result["data"]["task_id"] == created["task_id"]
+    assert len(store.load_tasks()) == 1
+    assert store.read_json("records.json", []) == []
+
+
+def test_renewal_reply_requires_reason_and_teacher_response_before_closure(tmp_path):
+    from plugins.tuoguan_core.tool_service import TuoguanToolService
+
+    store = _seed_store(tmp_path)
+    boss = TuoguanToolService(store=store, platform="wecom_callback", user_id="boss1", user_name="金总", chat_id="boss1", session_key="boss1")
+    created = boss.create_task(
+        title="今晚联系李依晨家长沟通续费",
+        assignee_user_id="teacher1",
+        operation_id="op-rigorous-renewal",
+        student_name="李依晨",
+    )
+    teacher = TuoguanToolService(store=store, platform="wecom_callback", user_id="teacher1", user_name="李老师", chat_id="teacher1", session_key="wecom_callback:teacher1")
+
+    first = teacher.update_task(
+        task_id=created["task_id"],
+        reply="我已经沟通过了，他家长说到开学的时候再考虑。",
+        operation_id="op-renewal-evidence-1",
+    )
+    assert first["ok"] is True
+    assert first["data"]["task"]["status"] == "waiting_confirmation"
+    assert first["data"]["missing_fields"] == ["renewal_reason", "teacher_response"]
+    assert "为什么" in first["message"]
+
+    second = teacher.update_task(
+        task_id=created["task_id"],
+        reply="家长没有说原因，我当时也没有继续追问。",
+        operation_id="op-renewal-evidence-2",
+    )
+    assert second["data"]["task"]["status"] == "waiting_confirmation"
+    assert second["data"]["missing_fields"] == ["teacher_response"]
+
+    third = teacher.update_task(
+        task_id=created["task_id"],
+        reply="我回复家长说开学前我再联系一次，把孩子近期表现和安排一起说明。",
+        operation_id="op-renewal-evidence-3",
+    )
+    assert third["ok"] is True
+    assert third["data"]["task"]["status"] == "completed"
+
+
+def test_task_update_uses_live_teacher_words_not_model_enrichment(tmp_path, monkeypatch):
+    from plugins.tuoguan_core.tool_service import TuoguanToolService
+
+    store = _seed_store(tmp_path)
+    boss = TuoguanToolService(store=store, platform="wecom_callback", user_id="boss1", user_name="金总", chat_id="boss1", session_key="boss1")
+    created = boss.create_task(
+        title="今晚联系李依晨家长沟通续费",
+        assignee_user_id="teacher1",
+        operation_id="op-trusted-teacher-words",
+        student_name="李依晨",
+    )
+    teacher = TuoguanToolService(store=store, platform="wecom_callback", user_id="teacher1", user_name="李老师", chat_id="teacher1", session_key="wecom_callback:teacher1")
+    teacher_words = "我已经沟通过了，他家长说到开学的时候再考虑。"
+    monkeypatch.setattr(teacher, "_trusted_runtime_raw_text", lambda _operation: teacher_words)
+
+    result = teacher.update_task(
+        task_id=created["task_id"],
+        reply="家长态度中立，未拒绝；老师已解释服务价值；开学前继续跟进。",
+        operation_id="op-reject-model-enrichment",
+    )
+
+    assert result["ok"] is True
+    assert result["data"]["task"]["status"] == "waiting_confirmation"
+    assert result["data"]["task"]["evidence_summary"] == teacher_words
+    assert "态度中立" not in result["data"]["task"]["evidence_summary"]
+
+
 def test_boss_can_cancel_just_created_task_by_focus_and_clear_context(tmp_path):
     from plugins.tuoguan_core.tool_service import TuoguanToolService
 

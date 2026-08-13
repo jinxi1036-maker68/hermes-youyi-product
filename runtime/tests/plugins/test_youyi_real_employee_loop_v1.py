@@ -148,6 +148,84 @@ def test_owner_authorization_is_structured_revocable_and_verified(tmp_path):
     assert denied["reason_code"] == "formal_authorization_required"
 
 
+def test_formal_task_collaboration_can_continue_after_ordinary_contact_window(tmp_path):
+    from plugins.tuoguan_core.proactive_work import effective_proactive_permission, submit_proactive_authorization
+    from plugins.tuoguan_core.store import TuoguanStore
+
+    _setup(tmp_path)
+    store = TuoguanStore(tmp_path)
+    submit_proactive_authorization(
+        store,
+        identity=_boss(),
+        operation_id="auth-task-collaboration",
+        subject_role="teacher",
+        subject_user_ids=["CeShi"],
+        action_types=["ask_work_fact"],
+        daily_limit=2,
+        effective_at="2026-08-13T08:00:00+08:00",
+        rollout_stage="pilot",
+        source_text="测试期允许小优主动找李老师核实任务事实。",
+    )
+    _write_json(
+        tmp_path,
+        "tasks.json",
+        [
+            {
+                "id": "task-liyichen-renewal",
+                "title": "联系李依晨家长沟通续费",
+                "status": "waiting_confirmation",
+                "assignee_userid": "CeShi",
+                "created_by": "JinWenJie",
+                "student_name": "李依晨",
+            }
+        ],
+    )
+    now = datetime(2026, 8, 13, 20, 5, tzinfo=CN_TZ)
+
+    ordinary = effective_proactive_permission(
+        store,
+        target_role="teacher",
+        target_user_id="CeShi",
+        action_type="ask_work_fact",
+        now=now,
+    )
+    task_followup = effective_proactive_permission(
+        store,
+        target_role="teacher",
+        target_user_id="CeShi",
+        action_type="ask_task_fact",
+        related_task_id="task-liyichen-renewal",
+        now=now,
+    )
+    wrong_task = effective_proactive_permission(
+        store,
+        target_role="teacher",
+        target_user_id="CeShi",
+        action_type="ask_task_fact",
+        related_task_id="missing-task",
+        now=now,
+    )
+
+    assert ordinary["allowed"] is False
+    assert ordinary["reason_code"] == "outside_contact_window"
+    assert task_followup["allowed"] is True
+    assert wrong_task["allowed"] is False
+
+    tasks = json.loads((tmp_path / "tasks.json").read_text(encoding="utf-8"))
+    tasks[0]["created_by"] = "CeShi"
+    _write_json(tmp_path, "tasks.json", tasks)
+    self_created = effective_proactive_permission(
+        store,
+        target_role="teacher",
+        target_user_id="CeShi",
+        action_type="ask_task_fact",
+        related_task_id="task-liyichen-renewal",
+        now=now,
+    )
+    assert self_created["allowed"] is False
+    assert self_created["reason_code"] == "outside_contact_window"
+
+
 def test_revoking_authorization_stops_queued_delivery_and_send_rechecks_employment(tmp_path):
     from plugins.tuoguan_core import _claim_next_notification_outbox_item
     from plugins.tuoguan_core.digital_employee_state import submit_relationship_touch_candidate

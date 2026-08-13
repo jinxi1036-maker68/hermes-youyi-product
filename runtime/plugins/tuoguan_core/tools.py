@@ -1196,7 +1196,7 @@ TUOGUAN_QUERY_RELATIONSHIP_TOUCH_CANDIDATES_SCHEMA = _schema(
 )
 
 TUOGUAN_SUBMIT_RELATIONSHIP_TOUCH_CANDIDATE_SCHEMA = _schema(
-    "保存一个主动找老板/店长/老师的具体工作候选。测试期只允许金总和李老师测试号 CeShi 进入直接外发候选；其他老师/店长最多保存内部候选，家长禁止。消息必须是工作相关的一个具体问题或支持，不得让老师联系家长，不得批量骚扰。",
+    "保存一个主动找老板/店长/老师的具体工作候选。测试期只允许金总和李老师测试号 CeShi 进入直接外发候选；其他老师/店长最多保存内部候选，家长禁止。消息必须是工作相关的一个具体问题或支持，不得绕过任务边界新增家长外发，不得批量骚扰。正式任务中追问缺失证据时使用 action_type=ask_task_fact 并填写 related_task_id；它与普通关系触达分开校验。",
     _identity_props({
         "target_role": {"type": "string", "enum": ["boss", "manager", "teacher"], "description": "目标角色。"},
         "target_user_id": {"type": "string", "description": "目标企业微信 user_id；李老师测试号为 CeShi。"},
@@ -1213,6 +1213,7 @@ TUOGUAN_SUBMIT_RELATIONSHIP_TOUCH_CANDIDATE_SCHEMA = _schema(
         "action_type": {"type": "string", "description": "本次主动工作的类型，如 ask_work_fact、ask_task_result、ask_student_service_fact。"},
         "goal_id": {"type": "string", "description": "可选，关联已确认经营目标。"},
         "goal_action_id": {"type": "string", "description": "可选，关联持久目标行动。"},
+        "related_task_id": {"type": "string", "description": "可选；正式任务内追问结果或事实时填写当前开放任务 id。"},
         "evidence_requirement": {"type": "string", "description": "对方回复需要补齐的证据。"},
         "execute_if_authorized": {"type": "boolean", "default": False, "description": "如果模型本轮已经判断要现在问对方，必须显式传 true，工具会在同一受控操作中进入 outbox；只想保留候选时为 false。"},
         "operation_id": {"type": "string"},

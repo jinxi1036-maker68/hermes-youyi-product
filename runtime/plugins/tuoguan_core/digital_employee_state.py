@@ -3211,6 +3211,7 @@ def submit_relationship_touch_candidate(
     action_type: str = "ask_work_fact",
     goal_id: str = "",
     goal_action_id: str = "",
+    related_task_id: str = "",
     evidence_requirement: str = "",
 ) -> dict[str, Any]:
     role = str(target_role or "").strip()
@@ -3238,6 +3239,7 @@ def submit_relationship_touch_candidate(
         "target_role": role,
         "target_user_id": str(target_user_id or ""),
         "touch_type": touch,
+        "related_task_id": str(related_task_id or "").strip(),
         "message": re.sub(r"\s+", "", clean_message).lower(),
     }, ensure_ascii=False, sort_keys=True)
     for existing in reversed(_read_jsonl(store, RELATIONSHIP_TOUCH_CANDIDATES_FILE)[-500:]):
@@ -3268,6 +3270,7 @@ def submit_relationship_touch_candidate(
         "action_type": _limit_text(action_type, 80),
         "goal_id": str(goal_id or "").strip(),
         "goal_action_id": str(goal_action_id or "").strip(),
+        "related_task_id": str(related_task_id or "").strip(),
         "evidence_requirement": _limit_text(evidence_requirement, 700),
         "status": normalized_status,
         "semantic_fingerprint": semantic_fingerprint,

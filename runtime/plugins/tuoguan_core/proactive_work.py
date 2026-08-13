@@ -28,8 +28,10 @@ OUTBOX_FILE = "notification_outbox.json"
 PROACTIVE_ACTION_TYPES = {
     "owner_decision",
     "ask_work_fact",
+    "ask_task_fact",
     "ask_operating_fact",
     "ask_task_result",
+    "task_companion_followup",
     "ask_student_service_fact",
     "follow_up",
     "assign_low_risk_goal_task",
@@ -422,7 +424,57 @@ def _staff_is_active(store: TuoguanStore, user_id: str, role: str) -> bool:
     return True
 
 
-def _policy_allows(store: TuoguanStore, role: str, user_id: str, action_type: str, now: datetime) -> tuple[bool, str, int]:
+_TASK_COLLABORATION_ACTIONS = {"ask_task_fact", "ask_task_result", "task_companion_followup"}
+
+
+def _active_task_collaboration_allowed(
+    store: TuoguanStore,
+    *,
+    role: str,
+    user_id: str,
+    action_type: str,
+    related_task_id: str,
+    now: datetime,
+) -> bool:
+    if role not in {"teacher", "manager"} or action_type not in _TASK_COLLABORATION_ACTIONS or not related_task_id:
+        return False
+    task = next(
+        (
+            item
+            for item in store.load_tasks()
+            if isinstance(item, dict)
+            and str(item.get("id") or "") == str(related_task_id)
+        ),
+        None,
+    )
+    if not task or str(task.get("status") or "") in {"completed", "cancelled", "closed", "done", "superseded", "expired"}:
+        return False
+    if str(task.get("assignee_userid") or "") != str(user_id or ""):
+        return False
+    assigner_role = str(task.get("assigned_by_role") or "")
+    assigner_id = str(task.get("created_by") or task.get("assigned_by") or "")
+    if not assigner_role and assigner_id:
+        assigner_role = _staff_role(store, assigner_id)
+    if assigner_role in {"super_admin", "owner"}:
+        assigner_role = "boss"
+    if assigner_role not in {"boss", "manager"}:
+        return False
+    if not assigner_id:
+        return False
+    # A formal task may require same-evening collaboration after the ordinary
+    # relationship window. It still fails closed overnight.
+    return "07:00" <= now.strftime("%H:%M") <= "21:30"
+
+
+def _policy_allows(
+    store: TuoguanStore,
+    role: str,
+    user_id: str,
+    action_type: str,
+    now: datetime,
+    *,
+    related_task_id: str = "",
+) -> tuple[bool, str, int]:
     from .digital_employee_state import relationship_touch_policy
 
     policy = relationship_touch_policy(store)
@@ -438,6 +490,15 @@ def _policy_allows(store: TuoguanStore, role: str, user_id: str, action_type: st
     end = str(role_policy.get("allowed_end") or "19:00")
     current = now.strftime("%H:%M")
     if not start <= current <= end:
+        if _active_task_collaboration_allowed(
+            store,
+            role=role,
+            user_id=user_id,
+            action_type=action_type,
+            related_task_id=related_task_id,
+            now=now,
+        ):
+            return True, "active_task_collaboration_window", max(1, int(role_policy.get("daily_limit") or 1))
         return False, "outside_contact_window", int(role_policy.get("daily_limit") or 1)
     return True, "relationship_policy", max(1, int(role_policy.get("daily_limit") or 1))
 
@@ -449,6 +510,7 @@ def effective_proactive_permission(
     target_user_id: str,
     action_type: str,
     goal_id: str = "",
+    related_task_id: str = "",
     now: datetime | None = None,
 ) -> dict[str, Any]:
     timestamp = _now(now)
@@ -459,7 +521,14 @@ def effective_proactive_permission(
         return {"allowed": False, "reason_code": "parent_or_missing_target"}
     if role not in {"boss", "manager", "teacher"} or not _staff_is_active(store, user_id, role):
         return {"allowed": False, "reason_code": "target_role_or_employment_invalid"}
-    policy_allowed, policy_reason, policy_limit = _policy_allows(store, role, user_id, action, timestamp)
+    policy_allowed, policy_reason, policy_limit = _policy_allows(
+        store,
+        role,
+        user_id,
+        action,
+        timestamp,
+        related_task_id=related_task_id,
+    )
     if not policy_allowed:
         return {"allowed": False, "reason_code": policy_reason}
     authorization_rows = _authorization_rows(store)
@@ -473,7 +542,8 @@ def effective_proactive_permission(
         if users and user_id not in users:
             continue
         actions = {str(value) for value in item.get("action_types") or []}
-        if actions and action not in actions and "ask_work_fact" not in actions:
+        legacy_task_fact_grant = action in _TASK_COLLABORATION_ACTIONS and "ask_work_fact" in actions
+        if actions and action not in actions and not legacy_task_fact_grant:
             continue
         goals = {str(value) for value in item.get("goal_ids") or []}
         if goals and str(goal_id or "") not in goals:
@@ -536,6 +606,7 @@ def execute_relationship_touch(
         target_user_id=target_user_id,
         action_type=str(candidate.get("action_type") or "ask_work_fact"),
         goal_id=str(candidate.get("goal_id") or ""),
+        related_task_id=str(candidate.get("related_task_id") or ""),
         now=timestamp,
     )
     if not permission.get("allowed"):
@@ -1433,6 +1504,8 @@ def _execute_low_risk_goal_task(
         level="A",
         student_name=student_name,
         channel="autonomous_goal_action",
+        source_text=str(action.get("source_text") or summary),
+        evidence_requirement=str(action.get("evidence_requirement") or ""),
     )
     if not created.get("ok"):
         return created

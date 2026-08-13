@@ -502,6 +502,7 @@ def _role_layer_context(*, identity: Any, raw_text: str = "") -> str:
             "当老板问“今天有没有老师/店长找你对话/谁和你聊过/有没有联系你”时，必须优先调用 tuoguan_query_staff_conversation_activity 查询员工对话活动摘要。",
             "当老板问“最近老师有没有说什么/店长有没有反馈/团队状态/店里有什么问题/有没有抱怨/谁情绪不稳定”时，必须优先调用 tuoguan_query_staff_voice_radar 查询员工声音雷达。",
             "低风险员工声音默认只讲趋势；中高风险可以点名并给证据摘要；严重风险以老板-only 提醒候选和现有 outbox 边界处理。",
+            "已分配任务缺少结果或闭环证据时，不要再创建第二条任务；先查询原任务，再用 tuoguan_submit_relationship_touch_candidate 以 action_type=ask_task_fact、related_task_id=原任务 id、execute_if_authorized=true 追问执行人。正式任务协作与普通关系触达分别校验。",
             "是否继续追问、找谁核实、怎样处理，仍由模型结合老板目标和真实事实自主判断。",
         ]
         if any(term in compact for term in ("找你", "和你聊", "跟你聊", "联系你", "给你发消息", "对话", "聊天", "今天有没有老师", "今天有没有店长")):
@@ -1523,6 +1524,19 @@ def _on_pre_llm_call(**kwargs: Any) -> dict[str, str] | None:
                 context_parts.append(role_layer_context)
     except Exception:
         logger.exception("tuoguan_core failed to append role layer context")
+    try:
+        if "identity" in locals():
+            from .tasks import task_companion_context
+
+            companion_context = task_companion_context(
+                _router().store,
+                identity=identity,
+                raw_text=raw_text,
+            )
+            if companion_context:
+                context_parts.append(companion_context)
+    except Exception:
+        logger.exception("tuoguan_core failed to append current task companion context")
     compact_raw = "".join(raw_text.split())
     short_context_reference = compact_raw in {
         "你再试一下",

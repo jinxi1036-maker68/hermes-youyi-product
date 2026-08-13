@@ -141,7 +141,7 @@ from .staff_config import (
     staff_roster_reply,
 )
 from .tasks import apply_task_reply, current_task_for_user
-from .tasks import classify_task_reply, closure_missing_fields
+from .tasks import build_task_contract, classify_task_reply, closure_missing_fields
 from .temporal_grounding import parse_business_due_at
 
 
@@ -1756,6 +1756,12 @@ class TuoguanRouter:
             "updated_at": stamp,
             "due_at": due_at,
             "evidence_required": True,
+            "task_contract": build_task_contract(
+                title=title,
+                source_text=text,
+                student_name=student_name,
+                due_at=due_at,
+            ),
             "source_meta": {
                 "kind": "manual_assignment",
                 "raw_text": text,
@@ -1787,6 +1793,11 @@ class TuoguanRouter:
             ttl_minutes=36 * 60,
         )
         self._refresh_dashboard_cache_best_effort()
+        criteria = [
+            str(value)
+            for value in (task.get("task_contract") or {}).get("success_criteria") or []
+            if str(value)
+        ]
         notification = {
             "task_id": task["id"],
             "role": assignee_role,
@@ -1798,7 +1809,8 @@ class TuoguanRouter:
                 f"安排人：{task['assigned_by_name']}\n"
                 f"学生：{student_name or '无指定学生'}\n"
                 f"截止：{due_at.replace('T', ' ')}\n"
-                "回复：开始 / 稍后 / 帮我写 / 完成了。完成时请补齐处理动作、结果和下一步。"
+                "回复“开始”后，小优会结合当前任务陪你一步一步处理；不会做或不知道怎么说时可以直接问。\n"
+                + ("完成时需要说明：" + "；".join(criteria[:4]) if criteria else "完成时请补齐处理动作、结果和下一步。")
             ),
         }
         reply = (

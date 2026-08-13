@@ -186,12 +186,49 @@ def create_trial_lead(
     return {"ok": verified, "already_applied": False, "lead_id": lead_id, "task_ids": task_ids, "follow_up_task_count": len(linked), "writeback_verified": verified, "reason_code": "" if verified else "writeback_consistency_failed"}
 
 
-def create_assigned_task(store: TuoguanStore, *, title: str, assignee_user_id: str, created_by: str, due_at: str = "", level: str = "A", student_name: str = "", channel: str = "wecom_callback") -> dict[str, Any]:
+def create_assigned_task(
+    store: TuoguanStore,
+    *,
+    title: str,
+    assignee_user_id: str,
+    created_by: str,
+    due_at: str = "",
+    level: str = "A",
+    student_name: str = "",
+    channel: str = "wecom_callback",
+    source_text: str = "",
+    evidence_requirement: str = "",
+) -> dict[str, Any]:
     if not str(title).strip() or not str(assignee_user_id).strip():
         return {"ok": False, "reason_code": "missing_required_fields", "writeback_verified": False}
     signature = (str(title).strip(), assignee_user_id, due_at, student_name)
     task_id = f"task_{uuid.uuid4().hex[:12]}"
-    task = {"id": task_id, "title": str(title).strip(), "type": "manual_assignment", "level": level if level in {"S", "A", "B", "C"} else "A", "status": "pending", "student_name": student_name, "assignee_userid": assignee_user_id, "created_by": created_by, "due_at": due_at, "created_at": _stamp(), "tenant_id": current_tenant_id(), "channel": channel}
+    from .tasks import build_task_contract
+
+    original_text = str(source_text or title or "").strip()
+    task = {
+        "id": task_id,
+        "title": str(title).strip(),
+        "type": "manual_assignment",
+        "level": level if level in {"S", "A", "B", "C"} else "A",
+        "status": "pending",
+        "student_name": student_name,
+        "assignee_userid": assignee_user_id,
+        "created_by": created_by,
+        "due_at": due_at,
+        "created_at": _stamp(),
+        "tenant_id": current_tenant_id(),
+        "channel": channel,
+        "source_text": original_text,
+        "evidence_requirement": str(evidence_requirement or "").strip(),
+        "task_contract": build_task_contract(
+            title=str(title).strip(),
+            source_text=original_text,
+            student_name=student_name,
+            due_at=due_at,
+            evidence_requirement=evidence_requirement,
+        ),
+    }
     selected: dict[str, Any] = {}
     already_applied = False
 
