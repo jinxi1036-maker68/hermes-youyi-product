@@ -156,3 +156,36 @@ def test_autonomous_wakeup_main_returns_failure_exit(monkeypatch):
     )
 
     assert runner.main() == 1
+
+
+def test_wakeup_report_states_actual_external_effects_and_formal_authorization_boundary():
+    from plugins.tuoguan_core.autonomous_wakeup_runner import render_autonomous_wakeup_report
+
+    summary = {
+        "generated_at": "2026-08-13T18:00:00+08:00",
+        "source_counts": {},
+        "sections": {
+            "recovery": {"sections": {"work_items": {"items": []}}},
+            "employee_loop": {
+                "ok": True,
+                "writes": [{"kind": "relationship_touch_execution", "ok": True}],
+                "external_actions_taken": [{
+                    "kind": "relationship_touch_execution",
+                    "delivery_state": "queued",
+                    "target_role": "teacher",
+                    "target_user_id": "CeShi",
+                }],
+                "decision": {
+                    "employee_summary": "小优完成本轮判断。",
+                    "institution_understanding": "事实材料已核对。",
+                    "goal_progress_view": "一项事实请求已入队。",
+                    "boss_attention_candidates": [],
+                },
+            },
+        },
+    }
+
+    rendered = render_autonomous_wakeup_report(summary)
+    assert "本次产生 1 项经边界核验的外部行动记录" in rendered
+    assert "白名单存在不等于店长或全体老师已经开放" in rendered
+    assert "未派任务，未修改业务数据" not in rendered

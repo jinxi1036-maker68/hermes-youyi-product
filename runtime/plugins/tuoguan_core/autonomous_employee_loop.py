@@ -77,6 +77,7 @@ from .proactive_work import (
     execute_relationship_touch,
     query_goal_actions,
     query_proactive_authorizations,
+    submit_goal_action,
 )
 from .store import JSON_NO_CHANGE, TuoguanStore
 from .tool_service import TuoguanToolService
@@ -90,6 +91,14 @@ _FORBIDDEN_EFFECT_KEYS = {
 }
 _FORBIDDEN_ROUTE_KEYS = {"model_intent", "next_tool", "workflow_step", "expected_reply"}
 _ALLOWED_WORK_STATUSES = {"active", "waiting", "blocked", "closed", "superseded"}
+_AUTONOMOUS_GOAL_ACTION_TYPES = {
+    "query_internal_data",
+    "prepare_material",
+    "ask_staff_fact",
+    "create_low_risk_task",
+    "follow_up",
+    "review_and_report",
+}
 _WORK_ITEM_MATERIAL_FRESHNESS_HOURS = 36
 _NON_MATERIAL_OBSERVATION_TYPES = {
     "no_new_input",
@@ -184,6 +193,22 @@ def run_autonomous_employee_loop(
                 timestamp=timestamp,
                 materials=materials,
             )
+            result["external_actions_taken"] = _external_write_effects(result["writes"])
+            result["owner_attention_queued"] = [
+                item for item in result["external_actions_taken"] if item.get("kind") == "owner_attention_queued"
+            ]
+            critical_failures = [
+                item for item in result["writes"]
+                if item.get("kind") in {"goal_action_submission", "goal_action_decision", "relationship_touch_execution"}
+                and not item.get("ok")
+            ]
+            if critical_failures:
+                result["ok"] = False
+                result["error"] = "employee_loop_action_execution_failed"
+                result["message"] = "; ".join(
+                    str(item.get("error") or item.get("message") or "action_failed")
+                    for item in critical_failures[:3]
+                )[:500]
         except Exception as exc:
             result["ok"] = False
             result["error"] = "employee_loop_materialize_failed"
@@ -305,7 +330,7 @@ def build_employee_loop_materials(store: TuoguanStore, *, identity: UserIdentity
         "deferred_items": _compact_for_model(deferred_items),
         "new_term_readiness": _compact_for_model(new_term_readiness),
         "patrol_counts": _compact_for_model(patrol_counts),
-        "allowed_internal_outputs": ["observations", "work_item_updates", "questions_to_humans", "boss_attention_candidates", "relationship_touch_candidates", "relationship_touch_executions", "goal_action_decisions", "institution_fact_gaps", "value_progress_entries", "agent_delegation_decisions", "evolution_candidates", "self_review", "stop_or_wait_reason"],
+        "allowed_internal_outputs": ["observations", "work_item_updates", "questions_to_humans", "boss_attention_candidates", "relationship_touch_candidates", "relationship_touch_executions", "goal_action_submissions", "goal_action_decisions", "institution_fact_gaps", "value_progress_entries", "agent_delegation_decisions", "evolution_candidates", "self_review", "stop_or_wait_reason"],
         "forbidden_external_outputs": sorted(_FORBIDDEN_EFFECT_KEYS),
     }
     base_onboarding = onboarding.get("data") or onboarding if isinstance(onboarding, dict) else {}
@@ -566,6 +591,7 @@ def validate_employee_decision(raw: dict[str, Any]) -> dict[str, Any]:
         "boss_attention_candidates": _list_of_dicts(cleaned.get("boss_attention_candidates"), 4),
         "relationship_touch_candidates": _list_of_dicts(cleaned.get("relationship_touch_candidates"), 6),
         "relationship_touch_executions": _list_of_dicts(cleaned.get("relationship_touch_executions"), 3),
+        "goal_action_submissions": _list_of_dicts(cleaned.get("goal_action_submissions"), 3),
         "goal_action_decisions": _list_of_dicts(cleaned.get("goal_action_decisions"), 3),
         "institution_fact_gaps": _list_of_dicts(cleaned.get("institution_fact_gaps"), 8),
         "value_progress_entries": _list_of_dicts(cleaned.get("value_progress_entries"), 6),
@@ -632,6 +658,30 @@ def validate_employee_decision(raw: dict[str, Any]) -> dict[str, Any]:
         for item in decision.get("relationship_touch_executions") or []
         if _limit(item.get("candidate_id"), 120)
     ][:3]
+    decision["goal_action_submissions"] = [
+        {
+            "goal_id": _limit(item.get("goal_id"), 120),
+            "action_type": _limit(item.get("action_type"), 60),
+            "summary": _truthful_internal_text(item.get("summary"), 700),
+            "target_role": _limit(item.get("target_role"), 40),
+            "target_user_id": _limit(item.get("target_user_id"), 120),
+            "target_name": _limit(item.get("target_name"), 80),
+            "student_names": [
+                _limit(value, 80) for value in _list_any(item.get("student_names"), 8) if _limit(value, 80)
+            ],
+            "planned_at": _limit(item.get("planned_at"), 80),
+            "due_at": _limit(item.get("due_at"), 80),
+            "evidence_requirement": _limit(item.get("evidence_requirement"), 700),
+            "escalation_path": [
+                _limit(value, 120) for value in _list_any(item.get("escalation_path"), 4) if _limit(value, 120)
+            ],
+            "decision_reason": _truthful_internal_text(item.get("decision_reason"), 700),
+        }
+        for item in decision.get("goal_action_submissions") or []
+        if _limit(item.get("goal_id"), 120)
+        and _limit(item.get("action_type"), 60) in _AUTONOMOUS_GOAL_ACTION_TYPES
+        and _limit(item.get("summary"), 700)
+    ][:1]
     decision["goal_action_decisions"] = [
         {
             "goal_action_id": _limit(item.get("goal_action_id"), 120),
@@ -1216,6 +1266,25 @@ def materialize_employee_decision(
             )
             writes.append(_write_result("agent_delegation_decision", res))
         if cadence_mode == "daytime_goal_progress":
+            for idx, item in enumerate(decision.get("goal_action_submissions") or []):
+                res = submit_goal_action(
+                    store,
+                    identity=identity,
+                    goal_id=_limit(item.get("goal_id"), 120),
+                    action_type=_limit(item.get("action_type"), 60),
+                    summary=_limit(item.get("summary"), 700),
+                    operation_id=f"{op_prefix}:goal_action_submit:{idx}",
+                    target_role=_limit(item.get("target_role"), 40),
+                    target_user_id=_limit(item.get("target_user_id"), 120),
+                    target_name=_limit(item.get("target_name"), 80),
+                    student_names=[str(value) for value in item.get("student_names") or []],
+                    planned_at=_limit(item.get("planned_at"), 80),
+                    due_at=_limit(item.get("due_at"), 80),
+                    evidence_requirement=_limit(item.get("evidence_requirement"), 700),
+                    escalation_path=[str(value) for value in item.get("escalation_path") or []],
+                    source_text=_limit(item.get("decision_reason") or "主模型根据目标事实保存下一项行动。", 700),
+                )
+                writes.append(_write_result("goal_action_submission", res))
             for idx, item in enumerate(decision.get("goal_action_decisions") or []):
                 res = execute_goal_action_decision(
                     store,
@@ -1260,9 +1329,22 @@ def materialize_employee_decision(
 
 def render_employee_loop_report(result: dict[str, Any]) -> str:
     decision = result.get("decision") or {}
+    external_actions = result.get("external_actions_taken") or []
+    if not result.get("ok"):
+        status_text = (
+            "Status: model review or a selected action failed; the cycle is degraded and must not be reported as successful. "
+            f"Audited external action records: {len(external_actions)}."
+        )
+    elif external_actions:
+        status_text = (
+            f"Status: model review completed with {len(external_actions)} audited external action(s) queued or recorded. "
+            "No parent contact, salary change, permission change, or delete was allowed."
+        )
+    else:
+        status_text = "Status: model review completed; only internal state/evidence was saved. No external action was queued."
     lines = [
         f"# Hermes autonomous employee review | {str(result.get('generated_at') or '')[:19]}", "",
-        "Status: model participated in wakeup review; only internal state/evidence was saved. No messages, tasks, salary changes, or deletes.", "",
+        status_text, "",
         "## Employee judgment", "",
         f"- {decision.get('employee_summary') or 'No summary.'}",
         f"- Institution understanding: {decision.get('institution_understanding') or 'No new judgment.'}",
@@ -1369,6 +1451,7 @@ def _call_model_for_decision(materials: dict[str, Any]) -> dict[str, Any]:
         "boss_attention_candidates": actions.get("boss_attention_candidates") or [],
         "relationship_touch_candidates": actions.get("relationship_touch_candidates") or [],
         "relationship_touch_executions": actions.get("relationship_touch_executions") or [],
+        "goal_action_submissions": actions.get("goal_action_submissions") or [],
         "goal_action_decisions": actions.get("goal_action_decisions") or [],
         "value_progress_entries": actions.get("value_progress_entries") or [],
         "agent_delegation_decisions": actions.get("agent_delegation_decisions") or [],
@@ -1450,10 +1533,11 @@ employee_summary 必须保持身份为“小优，优益托管机构数字员工
 observations 最多2条，institution_fact_gaps 最多2条，questions_to_humans 最多2条。不要复制学生名单或长段历史。"""
 
 _ACTIONS_PROMPT = """你是托管机构数字员工小优，本轮只根据已给诊断选择行动。
-你可以继续、等待、更新一个工作事项、提出一个老板关注问题、创建一个新主动候选、执行一个已有候选，或对一个到期目标行动选择 execute/wait/adjust/stop/escalate。
+你可以继续、等待、更新一个工作事项、提出一个老板关注问题、创建一个新主动候选、执行一个已有候选、为已确认目标保存一个新的低风险下一行动，或对一个到期目标行动选择 execute/wait/adjust/stop/escalate。
 goal_action_decisions 必须引用材料里的真实 goal_action_id；relationship_touch_executions 必须引用真实 candidate_id。系统会重新校验权限、频率、幂等、在职状态和发送边界。
+goal_action_submissions 必须引用材料里的真实活动 goal_id，说明 action_type、summary 和 evidence_requirement；需要找人时必须写明 target_role/target_user_id，需要给老师建立子任务时还必须带可信 student_names。新行动本轮只保存，不会绕过边界直接执行。
 不要把候选写成已经发送，不要把入队写成已经送达，不要把计划写成已经完成。家长永远不在本轮触达范围。
-只返回一个精简 JSON 对象，字段固定为 work_item_updates、boss_attention_candidates、relationship_touch_candidates、relationship_touch_executions、goal_action_decisions、value_progress_entries、agent_delegation_decisions。
+只返回一个精简 JSON 对象，字段固定为 work_item_updates、boss_attention_candidates、relationship_touch_candidates、relationship_touch_executions、goal_action_submissions、goal_action_decisions、value_progress_entries、agent_delegation_decisions。
 每个数组最多1条；没有必要行动时使用空数组。"""
 
 _REVIEW_PROMPT = """你是托管机构数字员工小优，本轮只做晚间经验复盘。
@@ -2413,13 +2497,49 @@ def _json_text(value: str) -> str:
 
 
 def _write_result(kind: str, result: dict[str, Any]) -> dict[str, Any]:
-    return {
+    row = {
         "kind": kind,
         "ok": bool(result.get("ok")),
         "state_changed": bool(result.get("state_changed", True)),
         "message": result.get("rendered_text") or result.get("message") or "",
         "error": result.get("error") or "",
     }
+    for key in ("delivery_state", "outbox_id", "notification_id", "writeback_verified"):
+        if key in result:
+            row[key] = result.get(key)
+    candidate = result.get("candidate") if isinstance(result.get("candidate"), dict) else {}
+    goal_action = result.get("goal_action") if isinstance(result.get("goal_action"), dict) else {}
+    task = result.get("task") if isinstance(result.get("task"), dict) else {}
+    for key, value in (
+        ("candidate_id", candidate.get("candidate_id")),
+        ("target_role", candidate.get("target_role")),
+        ("target_user_id", candidate.get("target_user_id")),
+        ("goal_action_id", goal_action.get("goal_action_id")),
+        ("goal_action_status", goal_action.get("status")),
+        ("task_id", task.get("id") or task.get("task_id")),
+    ):
+        if value not in {None, ""}:
+            row[key] = value
+    return row
+
+
+def _external_write_effects(writes: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    effects: list[dict[str, Any]] = []
+    for item in writes:
+        if not isinstance(item, dict) or not item.get("ok"):
+            continue
+        delivery_state = str(item.get("delivery_state") or "")
+        if delivery_state not in {"queued", "sending", "sent", "result_unknown"} and item.get("kind") != "owner_attention_queued":
+            continue
+        effects.append({
+            key: item.get(key)
+            for key in (
+                "kind", "delivery_state", "outbox_id", "notification_id", "candidate_id",
+                "target_role", "target_user_id", "goal_action_id", "task_id",
+            )
+            if item.get(key) not in {None, ""}
+        })
+    return effects
 
 
 def _render_self_review_text(decision: dict[str, Any]) -> str:

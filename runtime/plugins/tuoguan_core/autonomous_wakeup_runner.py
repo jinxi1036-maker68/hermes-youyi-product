@@ -153,10 +153,16 @@ def render_autonomous_wakeup_report(summary: dict[str, Any]) -> str:
         phase_name = str(phase.get("phase_name") or phase.get("phase_key") or "未命名阶段")
         phase_goal = str(phase.get("phase_goal") or "")
         phase_lines.append(f"- {title}：{phase_name}；{phase_goal}")
+    employee_loop = ((summary.get("sections") or {}).get("employee_loop") or {}) if isinstance(summary.get("sections"), dict) else {}
+    external_actions = employee_loop.get("external_actions_taken") or [] if isinstance(employee_loop, dict) else []
+    if external_actions:
+        wake_status = f"状态：生产定时唤醒。本次产生 {len(external_actions)} 项经边界核验的外部行动记录，详情见模型工作段；未联系家长。"
+    else:
+        wake_status = "状态：生产定时唤醒。本次完成事实核对和内部记录，没有外部行动入队；未联系家长。"
     lines = [
         f"# Hermes 自主唤醒心跳｜{str(summary.get('generated_at') or '')[:19]}",
         "",
-        "状态：生产定时唤醒。Hermes 已醒来查看事实；如模型判断需要，可在边界内排队老板/店长/老师消息，但未联系家长，未派任务，未修改业务数据，未规定下一步。",
+        wake_status,
         "",
         "## 摘要",
         "",
@@ -171,7 +177,6 @@ def render_autonomous_wakeup_report(summary: dict[str, Any]) -> str:
         lines.extend(phase_lines)
     else:
         lines.append("- 当前没有记录了阶段计划的工作事项。")
-    employee_loop = ((summary.get("sections") or {}).get("employee_loop") or {}) if isinstance(summary.get("sections"), dict) else {}
     lines.extend(["", "## Model-led employee loop", ""])
     if employee_loop:
         if employee_loop.get("ok"):
@@ -180,6 +185,7 @@ def render_autonomous_wakeup_report(summary: dict[str, Any]) -> str:
             lines.append(f"- Employee summary: {decision.get('employee_summary') or 'No summary.'}")
             lines.append(f"- Institution understanding: {decision.get('institution_understanding') or 'No institution view.'}")
             lines.append(f"- Goal view: {decision.get('goal_progress_view') or 'No goal view.'}")
+            lines.append(f"- External actions recorded: {len(external_actions)}.")
             owner_candidates = decision.get("boss_attention_candidates") or []
             if owner_candidates:
                 lines.append(f"- Owner attention candidates: {len(owner_candidates)}; only boss-directed low-frequency notes may be queued in daytime.")
@@ -193,7 +199,8 @@ def render_autonomous_wakeup_report(summary: dict[str, Any]) -> str:
         "",
         "- 这只是把 Hermes 按时间叫醒看材料，不是 Router，也不是固定流程。",
         "- 是否继续、追问、等待、写入状态、停止或请求人工确认，仍应由模型结合真实事实自主判断。",
-        "- 当前允许白天给老板低频提醒，也允许向白名单店长/老师低频询问明确工作事实；不自动发家长、不批量派老师任务、不改工资、不改权限。",
+        "- 主动对象和行动类型必须逐条通过正式授权账本、灰度、在职状态、频率和幂等核验；白名单存在不等于店长或全体老师已经开放。",
+        "- 不自动发家长、不批量派老师任务、不改工资、不改权限。",
     ])
     return "\n".join(lines).rstrip() + "\n"
 

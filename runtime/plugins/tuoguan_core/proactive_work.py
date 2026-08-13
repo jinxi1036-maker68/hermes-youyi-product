@@ -952,6 +952,109 @@ def query_goal_actions(
     }
 
 
+def _collect_internal_goal_evidence(
+    store: TuoguanStore,
+    *,
+    identity: UserIdentity,
+    action: dict[str, Any],
+    timestamp: datetime,
+) -> dict[str, Any]:
+    """Collect a compact, read-only evidence receipt for an internal goal action."""
+
+    try:
+        from .digital_employee_state import query_active_goal_work_state, query_employee_work_map
+
+        goal_id = str(action.get("goal_id") or "")
+        goal_state = query_active_goal_work_state(store, identity=identity, goal_id=goal_id)
+        work_map = query_employee_work_map(store, identity=identity, limit=8)
+        goal_rows = goal_state.get("goals") if isinstance(goal_state.get("goals"), list) else []
+        goal = goal_rows[0] if goal_rows and isinstance(goal_rows[0], dict) else {}
+        current_work = goal.get("current_work_state") if isinstance(goal.get("current_work_state"), dict) else {}
+        goal_evidence_count = sum(
+            1 for item in _read_jsonl(store, "goal_evidence.jsonl")
+            if str(item.get("goal_id") or "") == goal_id
+        )
+
+        task_data = store.read_json("tasks.json", [])
+        task_rows = task_data.get("tasks") or task_data.get("items") or [] if isinstance(task_data, dict) else task_data
+        if not isinstance(task_rows, list):
+            task_rows = []
+        related_tasks = [
+            item for item in task_rows
+            if isinstance(item, dict) and str(item.get("goal_id") or "") == goal_id
+        ]
+        task_status_counts: dict[str, int] = {}
+        for item in related_tasks:
+            status = str(item.get("status") or "unknown")
+            task_status_counts[status] = task_status_counts.get(status, 0) + 1
+
+        related_touches = [
+            item for item in _relationship_rows(store).values()
+            if str(item.get("goal_id") or "") == goal_id
+            or str(item.get("goal_action_id") or "") == str(action.get("goal_action_id") or "")
+        ]
+        touch_status_counts: dict[str, int] = {}
+        for item in related_touches:
+            status = str(item.get("status") or "unknown")
+            touch_status_counts[status] = touch_status_counts.get(status, 0) + 1
+
+        priority_gaps = work_map.get("priority_gaps") if isinstance(work_map.get("priority_gaps"), list) else []
+        unknowns = [
+            _limit(item.get("gap_text") or item.get("text") or item.get("reason"), 140)
+            for item in priority_gaps
+            if isinstance(item, dict) and str(item.get("gap_text") or item.get("text") or item.get("reason") or "").strip()
+        ][:3]
+        fact_owners = [
+            str(item.get("ask_role") or item.get("fact_owner_role") or "")
+            for item in priority_gaps
+            if isinstance(item, dict) and str(item.get("ask_role") or item.get("fact_owner_role") or "").strip()
+        ][:3]
+        known = [
+            f"目标状态={str(goal.get('status') or 'unknown')}",
+            f"当前阶段={str((current_work.get('current_phase') or {}).get('phase_key') or current_work.get('status') or '未记录') if isinstance(current_work.get('current_phase'), dict) else str(current_work.get('status') or '未记录')}",
+            f"目标证据={goal_evidence_count}条",
+            f"关联任务={len(related_tasks)}条{task_status_counts}",
+            f"关联主动线程={len(related_touches)}条{touch_status_counts}",
+        ]
+        term_state = goal_state.get("term_state") if isinstance(goal_state.get("term_state"), dict) else {}
+        if term_state:
+            known.append(
+                "数据口径="
+                + str(term_state.get("roster_confidence") or term_state.get("data_term") or "需要重新确认")
+            )
+        receipt = {
+            "collected_at": timestamp.isoformat(timespec="seconds"),
+            "goal_id": goal_id,
+            "known": known,
+            "unknown": unknowns or ["机构地图当前没有列出高优先级缺口，仍需主模型核对目标证据要求。"],
+            "fact_owner_roles": sorted(set(fact_owners)),
+            "sources": [
+                "goal_operator_goals.json",
+                "goal_evidence.jsonl",
+                "tasks.json",
+                RELATIONSHIP_TOUCH_FILE,
+                "institution_work_map",
+            ],
+            "read_only": True,
+            "messages_sent": False,
+            "tasks_created": False,
+        }
+        evidence_text = (
+            f"内部事实反查（{receipt['collected_at']}）："
+            f"已知：{'；'.join(receipt['known'])}。"
+            f"未知：{'；'.join(receipt['unknown'])}。"
+            f"事实归属角色：{'、'.join(receipt['fact_owner_roles']) or '待主模型判断'}。"
+            f"来源：{'、'.join(receipt['sources'])}。本次只读，未外发、未派任务。"
+        )
+        return {"ok": True, "receipt": receipt, "evidence_text": _limit(evidence_text, 1000)}
+    except Exception as exc:
+        return {
+            "ok": False,
+            "error": "internal_goal_evidence_query_failed",
+            "message": f"内部事实反查失败：{type(exc).__name__}:{str(exc)[:180]}",
+        }
+
+
 def execute_goal_action_decision(
     store: TuoguanStore,
     *,
@@ -1108,14 +1211,42 @@ def execute_goal_action_decision(
             store, identity=identity, action=action, operation_id=operation_id,
             decision_reason=decision_reason, timestamp=timestamp,
         )
-    # Internal actions need actual evidence from a read tool or model review;
-    # selecting execute alone cannot manufacture a completed result.
-    return submit_goal_action(
-        store, identity=identity, goal_id=str(action.get("goal_id") or ""),
-        action_type=action_type, summary=str(action.get("summary") or "内部目标行动"),
-        operation_id=operation_id, goal_action_id=str(goal_action_id), status="executing",
-        source_text=decision_reason or "模型已选择执行，等待真实工具或事实证据后再完成。",
-    )
+    if action_type in {"query_internal_data", "prepare_material", "review_and_report", "verify_evidence"}:
+        evidence = _collect_internal_goal_evidence(
+            store,
+            identity=identity,
+            action=action,
+            timestamp=timestamp,
+        )
+        if not evidence.get("ok"):
+            return evidence
+        updated = submit_goal_action(
+            store,
+            identity=identity,
+            goal_id=str(action.get("goal_id") or ""),
+            action_type=action_type,
+            summary=str(action.get("summary") or "核对目标内部事实"),
+            operation_id=operation_id,
+            goal_action_id=str(goal_action_id),
+            status="replied_sufficient",
+            source_text=str(evidence.get("evidence_text") or ""),
+            last_attempt_at=timestamp.isoformat(timespec="seconds"),
+        )
+        return {
+            **updated,
+            "evidence_snapshot": evidence.get("receipt") or {},
+            "rendered_text": (
+                "内部事实已经真实读取并完成反查，当前行动等待主模型核验证据；"
+                "这不等于行动或经营目标已经完成。"
+            ),
+        }
+    return {
+        "ok": False,
+        "error": "goal_action_requires_specific_evidence_tool",
+        "message": "这项行动需要对应的真实业务工具或人工证据，不能只靠选择 execute 改成执行中。",
+        "goal_action": action,
+        "writeback_verified": False,
+    }
 
 
 def _execute_goal_staff_question(

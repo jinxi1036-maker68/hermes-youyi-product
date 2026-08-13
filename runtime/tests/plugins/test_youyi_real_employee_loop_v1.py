@@ -563,6 +563,158 @@ def test_night_wakeup_never_executes_existing_touch_or_goal_action(tmp_path):
     assert json.loads((tmp_path / "notification_outbox.json").read_text(encoding="utf-8")) == []
 
 
+def test_internal_goal_action_reads_real_evidence_before_model_verification(tmp_path):
+    from plugins.tuoguan_core.proactive_work import execute_goal_action_decision, submit_goal_action
+    from plugins.tuoguan_core.store import TuoguanStore
+
+    _setup(tmp_path)
+    _active_goal(tmp_path)
+    (tmp_path / "goal_evidence.jsonl").write_text(
+        json.dumps({"goal_id": "another-goal", "evidence_id": "other-1"}, ensure_ascii=False) + "\n",
+        encoding="utf-8",
+    )
+    store = TuoguanStore(tmp_path)
+    action = submit_goal_action(
+        store,
+        identity=_boss(),
+        goal_id="goal-renewal",
+        action_type="query_internal_data",
+        summary="核对当前事实基线和第一项真实缺口。",
+        evidence_requirement="必须列明来源、已知、未知和事实归属人。",
+        operation_id="internal-read-plan",
+    )["goal_action"]
+
+    read_result = execute_goal_action_decision(
+        store,
+        identity=_system(),
+        goal_action_id=action["goal_action_id"],
+        decision="execute",
+        operation_id="internal-read-execute",
+        decision_reason="先读取内部可信材料。",
+        now=datetime(2026, 8, 13, 18, 0, tzinfo=CN_TZ),
+    )
+
+    assert read_result["ok"] is True
+    assert read_result["writeback_verified"] is True
+    assert read_result["goal_action"]["status"] == "replied_sufficient"
+    assert read_result["evidence_snapshot"]["read_only"] is True
+    assert "goal_operator_goals.json" in read_result["evidence_snapshot"]["sources"]
+    assert "内部事实反查" in read_result["goal_action"]["last_result"]
+    assert "目标证据=0条" in read_result["goal_action"]["last_result"]
+    assert json.loads((tmp_path / "notification_outbox.json").read_text(encoding="utf-8")) == []
+
+    verified = execute_goal_action_decision(
+        store,
+        identity=_system(),
+        goal_action_id=action["goal_action_id"],
+        decision="execute",
+        operation_id="internal-read-verify",
+        decision_reason="反查来源和数据口径完整，足以完成当前基线核对行动。",
+        now=datetime(2026, 8, 13, 18, 30, tzinfo=CN_TZ),
+    )
+    assert verified["ok"] is True
+    assert verified["goal_action"]["status"] == "resolved"
+
+    unsupported = submit_goal_action(
+        store,
+        identity=_boss(),
+        goal_id="goal-renewal",
+        action_type="fill_institution_fact",
+        summary="填写尚未确认的机构事实。",
+        operation_id="unsupported-internal-plan",
+    )["goal_action"]
+    rejected = execute_goal_action_decision(
+        store,
+        identity=_system(),
+        goal_action_id=unsupported["goal_action_id"],
+        decision="execute",
+        operation_id="unsupported-internal-execute",
+        now=datetime(2026, 8, 13, 18, 40, tzinfo=CN_TZ),
+    )
+    assert rejected["ok"] is False
+    assert rejected["error"] == "goal_action_requires_specific_evidence_tool"
+
+
+def test_daytime_model_can_persist_next_goal_action_without_executing_it(tmp_path):
+    from plugins.tuoguan_core.autonomous_employee_loop import run_autonomous_employee_loop
+    from plugins.tuoguan_core.proactive_work import query_goal_actions
+    from plugins.tuoguan_core.store import TuoguanStore
+
+    _setup(tmp_path)
+    _active_goal(tmp_path)
+    store = TuoguanStore(tmp_path)
+
+    def decision_provider(_materials):
+        return {
+            "employee_summary": "小优，优益托管机构数字员工。",
+            "institution_understanding": "先核对目标事实，不把旧名单当成当前事实。",
+            "goal_progress_view": "目标已确认，下一步只保存低风险事实核对行动。",
+            "observations": [], "work_item_updates": [], "questions_to_humans": [],
+            "boss_attention_candidates": [], "relationship_touch_candidates": [],
+            "relationship_touch_executions": [], "goal_action_decisions": [],
+            "goal_action_submissions": [{
+                "goal_id": "goal-renewal",
+                "action_type": "query_internal_data",
+                "summary": "读取续费目标当前内部证据。",
+                "evidence_requirement": "列出目标状态、证据和第一项缺口。",
+                "decision_reason": "先取数再判断是否找人。",
+            }],
+            "institution_fact_gaps": [], "value_progress_entries": [],
+            "agent_delegation_decisions": [], "evolution_candidates": [],
+            "self_review": {}, "external_actions": [],
+        }
+
+    result = run_autonomous_employee_loop(
+        store,
+        now=datetime(2026, 8, 13, 15, 0, tzinfo=CN_TZ),
+        decision_provider=decision_provider,
+    )
+
+    assert result["ok"] is True
+    actions = query_goal_actions(store, identity=_boss(), goal_id="goal-renewal")
+    assert actions["goal_action_count"] == 1
+    assert actions["goal_actions"][0]["status"] == "planned"
+    assert result["external_actions_taken"] == []
+
+
+def test_failed_goal_execution_marks_autonomous_cycle_degraded(tmp_path, monkeypatch):
+    import plugins.tuoguan_core.autonomous_employee_loop as loop
+    from plugins.tuoguan_core.store import TuoguanStore
+
+    _setup(tmp_path)
+    _active_goal(tmp_path)
+    store = TuoguanStore(tmp_path)
+
+    monkeypatch.setattr(
+        loop,
+        "execute_goal_action_decision",
+        lambda *args, **kwargs: {"ok": False, "error": "writeback_failed", "message": "反查失败"},
+    )
+
+    def decision_provider(_materials):
+        return {
+            "employee_summary": "小优，优益托管机构数字员工。",
+            "institution_understanding": "目标需要继续推进。",
+            "goal_progress_view": "存在到期行动。",
+            "observations": [], "work_item_updates": [], "questions_to_humans": [],
+            "boss_attention_candidates": [], "relationship_touch_candidates": [],
+            "relationship_touch_executions": [], "goal_action_submissions": [],
+            "goal_action_decisions": [{"goal_action_id": "action-1", "decision": "execute"}],
+            "institution_fact_gaps": [], "value_progress_entries": [],
+            "agent_delegation_decisions": [], "evolution_candidates": [],
+            "self_review": {}, "external_actions": [],
+        }
+
+    result = loop.run_autonomous_employee_loop(
+        store,
+        now=datetime(2026, 8, 13, 15, 0, tzinfo=CN_TZ),
+        decision_provider=decision_provider,
+    )
+    assert result["ok"] is False
+    assert result["error"] == "employee_loop_action_execution_failed"
+    assert result["external_actions_taken"] == []
+
+
 def test_confirmed_goal_can_create_only_bounded_low_risk_teacher_task(tmp_path):
     from plugins.tuoguan_core.proactive_work import execute_goal_action_decision, query_goal_actions, submit_goal_action
     from plugins.tuoguan_core.store import TuoguanStore
