@@ -206,6 +206,7 @@ def _sanitize_external_reply(
     verified_state_change: bool = False,
     used_trusted_tool: bool = False,
     actor_role: str = "",
+    actor_name: str = "",
 ) -> str:
     value = str(text or "")
     technical_refs: list[str] = []
@@ -225,6 +226,14 @@ def _sanitize_external_reply(
         value = value.replace(f"__XIAOYOU_TECHNICAL_NAME_{index}__", technical_name)
     value = re.sub(r"(?<=[\u3400-\u9fff])\s+小优", "小优", value)
     value = re.sub(r"小优\s+(?=[\u3400-\u9fff])", "小优", value)
+    if str(actor_role or "") != "boss" and str(actor_name or "").strip():
+        # A fresh Hermes session may still receive shared long-term memory.
+        # Only repair a direct salutation, never a legitimate reference such
+        # as "金总安排的任务" in the body of a staff reply.
+        salutation = re.compile(
+            r"(?m)^(\s*(?:(?:在的|好的|你好|您好|早上好|下午好|晚上好)[，,、\s]*)?)金总(?=[，,。！!：:\s])"
+        )
+        value = salutation.sub(lambda match: f"{match.group(1)}{actor_name}", value)
     lowered = value.lower()
     if any(marker in lowered for marker in _INTERNAL_ERROR_MARKERS):
         return "我刚才连接中断，这次没有处理完整。请稍等一下再发一次，我会重新接着处理。"
@@ -628,7 +637,16 @@ def _runtime_tool_cards(store: TuoguanStore, role: str) -> dict[str, list[dict[s
     return result
 
 
-def begin_inbound(*, store: TuoguanStore, message_id: str, conversation_id: str, user_id: str, role: str, raw_text: str) -> dict[str, Any] | None:
+def begin_inbound(
+    *,
+    store: TuoguanStore,
+    message_id: str,
+    conversation_id: str,
+    user_id: str,
+    role: str,
+    raw_text: str,
+    actor_name: str = "",
+) -> dict[str, Any] | None:
     if not foundation_enabled(store):
         return None
     card, intent = "", "unclassified_message"
@@ -643,6 +661,7 @@ def begin_inbound(*, store: TuoguanStore, message_id: str, conversation_id: str,
         "channel": "wecom_callback",
         "user_id": user_id,
         "role": role,
+        "actor_name": str(actor_name or ""),
         "raw_text": raw_text,
         "entered_model": False,
         "model_intent": intent,
@@ -1492,9 +1511,11 @@ def transform_final_response(*, store: TuoguanStore, session_id: str, response_t
     verified_state_change = False
     used_trusted_tool = False
     actor_role = ""
+    actor_name = ""
     with _LOCK:
         item = _TURN_BY_SESSION.get(str(session_id or "")) or {}
         actor_role = str(item.get("role") or "")
+        actor_name = str(item.get("actor_name") or "")
         for tool_name in (call.get("tool") for call in (item.get("tool_calls") or []) if isinstance(call, dict)):
             if str(tool_name or "").startswith("tuoguan_"):
                 used_trusted_tool = True
@@ -1507,4 +1528,5 @@ def transform_final_response(*, store: TuoguanStore, session_id: str, response_t
         verified_state_change=verified_state_change,
         used_trusted_tool=used_trusted_tool,
         actor_role=actor_role,
+        actor_name=actor_name,
     )

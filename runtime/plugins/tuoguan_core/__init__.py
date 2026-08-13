@@ -66,7 +66,7 @@ def _log_runtime_module_manifest() -> None:
 _ROUTER: Any | None = None
 _DAILY_PUSH_TASKS: dict[int, asyncio.Task] = {}
 _DAILY_PUSH_WAKE_EVENTS: dict[int, asyncio.Event] = {}
-_ACTIVE_WECom_USERS: dict[str, datetime] = {}
+_ACTIVE_WECom_USERS: dict[Any, datetime] = {}
 _ACTIVE_CONVERSATION_QUIET_PERIOD = timedelta(minutes=3)
 _CLAIMED_REPLY_MESSAGE_IDS: dict[str, datetime] = {}
 _ACTIVE_MODEL_TURNS: dict[str, dict[str, Any]] = {}
@@ -445,10 +445,15 @@ def _public_identity_context(store: TuoguanStore) -> str:
 def _xiaoyou_core_skill_context(*, identity: Any) -> str:
     role = str(getattr(identity, "role", "staff") or "staff")
     user_id = str(getattr(identity, "canonical_user_id", "") or "")
+    person_name = str(getattr(identity, "person_name", "") or user_id)
+    role_label = {"boss": "老板", "manager": "店长", "teacher": "老师"}.get(role, "员工")
     return (
         "【已加载 Skill：xiaoyou-core】小优是托管机构数字员工；员工手册提供身份、业务常识、岗位责任和判断框架，"
         "模型负责理解、判断和行动选择，系统只守身份、权限、证据、幂等、频率、审计、真实执行、写后反查和外发边界。"
-        f"本轮服务对象仅为 user_id={user_id}、role={role}；只可注入此人的角色、个人工作方式、当前任务和必要机构事实，"
+        f"【当前对话人可信身份】本轮服务对象已经由企业微信验证为：{person_name}（{role_label}，user_id={user_id}，role={role}）。"
+        f"必须把对方称为“{person_name}”或自然省略称呼；不得从全局记忆、旧会话或其他人的材料把当前人猜成金总、老板或其他员工。"
+        "用户问‘我是谁’时直接依据这一可信身份回答，不需要先扫描全员目录。"
+        "只可注入此人的角色、个人工作方式、当前任务和必要机构事实，"
         "不得混入老板或其他员工的个人档案。先查当前上下文、可信业务工具、人员目录、历史证据及必要只读公开资料，再说查不到。"
         "没有真实工具调用不能说查过，没有写后反查不能说已保存，没有发送回执不能说已发送。"
         "凡是本轮工具列表中已经可见的 tuoguan_ 工具，必须直接调用该工具，禁止再套用 tool_call；"
@@ -937,7 +942,11 @@ def _claim_next_notification_outbox_item(store: TuoguanStore, *, excluded_task_i
                 item.update({"status": "failed", "last_error": "missing_target_or_content", "last_attempt_at": now_iso})
                 claim.update({"item": deepcopy(item), "event": "notification_failed", "result": "missing_target_or_content"})
                 return outbox[-2000:]
-            last_inbound = _coerce_runtime_datetime(_ACTIVE_WECom_USERS.get(target), now=now)
+            activity_key = (str(store.data_dir.resolve()), target)
+            last_inbound = _coerce_runtime_datetime(
+                _ACTIVE_WECom_USERS.get(activity_key, _ACTIVE_WECom_USERS.get(target)),
+                now=now,
+            )
             if (
                 str(item.get("notification_type") or "") != "autonomous_daily_report"
                 and last_inbound is not None
@@ -1343,7 +1352,10 @@ def _on_pre_llm_call(**kwargs: Any) -> dict[str, str] | None:
             user_id=identity.canonical_user_id,
             role=identity.role,
             raw_text=raw_text,
+            actor_name=identity.person_name,
         )
+        activity_key = (str(_router().store.data_dir.resolve()), identity.canonical_user_id)
+        _ACTIVE_WECom_USERS[activity_key] = datetime.now().astimezone()
         turn_key = session_id or chat_id or identity.canonical_user_id
         _ACTIVE_MODEL_TURNS[turn_key] = {
             "message_id": message_id,

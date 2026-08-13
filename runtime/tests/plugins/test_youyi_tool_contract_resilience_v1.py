@@ -120,6 +120,57 @@ def test_core_contract_requires_direct_visible_tool_calls():
     assert "operation_id 使用当前消息 id" in context
 
 
+def test_trusted_session_identity_is_not_a_model_required_argument():
+    from plugins.tuoguan_core.tools import (
+        TUOGUAN_QUERY_STAFF_DIRECTORY_SCHEMA,
+        TUOGUAN_RECORD_STUDENT_SCHEMA,
+    )
+
+    query_required = TUOGUAN_QUERY_STAFF_DIRECTORY_SCHEMA["parameters"]["required"]
+    write_required = TUOGUAN_RECORD_STUDENT_SCHEMA["parameters"]["required"]
+
+    assert "user_id" not in query_required
+    assert "user_id" not in write_required
+    assert "operation_id" not in write_required
+    assert "student_name" in write_required
+    assert "content" in write_required
+
+
+def test_write_handler_injects_trusted_message_id(monkeypatch):
+    from plugins.tuoguan_core import tools
+
+    observed = {}
+
+    class FakeService:
+        def record_student(self, *, student_name: str, content: str, operation_id: str):
+            observed["operation_id"] = operation_id
+            return {"ok": True}
+
+    monkeypatch.setattr(tools, "_service", lambda _args: FakeService())
+    monkeypatch.setattr(
+        tools,
+        "get_session_env",
+        lambda key, default="": "msg-trusted-1" if key == "HERMES_SESSION_MESSAGE_ID" else default,
+    )
+
+    result = json.loads(tools._handler("record_student")({"student_name": "小明", "content": "今天进步明显"}))
+
+    assert result["ok"] is True
+    assert observed["operation_id"] == "msg-trusted-1"
+
+
+def test_outbox_worker_units_use_version_neutral_runtime():
+    root = Path(__file__).resolve().parents[3]
+    service = (root / "systemd" / "hermes-youyi-notification-outbox.service").read_text(encoding="utf-8")
+    path_unit = (root / "systemd" / "hermes-youyi-notification-outbox.path").read_text(encoding="utf-8")
+    timer = (root / "systemd" / "hermes-youyi-notification-outbox.timer").read_text(encoding="utf-8")
+
+    assert "/opt/hermes-youyi-current/.venv/bin/python" in service
+    assert "notification_outbox_runner" in service
+    assert "PathChanged=/opt/hermes-youyi/data/tuoguan-data/notification_outbox.json" in path_unit
+    assert "OnUnitInactiveSec=60s" in timer
+
+
 def test_v020_autonomous_dropin_restores_model_led_loop():
     root = Path(__file__).resolve().parents[3]
     content = (root / "systemd" / "hermes-youyi-autonomous-employee-020.conf").read_text(encoding="utf-8")

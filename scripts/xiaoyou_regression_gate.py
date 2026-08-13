@@ -23,6 +23,7 @@ PY_COMPILE_TARGETS = [
     "runtime/plugins/tuoguan_core/autonomous_employee_loop.py",
     "runtime/plugins/tuoguan_core/digital_employee_state.py",
     "runtime/plugins/tuoguan_core/daily_reporter.py",
+    "runtime/plugins/tuoguan_core/notification_outbox_runner.py",
     "runtime/plugins/tuoguan_core/self_evolution.py",
     "runtime/plugins/tuoguan_core/workstyle_profiles.py",
     "runtime/plugins/tuoguan_core/social_market_research.py",
@@ -33,6 +34,8 @@ PY_COMPILE_TARGETS = [
     "scripts/xiaoyou_deploy_guard.py",
     "scripts/repair_semantically_retired_work_items.py",
     "scripts/repair_stale_xiaoyou_state.py",
+    "scripts/sanitize_shared_memory.py",
+    "scripts/tune_xiaoyou_runtime_config.py",
     "runtime/plugins/platforms/wecom/callback_adapter.py",
     "runtime/plugins/platforms/wecom/inbound_receipts.py",
     "runtime/plugins/platforms/wecom/wecom_crypto.py",
@@ -42,6 +45,8 @@ PYTEST_TARGETS = [
     "runtime/tests/plugins",
     "runtime/tests/test_tenant_initializer_v0.py",
     "runtime/tests/test_tenant_acceptance_check_v0.py",
+    "runtime/tests/test_sanitize_shared_memory_v1.py",
+    "runtime/tests/test_tune_xiaoyou_runtime_config_v1.py",
 ]
 
 RISKY_TRACKED_PATTERNS = (

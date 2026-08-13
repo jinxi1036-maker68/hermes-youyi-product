@@ -30,7 +30,7 @@ def _identity_props(extra: dict[str, Any] | None = None) -> dict[str, Any]:
         },
         "user_id": {
             "type": "string",
-            "description": "当前企业微信用户 id。必须来自当前会话身份，不要编造。",
+            "description": "可省略；系统始终使用当前企业微信可信会话身份，模型不得编造或切换。",
         },
         "user_name": {"type": "string", "description": "当前用户显示名，可为空。"},
         "chat_id": {"type": "string", "description": "当前会话 chat_id，可为空。"},
@@ -41,12 +41,17 @@ def _identity_props(extra: dict[str, Any] | None = None) -> dict[str, Any]:
 
 
 def _schema(description: str, props: dict[str, Any], required: list[str] | None = None) -> dict[str, Any]:
+    # Identity comes from the trusted gateway session, never from model text.
+    # Keeping user_id model-required caused avoidable failed tool turns after
+    # fresh-session resets even though _service already ignores it when the
+    # gateway supplies HERMES_SESSION_USER_ID.
+    effective_required = [item for item in (required or []) if item not in {"user_id", "operation_id"}]
     return {
         "description": description,
         "parameters": {
             "type": "object",
             "properties": props,
-            "required": required or [],
+            "required": effective_required,
         },
     }
 
@@ -73,6 +78,15 @@ def _handler(method: str) -> Callable[[dict[str, Any]], str]:
         }
         method_fn = getattr(service, method)
         signature = inspect.signature(method_fn)
+        if "operation_id" in signature.parameters and not str(payload.get("operation_id") or "").strip():
+            operation_id = str(get_session_env("HERMES_SESSION_MESSAGE_ID", "") or "").strip()
+            if not operation_id:
+                return tool_result({
+                    "ok": False,
+                    "error": "missing_trusted_operation_id",
+                    "message": "当前会话缺少可信消息编号，本轮没有执行写入。",
+                })
+            payload["operation_id"] = operation_id
         accepts_extra = any(
             parameter.kind == inspect.Parameter.VAR_KEYWORD
             for parameter in signature.parameters.values()

@@ -54,6 +54,44 @@ def test_tuoguan_core_does_not_register_pre_model_business_decision_hooks():
     assert {tool["name"] for tool in tools}
 
 
+def test_core_context_hard_binds_fresh_teacher_session_identity():
+    import plugins.tuoguan_core as plugin
+    from plugins.tuoguan_core.models import UserIdentity
+
+    identity = UserIdentity(
+        platform="wecom_callback",
+        platform_user_id="CeShi",
+        canonical_user_id="CeShi",
+        person_name="李老师",
+        role="teacher",
+        approval_state="approved",
+    )
+
+    context = plugin._xiaoyou_core_skill_context(identity=identity)
+
+    assert "李老师（老师，user_id=CeShi" in context
+    assert "不得从全局记忆、旧会话或其他人的材料把当前人猜成金总" in context
+    assert "用户问‘我是谁’时直接依据这一可信身份回答" in context
+
+
+def test_teacher_direct_salutation_cannot_drift_to_owner_name():
+    from plugins.tuoguan_core.runtime_foundation import _sanitize_external_reply
+
+    repaired = _sanitize_external_reply(
+        "在的，金总。我是小优，已上线。",
+        actor_role="teacher",
+        actor_name="李老师",
+    )
+    legitimate_reference = _sanitize_external_reply(
+        "这是金总安排的任务，我帮你看一下。",
+        actor_role="teacher",
+        actor_name="李老师",
+    )
+
+    assert repaired == "在的，李老师。我是小优，已上线。"
+    assert legitimate_reference == "这是金总安排的任务，我帮你看一下。"
+
+
 def test_v020_output_and_post_llm_hooks_preserve_honesty_and_audit(tmp_path, monkeypatch):
     import plugins.tuoguan_core as plugin
 
