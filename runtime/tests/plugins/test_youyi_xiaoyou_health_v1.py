@@ -166,11 +166,87 @@ def _seed_store(tmp_path: Path):
                 "candidate_id": "social-candidate-1",
                 "platform": "douyin",
                 "query": "项城托管招生",
+                "source_id": "video-1",
+                "url": "https://www.douyin.com/video/video-1",
                 "title": "本地同行招生短视频",
+                "evidence_level": "platform_observation",
                 "status": "candidate",
                 "collected_at": "2026-08-09T10:12:00+08:00",
             }
         ],
+    )
+    _append_jsonl(
+        tmp_path,
+        "reply_ledger.jsonl",
+        [{
+            "message_id": "reply-health-1",
+            "entered_model": True,
+            "used_manual_cards": ["xiaoyou-core"],
+            "workstyle_adaptation": {
+                "application_recorded": True,
+                "unverified_commitment": True,
+                "application_result": {"application": {"compliance": {"ok": False}}},
+            },
+            "completed_at": "2026-08-09T10:20:00+08:00",
+        }],
+    )
+    _append_jsonl(
+        tmp_path,
+        "turn_traces.jsonl",
+        [{
+            "trace_id": "turn-health-1",
+            "tenant_id": "youyi_tuoguan",
+            "context_build_ms": 120.0,
+            "total_turn_ms": 15000.0,
+            "tool_events": [
+                {"tool": "tuoguan_update_task", "ok": False, "error": "wrong_tool_for_cancel_intent", "duration_ms": 35.0},
+                {"tool": "tuoguan_query_tasks", "ok": True, "error": None, "duration_ms": 18.0},
+            ],
+            "guard_events": [
+                {"guard": "work_context_ambiguity", "result": "multiple_candidates_model_must_disambiguate"},
+                {"guard": "final_reply_claim_guard", "result": "rewritten"},
+            ],
+            "completed_at": "2026-08-09T10:25:00+08:00",
+        }, {
+            "trace_id": "turn-other-tenant",
+            "tenant_id": "other_tenant",
+            "context_build_ms": 900.0,
+            "total_turn_ms": 90000.0,
+            "tool_events": [
+                {"tool": "tuoguan_update_task", "ok": False, "error": "wrong_tool_for_cancel_intent", "duration_ms": 5000.0},
+            ],
+            "guard_events": [],
+            "completed_at": "2026-08-09T10:26:00+08:00",
+        }],
+    )
+    _append_jsonl(
+        tmp_path,
+        "teacher_coaching_events.jsonl",
+        [{
+            "record_type": "teacher_coaching_event",
+            "event_id": "coaching-health-1",
+            "tenant_id": "youyi_tuoguan",
+            "action": "completed",
+            "support_level": "verified_completion",
+            "created_at": "2026-08-09T10:28:00+08:00",
+            "performance_boundary": {
+                "used_for_payroll": False,
+                "used_for_performance": False,
+                "used_for_penalty": False,
+            },
+        }, {
+            "record_type": "teacher_coaching_event",
+            "event_id": "coaching-other-tenant",
+            "tenant_id": "other_tenant",
+            "action": "completed",
+            "support_level": "verified_completion",
+            "created_at": "2026-08-09T10:29:00+08:00",
+            "performance_boundary": {
+                "used_for_payroll": True,
+                "used_for_performance": True,
+                "used_for_penalty": True,
+            },
+        }],
     )
     _append_jsonl(
         tmp_path,
@@ -241,6 +317,17 @@ def test_xiaoyou_health_summarizes_read_only_operating_signals(tmp_path):
     assert result["market_learning"]["run_count_last_24h"] == 1
     assert result["market_learning"]["candidate_count_last_24h"] == 1
     assert result["market_learning"]["latest_status"] == "completed"
+    assert result["runtime_learning"]["unverified_commitment_count"] == 1
+    trace = result["runtime_learning"]["turn_trace"]
+    assert trace["wrong_tool_count"] == 1
+    assert trace["turn_count_last_24h"] == 1
+    assert trace["final_claim_guard_rewrite_count"] == 1
+    assert trace["context_ambiguity_counts"]["multiple_candidates_model_must_disambiguate"] == 1
+    assert trace["performance"]["context_build_p95_ms"] == 120.0
+    assert trace["performance"]["ordinary_reply_p95_over_target"] is False
+    assert result["task_coaching"]["verified_completion_count_last_24h"] == 1
+    assert result["task_coaching"]["event_count_last_24h"] == 1
+    assert result["task_coaching"]["non_performance_only"] is True
     assert result["actions_taken"] == []
     assert result["boundary"]["sends_messages"] is False
     assert (tmp_path / "notification_outbox.json").read_text(encoding="utf-8") == before_outbox

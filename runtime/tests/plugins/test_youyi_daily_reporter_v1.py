@@ -211,6 +211,59 @@ def test_owner_daily_report_applies_saved_concise_workstyle(tmp_path):
     assert len(result["content"]) <= 520
 
 
+def test_queued_daily_report_records_workstyle_and_evolution_application_evidence(tmp_path):
+    from plugins.tuoguan_core.daily_reporter import queue_daily_boss_report
+    from plugins.tuoguan_core.models import UserIdentity
+    from plugins.tuoguan_core.self_evolution import SELF_EVOLUTION_EVENTS_FILE, submit_self_evolution_event
+    from plugins.tuoguan_core.workstyle_profiles import submit_person_workstyle_preference
+    from plugins.tuoguan_core.write_guard import authorized_system_write
+
+    store = _seed_store(tmp_path)
+    identity = UserIdentity("wecom", "boss1", "boss1", "金总", "boss", "approved")
+    with authorized_system_write(
+        store.data_dir,
+        job_name="test_daily_report_application_evidence",
+        allowed_files={"person_workstyle_events.jsonl", SELF_EVOLUTION_EVENTS_FILE},
+    ):
+        preference = submit_person_workstyle_preference(
+            store,
+            identity=identity,
+            preference_type="report_length",
+            scope="daily_report",
+            preference_text="以后日报只保留三条重点。",
+            normalized_rule="日报只保留三条重点。",
+            operation_id="daily-application-pref",
+        )
+        evolution = submit_self_evolution_event(
+            store,
+            identity=identity,
+            operation_id="daily-application-evolution",
+            candidate_type="self_correction",
+            summary="老板日报只保留三条重点。",
+            evidence=[{"source": "owner_feedback", "text": "老板要求日报只说重点。"}],
+            target_store="person_workstyle_events.jsonl",
+            applies_to_user_id="boss1",
+            applies_to_scope="daily_report",
+        )
+    assert preference["ok"] is True
+    assert evolution["ok"] is True
+
+    queued = queue_daily_boss_report(
+        "morning",
+        store=store,
+        now=datetime(2026, 8, 13, 8, 30, tzinfo=timezone(timedelta(hours=8))),
+    )
+
+    assert queued["queued"] is True
+    workstyle_rows = [json.loads(line) for line in (tmp_path / "person_workstyle_events.jsonl").read_text(encoding="utf-8").splitlines()]
+    assert any(row.get("record_type") == "person_workstyle_application" for row in workstyle_rows)
+    evolution_rows = [json.loads(line) for line in (tmp_path / SELF_EVOLUTION_EVENTS_FILE).read_text(encoding="utf-8").splitlines()]
+    assert evolution_rows[-1]["status"] == "verified"
+    run = json.loads((tmp_path / "daily_report_runs.jsonl").read_text(encoding="utf-8").splitlines()[-1])
+    assert run["workstyle_application_verified"] is True
+    assert run["self_evolution_application"]["verified_count"] == 1
+
+
 def test_daily_report_keeps_concise_rule_when_spacing_feedback_arrives_later(tmp_path):
     from plugins.tuoguan_core.daily_reporter import build_daily_boss_report
     from plugins.tuoguan_core.models import UserIdentity

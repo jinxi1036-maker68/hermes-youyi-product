@@ -5054,6 +5054,8 @@ def query_xiaoyou_health(
     outbox_health = _xiaoyou_outbox_health(outbox, since_ts)
     autonomous_loop = _xiaoyou_autonomous_loop_health(store, since_ts)
     runtime_learning = _xiaoyou_runtime_learning_health(store, since_ts)
+    turn_runtime = _xiaoyou_turn_trace_health(store, since_ts)
+    teacher_coaching = _xiaoyou_teacher_coaching_health(store, since_ts)
     social_market = _xiaoyou_social_market_health(store, since_ts)
     try:
         from .proactive_work import proactive_health_snapshot
@@ -5093,6 +5095,16 @@ def query_xiaoyou_health(
         issues.append(f"过去24小时有 {runtime_learning['core_skill_missing_count']} 个模型回合没有记录 xiaoyou-core 加载证据。")
     if runtime_learning["inbound_receipts"].get("failed_count"):
         issues.append(f"过去24小时有 {runtime_learning['inbound_receipts']['failed_count']} 条入站消息处理失败回执。")
+    if turn_runtime["wrong_tool_count"]:
+        issues.append(f"过去24小时出现 {turn_runtime['wrong_tool_count']} 次错工具选择，需要继续收口能力入口。")
+    if turn_runtime["writeback_failure_count"]:
+        issues.append(f"过去24小时出现 {turn_runtime['writeback_failure_count']} 次写后反查失败。")
+    if turn_runtime["incomplete_tool_count"]:
+        issues.append(f"过去24小时有 {turn_runtime['incomplete_tool_count']} 次工具调用没有完成回执。")
+    if runtime_learning["unverified_commitment_count"]:
+        issues.append(f"过去24小时出现 {runtime_learning['unverified_commitment_count']} 次未验证承诺。")
+    if turn_runtime["performance"]["ordinary_reply_p95_over_target"]:
+        issues.append(f"普通回复 p95 为 {turn_runtime['performance']['total_turn_p95_ms']}ms，超过20秒目标。")
     if int(proactive_work.get("stuck_candidate_count") or 0):
         issues.append(f"有 {int(proactive_work.get('stuck_candidate_count') or 0)} 条主动联系候选超过6小时仍未进入执行或关闭状态。")
     tool_failure_count = int(((evolution.get("health_signals") or {}).get("tool_failure_candidate_count") or 0)) if isinstance(evolution, dict) else 0
@@ -5100,6 +5112,12 @@ def query_xiaoyou_health(
         issues.append(f"有 {tool_failure_count} 条工具失败/能力缺口候选等待复盘。")
     if social_market["latest_status"] in {"backend_unavailable", "source_failed"}:
         issues.append(f"最近一次社交市场采集状态为 {social_market['latest_status']}，小优不能把它写成市场趋势。")
+    if social_market["incomplete_evidence_count_last_24h"]:
+        issues.append(f"近24小时有 {social_market['incomplete_evidence_count_last_24h']} 条市场候选缺少完整来源，已从有效观察中隔离。")
+    if turn_runtime["context_guard_failure_count"]:
+        issues.append(f"过去24小时出现 {turn_runtime['context_guard_failure_count']} 次工作上下文守卫失败。")
+    if teacher_coaching["performance_boundary_violation_count"]:
+        issues.append("老师陪伴记录出现绩效边界污染，必须停止下游使用并核查来源。")
     fact_gap_count = int(fact_gaps.get("candidate_count") or 0) if isinstance(fact_gaps, dict) else 0
     if fact_gap_count:
         issues.append(f"有 {fact_gap_count} 条机构事实缺口候选，需要小优按事实归属人择机补齐。")
@@ -5154,8 +5172,9 @@ def query_xiaoyou_health(
             "status_counts": deepcopy(runtime_learning.get("evolution_status_counts") or {}),
         },
         "market_learning": social_market,
-        "runtime_learning": runtime_learning,
-        "issues": issues[:8],
+        "runtime_learning": {**runtime_learning, "turn_trace": turn_runtime},
+        "task_coaching": teacher_coaching,
+        "issues": issues[:12],
         "actions_taken": [],
         "boundary": {
             "sends_messages": False,
@@ -5213,6 +5232,16 @@ def _xiaoyou_runtime_learning_health(store: TuoguanStore, since_ts: float) -> di
         if isinstance(row.get("workstyle_adaptation"), dict)
         and (row.get("workstyle_adaptation") or {}).get("application_recorded") is True
     ]
+    unverified_commitments = [
+        row for row in reply_rows
+        if isinstance(row.get("workstyle_adaptation"), dict)
+        and (row.get("workstyle_adaptation") or {}).get("unverified_commitment") is True
+    ]
+    failed_workstyle_applications = [
+        row for row in reply_rows
+        if isinstance(((row.get("workstyle_adaptation") or {}).get("application_result") or {}).get("application"), dict)
+        and ((((row.get("workstyle_adaptation") or {}).get("application_result") or {}).get("application") or {}).get("compliance") or {}).get("ok") is False
+    ]
     folded_evolution: dict[str, dict[str, Any]] = {}
     for row in _read_jsonl(store, "self_evolution_events.jsonl"):
         key = str(row.get("semantic_fingerprint") or row.get("evolution_event_id") or "")
@@ -5240,6 +5269,8 @@ def _xiaoyou_runtime_learning_health(store: TuoguanStore, since_ts: float) -> di
         "core_skill_loaded_count": len(core_loaded),
         "core_skill_missing_count": max(0, len(model_rows) - len(core_loaded)),
         "workstyle_application_count": len(workstyle_applied),
+        "unverified_commitment_count": len(unverified_commitments),
+        "workstyle_application_failure_count": len(failed_workstyle_applications),
         "evolution_status_counts": status_counts,
         "tool_failure_status_counts": tool_failure_status_counts,
         "fixed_or_verified_failure_count": sum(
@@ -5250,17 +5281,152 @@ def _xiaoyou_runtime_learning_health(store: TuoguanStore, since_ts: float) -> di
     }
 
 
+def _xiaoyou_turn_trace_health(store: TuoguanStore, since_ts: float) -> dict[str, Any]:
+    rows = [
+        row for row in _read_jsonl(store, "turn_traces.jsonl")
+        if str(row.get("tenant_id") or "") in {"", current_tenant_id()}
+        if _ts(row.get("completed_at") or row.get("started_at")) >= since_ts
+    ]
+    tool_events = [
+        event
+        for row in rows
+        for event in (row.get("tool_events") or [])
+        if isinstance(event, dict)
+    ]
+    guard_events = [
+        event
+        for row in rows
+        for event in (row.get("guard_events") or [])
+        if isinstance(event, dict)
+    ]
+    wrong_tools = [
+        event for event in tool_events
+        if str(event.get("error") or "").startswith("wrong_tool")
+        or str(event.get("error") or "") == "wrong_tool_for_cancel_intent"
+    ]
+    writeback_failures = [
+        event for event in tool_events
+        if str(event.get("error") or "") in {"writeback_failed", "writeback_verification_failed"}
+    ]
+    incomplete_tools = [
+        event for event in tool_events
+        if str(event.get("error") or "") == "tool_completion_missing"
+    ]
+    write_durations = [
+        float(event.get("duration_ms"))
+        for event in tool_events
+        if _trace_tool_is_write(event) and isinstance(event.get("duration_ms"), (int, float))
+    ]
+    read_durations = [
+        float(event.get("duration_ms"))
+        for event in tool_events
+        if not _trace_tool_is_write(event) and isinstance(event.get("duration_ms"), (int, float))
+    ]
+    context_durations = [float(row["context_build_ms"]) for row in rows if isinstance(row.get("context_build_ms"), (int, float))]
+    total_durations = [float(row["total_turn_ms"]) for row in rows if isinstance(row.get("total_turn_ms"), (int, float))]
+    model_and_tool_durations = [
+        max(0.0, float(row["total_turn_ms"]) - float(row.get("context_build_ms") or 0.0))
+        for row in rows
+        if isinstance(row.get("total_turn_ms"), (int, float))
+    ]
+    ambiguity_counts: dict[str, int] = {}
+    guard_rewrite_count = 0
+    context_guard_failure_count = 0
+    for event in guard_events:
+        guard = str(event.get("guard") or "")
+        result = str(event.get("result") or "unknown")
+        if guard == "work_context_ambiguity":
+            ambiguity_counts[result] = ambiguity_counts.get(result, 0) + 1
+        if guard == "final_reply_claim_guard" and result == "rewritten":
+            guard_rewrite_count += 1
+        if guard == "work_context_ambiguity" and result in {"misattached", "identity_mismatch", "failed", "rejected"}:
+            context_guard_failure_count += 1
+    performance = {
+        "context_build_p95_ms": _p95(context_durations),
+        "business_read_tool_p95_ms": _p95(read_durations),
+        "business_write_tool_p95_ms": _p95(write_durations),
+        "total_turn_p95_ms": _p95(total_durations),
+        "model_and_tool_p95_ms": _p95(model_and_tool_durations),
+    }
+    performance.update({
+        "context_build_p95_over_target": performance["context_build_p95_ms"] > 300,
+        "business_read_p95_over_target": performance["business_read_tool_p95_ms"] > 500,
+        "business_write_p95_over_target": performance["business_write_tool_p95_ms"] > 1000,
+        "ordinary_reply_p95_over_target": performance["total_turn_p95_ms"] > 20000,
+    })
+    return {
+        "available": bool(rows),
+        "turn_count_last_24h": len(rows),
+        "tool_call_count_last_24h": len(tool_events),
+        "wrong_tool_count": len(wrong_tools),
+        "writeback_failure_count": len(writeback_failures),
+        "incomplete_tool_count": len(incomplete_tools),
+        "final_claim_guard_rewrite_count": guard_rewrite_count,
+        "context_guard_failure_count": context_guard_failure_count,
+        "context_ambiguity_counts": ambiguity_counts,
+        "performance": performance,
+        "privacy_preserving": True,
+    }
+
+
+def _trace_tool_is_write(event: dict[str, Any]) -> bool:
+    tool = str(event.get("tool") or "")
+    operation = str(event.get("operation") or "")
+    write_terms = ("submit", "create", "update", "cancel", "execute", "record", "queue", "close", "withdraw")
+    return bool(event.get("writeback_verified")) or any(term in tool or term in operation for term in write_terms)
+
+
+def _p95(values: list[float]) -> float:
+    if not values:
+        return 0.0
+    ordered = sorted(max(0.0, float(value)) for value in values)
+    index = max(0, min(len(ordered) - 1, ((95 * len(ordered) + 99) // 100) - 1))
+    return round(ordered[index], 3)
+
+
+def _xiaoyou_teacher_coaching_health(store: TuoguanStore, since_ts: float) -> dict[str, Any]:
+    rows = [
+        row for row in _read_jsonl(store, "teacher_coaching_events.jsonl")
+        if str(row.get("tenant_id") or "") in {"", current_tenant_id()}
+        if _ts(row.get("created_at")) >= since_ts
+    ]
+    support_counts: dict[str, int] = {}
+    completed = 0
+    performance_boundary_violations = 0
+    for row in rows:
+        level = str(row.get("support_level") or "unknown")
+        support_counts[level] = support_counts.get(level, 0) + 1
+        if str(row.get("action") or "") == "completed":
+            completed += 1
+        boundary = row.get("performance_boundary") if isinstance(row.get("performance_boundary"), dict) else {}
+        if any(boundary.get(key) is True for key in ("used_for_payroll", "used_for_performance", "used_for_penalty")):
+            performance_boundary_violations += 1
+    return {
+        "event_count_last_24h": len(rows),
+        "verified_completion_count_last_24h": completed,
+        "support_level_counts": support_counts,
+        "performance_boundary_violation_count": performance_boundary_violations,
+        "non_performance_only": performance_boundary_violations == 0,
+    }
+
+
 def _xiaoyou_social_market_health(store: TuoguanStore, since_ts: float) -> dict[str, Any]:
     runs = [
         row for row in _read_jsonl(store, "social_market_research_runs.jsonl")
+        if str(row.get("tenant_id") or "") in {"", current_tenant_id()}
         if _ts(row.get("created_at") or row.get("collected_at")) >= since_ts
     ]
-    all_runs = _read_jsonl(store, "social_market_research_runs.jsonl")
+    all_runs = [
+        row for row in _read_jsonl(store, "social_market_research_runs.jsonl")
+        if str(row.get("tenant_id") or "") in {"", current_tenant_id()}
+    ]
     latest = all_runs[-1] if all_runs else {}
     candidates = [
         row for row in _read_jsonl(store, "social_market_research_candidates.jsonl")
+        if str(row.get("tenant_id") or "") in {"", current_tenant_id()}
         if _ts(row.get("collected_at") or row.get("created_at")) >= since_ts
     ]
+    complete_candidates = [row for row in candidates if _social_market_candidate_has_evidence(row)]
     status_counts: dict[str, int] = {}
     platform_counts: dict[str, int] = {}
     for row in runs:
@@ -5271,7 +5437,8 @@ def _xiaoyou_social_market_health(store: TuoguanStore, since_ts: float) -> dict[
     return {
         "read_only": True,
         "run_count_last_24h": len(runs),
-        "candidate_count_last_24h": len(candidates),
+        "candidate_count_last_24h": len(complete_candidates),
+        "incomplete_evidence_count_last_24h": len(candidates) - len(complete_candidates),
         "status_counts_last_24h": status_counts,
         "platform_counts_last_24h": platform_counts,
         "latest_status": str(latest.get("status") or "missing"),
@@ -5281,6 +5448,17 @@ def _xiaoyou_social_market_health(store: TuoguanStore, since_ts: float) -> dict[
         "latest_error_count": len(latest.get("errors") or []) if isinstance(latest.get("errors"), list) else 0,
         "external_observation_only": True,
     }
+
+
+def _social_market_candidate_has_evidence(row: dict[str, Any]) -> bool:
+    return bool(
+        str(row.get("platform") or "").strip()
+        and str(row.get("query") or "").strip()
+        and (str(row.get("url") or "").strip() or str(row.get("source_id") or "").strip())
+        and (str(row.get("title") or "").strip() or str(row.get("text_excerpt") or "").strip())
+        and str(row.get("collected_at") or "").strip()
+        and str(row.get("evidence_level") or "").strip()
+    )
 
 
 def _xiaoyou_daily_report_health(outbox: list[Any], daily_runs: list[dict[str, Any]], since_ts: float) -> dict[str, Any]:
@@ -5412,6 +5590,18 @@ def _render_xiaoyou_health(health: dict[str, Any]) -> str:
     lines.append(
         f"- 市场学习：近24小时采集运行 {market.get('run_count_last_24h') or 0} 次；"
         f"候选 {market.get('candidate_count_last_24h') or 0} 条；最近状态 {market.get('latest_status') or 'unknown'}。"
+    )
+    runtime = ((health.get("runtime_learning") or {}).get("turn_trace") or {}) if isinstance(health.get("runtime_learning"), dict) else {}
+    performance = runtime.get("performance") if isinstance(runtime.get("performance"), dict) else {}
+    lines.append(
+        f"- 运行质量：错工具 {runtime.get('wrong_tool_count') or 0} 次；"
+        f"未验证承诺 {((health.get('runtime_learning') or {}).get('unverified_commitment_count') or 0)} 次；"
+        f"回复 p95 {performance.get('total_turn_p95_ms') or 0}ms。"
+    )
+    coaching = health.get("task_coaching") if isinstance(health.get("task_coaching"), dict) else {}
+    lines.append(
+        f"- 任务陪伴：近24小时记录 {coaching.get('event_count_last_24h') or 0} 次；"
+        f"核验闭环 {coaching.get('verified_completion_count_last_24h') or 0} 次。"
     )
     issues = health.get("issues") if isinstance(health.get("issues"), list) else []
     if issues:

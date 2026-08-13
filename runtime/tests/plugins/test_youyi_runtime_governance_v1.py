@@ -43,6 +43,7 @@ def test_adversarial_replay_baseline_has_sixty_synthetic_cases():
 def test_turn_trace_is_sanitized_and_writeback_verified(tmp_path):
     from plugins.tuoguan_core.store import TuoguanStore
     from plugins.tuoguan_core.turn_trace import (
+        begin_tool_event,
         begin_turn_trace,
         clear_turn_traces,
         finalize_turn_trace,
@@ -60,6 +61,7 @@ def test_turn_trace_is_sanitized_and_writeback_verified(tmp_path):
         raw_text=secret_text, visible_tool_count=12,
     )
     record_context_sources("session-1", ["trusted_identity", "current_time", "task_context"])
+    begin_tool_event("session-1", tool_name="tuoguan_query_tasks")
     record_tool_event("session-1", tool_name="tuoguan_query_tasks", result={"ok": True, "data": {"count": 1}})
     record_guard_event("session-1", guard="claim_guard", result="allowed")
     result = finalize_turn_trace(
@@ -73,5 +75,27 @@ def test_turn_trace_is_sanitized_and_writeback_verified(tmp_path):
     row = json.loads(raw)
     assert row["context_sources"] == ["trusted_identity", "current_time", "task_context"]
     assert row["tool_events"][0]["tool"] == "tuoguan_query_tasks"
+    assert row["tool_events"][0]["duration_ms"] is not None
     assert row["delivery_status"] == "delivered"
 
+
+def test_turn_trace_marks_tool_without_completion_receipt(tmp_path):
+    from plugins.tuoguan_core.store import TuoguanStore
+    from plugins.tuoguan_core.turn_trace import begin_tool_event, begin_turn_trace, clear_turn_traces, finalize_turn_trace
+
+    clear_turn_traces()
+    begin_turn_trace(
+        session_id="session-timeout",
+        message_id="message-timeout",
+        tenant_id="demo",
+        app_id="wecom",
+        user_id="teacher1",
+        role="teacher",
+        raw_text="测试工具未返回",
+    )
+    begin_tool_event("session-timeout", tool_name="tuoguan_update_task")
+    result = finalize_turn_trace(TuoguanStore(tmp_path), session_id="session-timeout", final_reply="本轮工具未完成。")
+
+    assert result is not None
+    assert result["tool_events"][0]["error"] == "tool_completion_missing"
+    assert result["tool_events"][0]["ok"] is False

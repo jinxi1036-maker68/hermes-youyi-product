@@ -218,10 +218,16 @@ def query_social_market_research(
     platform_filter = str(platform or "").strip()
     status_filter = str(status or "").strip()
     rows: list[dict[str, Any]] = []
+    quarantined_count = 0
     for row in _read_jsonl(store, SOCIAL_MARKET_RESEARCH_CANDIDATES_FILE):
+        if str(row.get("tenant_id") or "") not in {"", current_tenant_id()}:
+            continue
         if platform_filter and str(row.get("platform") or "") != platform_filter:
             continue
         if status_filter and str(row.get("status") or "") != status_filter:
+            continue
+        if not _market_candidate_evidence_complete(row):
+            quarantined_count += 1
             continue
         rows.append(row)
     rows = rows[-max(1, min(int(limit or 30), 100)):]
@@ -234,10 +240,15 @@ def query_social_market_research(
         "ok": True,
         "report_type": "social_market_research_v0",
         "candidate_count": len(rows),
+        "quarantined_incomplete_evidence_count": quarantined_count,
         "platform_counts": platform_counts,
         "status_counts": status_counts,
         "candidates": rows,
-        "rendered_text": f"查到 {len(rows)} 条社交平台市场观察候选。它们只是外部平台观察，不是优益已确认事实。",
+        "rendered_text": (
+            f"查到 {len(rows)} 条有来源的社交平台市场观察候选；"
+            f"另有 {quarantined_count} 条因来源、时间或证据等级不完整而隔离。"
+            "它们只是外部平台观察，不是优益已确认事实。"
+        ),
         "render_verified": True,
     }
 
@@ -445,6 +456,8 @@ def _normalize_opencli_rows(payload: Any, *, platform: str, query: str, timestam
         metrics = {key: raw.get(key) for key in ("liked_count", "collected_count", "comment_count", "share_count", "digg_count", "play_count") if key in raw}
         if not title and not excerpt and not item_id:
             continue
+        if not url and not item_id:
+            continue
         if _is_non_market_row(platform=platform, url=url, title=title, excerpt=excerpt, query=query):
             continue
         rows.append({
@@ -547,6 +560,17 @@ def _candidate_from_row(run_id: str, row: dict[str, Any], timestamp: datetime, *
         "collected_at": row.get("collected_at") or timestamp.isoformat(timespec="seconds"),
         "auto_effects": _auto_effects(),
     }
+
+
+def _market_candidate_evidence_complete(row: dict[str, Any]) -> bool:
+    return bool(
+        str(row.get("platform") or "").strip() in VALID_PLATFORMS
+        and str(row.get("query") or "").strip()
+        and (str(row.get("url") or "").strip() or str(row.get("source_id") or "").strip())
+        and (str(row.get("title") or "").strip() or str(row.get("text_excerpt") or "").strip())
+        and str(row.get("collected_at") or "").strip()
+        and str(row.get("evidence_level") or "").strip()
+    )
 
 
 def _default_query(store: TuoguanStore, platform: str) -> str:

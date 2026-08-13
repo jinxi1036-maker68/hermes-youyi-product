@@ -38,6 +38,7 @@ from .runtime_foundation import (
     transform_final_response as _foundation_transform_final_response,
 )
 from .turn_trace import (
+    begin_tool_event as _begin_trace_tool_event,
     begin_turn_trace as _begin_turn_trace,
     finalize_turn_trace as _finalize_turn_trace,
     record_context_sources as _record_trace_context_sources,
@@ -1604,6 +1605,11 @@ def _on_pre_llm_call(**kwargs: Any) -> dict[str, str] | None:
             active_context = render_work_context_snapshot(work_snapshot)
             has_active_context = bool(work_snapshot.get("candidate_threads"))
             append_context(active_context, "work_context_snapshot")
+            _record_trace_guard_event(
+                trace_key,
+                guard="work_context_ambiguity",
+                result=str(work_snapshot.get("ambiguity_state") or "unknown"),
+            )
     except Exception:
         logger.exception("tuoguan_core failed to build work context snapshot")
         active_context = ""
@@ -1713,6 +1719,10 @@ def _on_post_tool_call(**kwargs: Any) -> None:
 def _on_pre_tool_call(**kwargs: Any) -> dict[str, str] | None:
     # Model-led production: do not run an extra pre-tool business router here.
     # Tool handlers still enforce identity, role permissions and write guards.
+    _begin_trace_tool_event(
+        str(kwargs.get("session_id") or ""),
+        tool_name=str(kwargs.get("tool_name") or ""),
+    )
     return None
 
 

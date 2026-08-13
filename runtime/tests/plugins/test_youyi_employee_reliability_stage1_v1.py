@@ -282,11 +282,15 @@ def test_active_work_context_unifies_outbound_daily_market_and_tool_evidence(tmp
     )
     (tmp_path / "social_market_research_candidates.jsonl").write_text(
         json.dumps(
-            {
-                "candidate_id": "market-1",
-                "platform": "douyin",
-                "title": "项城托管招生短视频观察",
-                "status": "candidate",
+                {
+                    "candidate_id": "market-1",
+                    "platform": "douyin",
+                    "query": "项城托管招生",
+                    "source_id": "video-market-1",
+                    "url": "https://www.douyin.com/video/video-market-1",
+                    "title": "项城托管招生短视频观察",
+                    "evidence_level": "platform_observation",
+                    "status": "candidate",
                 "collected_at": recent,
             },
             ensure_ascii=False,

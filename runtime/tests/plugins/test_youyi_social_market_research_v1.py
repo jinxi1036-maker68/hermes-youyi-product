@@ -348,3 +348,73 @@ def test_social_market_batch_uses_configured_queries(tmp_path):
     assert result["ok"] is True
     assert result["run_count"] == 2
     assert result["platforms"] == ["xiaohongshu"]
+
+
+def test_social_market_query_quarantines_incomplete_historical_evidence(tmp_path):
+    from plugins.tuoguan_core.models import UserIdentity
+    from plugins.tuoguan_core.social_market_research import query_social_market_research
+    from plugins.tuoguan_core.store import TuoguanStore
+
+    valid = {
+        "candidate_id": "valid-1",
+        "platform": "douyin",
+        "query": "项城托管",
+        "source_id": "video-1",
+        "url": "https://www.douyin.com/video/video-1",
+        "title": "项城同行托管招生",
+        "collected_at": "2026-08-13T10:00:00+08:00",
+        "evidence_level": "platform_observation",
+        "status": "pending_review",
+    }
+    invalid = {
+        "candidate_id": "invalid-1",
+        "platform": "douyin",
+        "query": "项城托管",
+        "title": "没有来源的旧摘要",
+        "collected_at": "2026-08-13T10:00:00+08:00",
+        "status": "pending_review",
+    }
+    other_tenant = {
+        **valid,
+        "candidate_id": "other-tenant",
+        "tenant_id": "another_tenant",
+    }
+    with (tmp_path / "social_market_research_candidates.jsonl").open("w", encoding="utf-8") as handle:
+        handle.write(json.dumps(valid, ensure_ascii=False) + "\n")
+        handle.write(json.dumps(invalid, ensure_ascii=False) + "\n")
+        handle.write(json.dumps(other_tenant, ensure_ascii=False) + "\n")
+
+    result = query_social_market_research(
+        TuoguanStore(tmp_path),
+        identity=UserIdentity("wecom", "boss1", "boss1", "金总", "boss", "approved"),
+    )
+
+    assert result["candidate_count"] == 1
+    assert result["quarantined_incomplete_evidence_count"] == 1
+    assert result["candidates"][0]["candidate_id"] == "valid-1"
+
+
+def test_social_market_result_without_url_or_platform_id_is_source_failed(tmp_path):
+    from plugins.tuoguan_core.social_market_research import run_social_market_research
+    from plugins.tuoguan_core.store import TuoguanStore
+
+    def runner(command, **_kwargs):
+        if "whoami" in command:
+            return SimpleNamespace(returncode=0, stdout=json.dumps({"ok": True}), stderr="")
+        return SimpleNamespace(
+            returncode=0,
+            stdout=json.dumps({"items": [{"title": "只有标题没有来源", "content": "项城托管招生"}]}, ensure_ascii=False),
+            stderr="",
+        )
+
+    result = run_social_market_research(
+        "xiaohongshu",
+        store=TuoguanStore(tmp_path),
+        query="项城托管招生",
+        dry_run=True,
+        runner=runner,
+        now=datetime(2026, 8, 13, 10, 0, tzinfo=timezone.utc),
+    )
+
+    assert result["run"]["status"] == "source_failed"
+    assert result["candidates"] == []

@@ -25,10 +25,11 @@ from .digital_employee_state import (
 )
 from .employee_identity import owner_user_id as _owner_user_id
 from .employee_identity import system_identity as _system_identity
-from .self_evolution import build_self_evolution_brief
+from .models import UserIdentity
+from .self_evolution import SELF_EVOLUTION_EVENTS_FILE, build_self_evolution_brief, record_self_evolution_application
 from .store import JSON_NO_CHANGE, TuoguanStore
 from .tenant_context import current_tenant_id
-from .workstyle_profiles import daily_report_style_for_owner
+from .workstyle_profiles import WORKSTYLE_EVENTS_FILE, daily_report_style_for_owner, record_workstyle_application
 from .write_guard import assert_business_write_allowed, authorized_system_write
 
 DAILY_REPORT_RUNS_FILE = "daily_report_runs.jsonl"
@@ -96,7 +97,12 @@ def queue_daily_boss_report(
     with authorized_system_write(
         actual_store.data_dir,
         job_name="daily_boss_report",
-        allowed_files={NOTIFICATION_OUTBOX_FILE, DAILY_REPORT_RUNS_FILE},
+        allowed_files={
+            NOTIFICATION_OUTBOX_FILE,
+            DAILY_REPORT_RUNS_FILE,
+            WORKSTYLE_EVENTS_FILE,
+            SELF_EVOLUTION_EVENTS_FILE,
+        },
     ) as auth:
         outbox_state: dict[str, Any] = {"queued": False, "existing_status": ""}
 
@@ -132,6 +138,38 @@ def queue_daily_boss_report(
                 "existing_status": str(outbox_state.get("existing_status") or ""),
                 "report": report,
             }
+        owner_identity = UserIdentity(
+            platform="system",
+            platform_user_id=owner_id,
+            canonical_user_id=owner_id,
+            person_name="老板",
+            role="boss",
+            approval_state="approved",
+        )
+        applied_preferences = report.get("applied_workstyle_preferences") or []
+        workstyle_application: dict[str, Any] = {}
+        if applied_preferences:
+            workstyle_application = record_workstyle_application(
+                actual_store,
+                identity=owner_identity,
+                scope="daily_report",
+                source_message_id=notification_id,
+                final_reply=str(report.get("content") or ""),
+                operation_id=f"{notification_id}:workstyle_application",
+                applied_preferences=applied_preferences,
+            )
+        evolution_application = record_self_evolution_application(
+            actual_store,
+            identity=owner_identity,
+            source_message_id=notification_id,
+            final_reply=str(report.get("content") or ""),
+            scope="daily_report",
+            workstyle_adaptation={
+                "application_result": workstyle_application,
+                "unverified_commitment": False,
+            },
+            limit=3,
+        )
         _append_jsonl(
             actual_store,
             DAILY_REPORT_RUNS_FILE,
@@ -146,6 +184,17 @@ def queue_daily_boss_report(
                 "ledger_id": auth.ledger_id,
                 "audit_id": auth.audit_id,
                 "source_counts": deepcopy(report.get("source_counts") or {}),
+                "applied_workstyle_preference_ids": [
+                    str(item.get("preference_id") or "")
+                    for item in applied_preferences
+                    if str(item.get("preference_id") or "")
+                ],
+                "workstyle_application_verified": bool(workstyle_application.get("writeback_verified")) if applied_preferences else True,
+                "self_evolution_application": {
+                    "applied_count": int(evolution_application.get("applied_count") or 0),
+                    "verified_count": int(evolution_application.get("verified_count") or 0),
+                    "failed_count": int(evolution_application.get("failed_count") or 0),
+                },
                 "auto_effects": _safe_auto_effects(),
             },
         )
@@ -296,6 +345,8 @@ def build_daily_boss_report(kind: str, *, store: TuoguanStore | None = None, now
         "content": content,
         "summary": summary,
         "source_counts": source_counts,
+        "applied_workstyle_preferences": deepcopy(workstyle.get("applied_preferences") or []),
+        "applied_workstyle_dimensions": deepcopy(workstyle.get("applied_dimensions") or []),
         "model_led": False,
         "limits_model": False,
         "auto_effects": _safe_auto_effects(),

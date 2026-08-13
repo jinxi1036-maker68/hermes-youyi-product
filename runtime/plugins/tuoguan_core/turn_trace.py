@@ -81,6 +81,16 @@ def record_context_sources(session_id: str, sources: list[str] | tuple[str, ...]
         trace["context_ready_monotonic_ns"] = time.monotonic_ns()
 
 
+def begin_tool_event(session_id: str, *, tool_name: str) -> None:
+    with _LOCK:
+        trace = _ACTIVE.get(str(session_id or ""))
+        if not trace:
+            return
+        inflight = trace.setdefault("tool_inflight", {})
+        starts = inflight.setdefault(str(tool_name or ""), [])
+        starts.append(time.monotonic_ns())
+
+
 def record_tool_event(session_id: str, *, tool_name: str, result: Any) -> None:
     try:
         parsed = json.loads(result) if isinstance(result, str) else result
@@ -94,6 +104,11 @@ def record_tool_event(session_id: str, *, tool_name: str, result: Any) -> None:
         trace = _ACTIVE.get(str(session_id or ""))
         if not trace:
             return
+        started_ns = 0
+        inflight = trace.get("tool_inflight") if isinstance(trace.get("tool_inflight"), dict) else {}
+        starts = inflight.get(str(tool_name or "")) if isinstance(inflight, dict) else None
+        if isinstance(starts, list) and starts:
+            started_ns = int(starts.pop(0) or 0)
         trace.setdefault("tool_events", []).append({
             "tool": str(tool_name or ""),
             "operation": str(
@@ -104,6 +119,7 @@ def record_tool_event(session_id: str, *, tool_name: str, result: Any) -> None:
             "error": error or None,
             "writeback_verified": bool(data.get("writeback_verified") or receipt.get("writeback_verified")),
             "delivery_status": str(data.get("delivery_status") or receipt.get("delivery_status") or "") or None,
+            "duration_ms": round((time.monotonic_ns() - started_ns) / 1_000_000, 3) if started_ns else None,
         })
 
 
@@ -126,6 +142,19 @@ def finalize_turn_trace(
     if not trace:
         return None
     finished_ns = time.monotonic_ns()
+    inflight = trace.pop("tool_inflight", {})
+    if isinstance(inflight, dict):
+        for tool_name, starts in inflight.items():
+            for started_ns in starts if isinstance(starts, list) else []:
+                trace.setdefault("tool_events", []).append({
+                    "tool": str(tool_name or ""),
+                    "operation": None,
+                    "ok": False,
+                    "error": "tool_completion_missing",
+                    "writeback_verified": False,
+                    "delivery_status": None,
+                    "duration_ms": round((finished_ns - int(started_ns or finished_ns)) / 1_000_000, 3),
+                })
     context_ns = int(trace.pop("context_ready_monotonic_ns", 0) or 0)
     started_ns = int(trace.pop("started_monotonic_ns", finished_ns) or finished_ns)
     trace.update({
