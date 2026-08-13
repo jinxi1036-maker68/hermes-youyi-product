@@ -4971,7 +4971,12 @@ def query_xiaoyou_health(
     try:
         from .self_evolution import build_self_evolution_brief
 
-        evolution = build_self_evolution_brief(store, identity=identity, limit=min(max(int(limit or 20), 5), 30))
+        evolution = build_self_evolution_brief(
+            store,
+            identity=identity,
+            limit=min(max(int(limit or 20), 5), 30),
+            now=now,
+        )
     except Exception:
         evolution = {"ok": False, "error": "self_evolution_unavailable"}
     work = query_hermes_work_items(store, identity=identity, include_closed=False, limit=limit)
@@ -5037,6 +5042,7 @@ def query_xiaoyou_health(
         "evolution": {
             "next_day_context_count": len(next_context),
             "next_day_context": deepcopy(next_context[:5]),
+            "stale_application_count": int(evolution.get("stale_application_count") or 0) if isinstance(evolution, dict) else 0,
             "pending_review_count": pending_review,
             "tool_failure_candidate_count": tool_failure_count,
             "tool_failure_status_counts": deepcopy(runtime_learning.get("tool_failure_status_counts") or {}),

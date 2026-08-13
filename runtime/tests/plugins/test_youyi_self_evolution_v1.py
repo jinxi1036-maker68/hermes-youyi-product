@@ -127,6 +127,52 @@ def test_model_only_person_preference_candidate_does_not_enter_next_day_context(
     assert not any("服务偏好" in line for line in brief["next_day_context"])
 
 
+def test_next_day_context_anchors_relative_time_and_expires_old_ready_items(tmp_path):
+    from plugins.tuoguan_core.models import UserIdentity
+    from plugins.tuoguan_core.self_evolution import build_self_evolution_brief
+
+    store = _seed_store(tmp_path)
+    _append_jsonl(
+        tmp_path,
+        "self_evolution_events.jsonl",
+        [
+            {
+                "record_type": "self_evolution_event",
+                "evolution_event_id": "fresh-relative-time",
+                "semantic_fingerprint": "fresh-relative-time",
+                "tenant_id": "youyi_tuoguan",
+                "candidate_type": "self_correction",
+                "summary": "今日21:01老板反问后，应主动追问具体缺口。",
+                "risk_level": "low",
+                "status": "ready_for_application",
+                "created_at": "2026-08-12T23:10:00+08:00",
+            },
+            {
+                "record_type": "self_evolution_event",
+                "evolution_event_id": "old-relative-time",
+                "semantic_fingerprint": "old-relative-time",
+                "tenant_id": "youyi_tuoguan",
+                "candidate_type": "self_correction",
+                "summary": "今天旧问题仍需继续追问。",
+                "risk_level": "low",
+                "status": "ready_for_application",
+                "created_at": "2026-08-06T23:10:00+08:00",
+            },
+        ],
+    )
+    identity = UserIdentity("system", "boss1", "boss1", "金总", "boss", "approved")
+    brief = build_self_evolution_brief(
+        store,
+        identity=identity,
+        now=datetime(2026, 8, 13, 8, 30, tzinfo=timezone(timedelta(hours=8))),
+    )
+
+    assert any("8月12日21:01" in line for line in brief["next_day_context"])
+    assert not any("今日21:01" in line for line in brief["next_day_context"])
+    assert not any("旧问题" in line for line in brief["next_day_context"])
+    assert brief["stale_application_count"] == 1
+
+
 def test_verified_person_preference_candidate_can_enter_next_day_context(tmp_path):
     from plugins.tuoguan_core.self_evolution import SELF_EVOLUTION_EVENTS_FILE, build_self_evolution_brief, submit_self_evolution_event
     from plugins.tuoguan_core.write_guard import authorized_system_write
@@ -255,7 +301,12 @@ def test_night_employee_loop_materializes_evolution_candidate_without_outbox(tmp
     materials = build_employee_loop_materials(store, identity=_boss_identity(), timestamp=datetime(2026, 8, 9, 8, 0, tzinfo=cn_tz))
     context_lines = materials["self_evolution_brief"]["next_day_context"]
     assert any("避免重复错误" in line for line in context_lines)
-    injected = conversation_evolution_context_for_user(store, identity=_boss_identity(), limit=5)
+    injected = conversation_evolution_context_for_user(
+        store,
+        identity=_boss_identity(),
+        limit=5,
+        now=datetime(2026, 8, 9, 8, 0, tzinfo=cn_tz),
+    )
     assert "避免重复错误" in injected
 
 

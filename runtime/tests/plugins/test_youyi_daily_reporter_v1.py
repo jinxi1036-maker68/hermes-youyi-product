@@ -290,9 +290,10 @@ def test_daily_report_applies_next_day_self_evolution_context(tmp_path):
             identity=identity,
             operation_id="daily-report-evolution-1",
             candidate_type="self_correction",
-            summary="昨天老板嫌晚报太长，今天日报只放重点和异常，不展开过程。",
-            evidence=[{"source": "owner_feedback"}],
-        )
+                summary="昨天老板嫌晚报太长，今天日报只放重点和异常，不展开过程。",
+                evidence=[{"source": "owner_feedback"}],
+                occurred_at="2026-08-08T23:00:00+08:00",
+            )
 
     assert saved["ok"] is True
     cn_tz = timezone(timedelta(hours=8))
@@ -303,6 +304,39 @@ def test_daily_report_applies_next_day_self_evolution_context(tmp_path):
     assert "今天带入" in report["content"]
     assert "避免重复错误" in report["content"]
     assert "日报只放重点" in report["content"]
+
+
+def test_morning_report_does_not_relabel_yesterday_relative_time_as_today(tmp_path):
+    from plugins.tuoguan_core.daily_reporter import build_daily_boss_report
+
+    store = _seed_store(tmp_path)
+    _append_jsonl(
+        tmp_path,
+        "self_evolution_events.jsonl",
+        [
+            {
+                "record_type": "self_evolution_event",
+                "evolution_event_id": "relative-time-report",
+                "semantic_fingerprint": "relative-time-report",
+                "tenant_id": "youyi_tuoguan",
+                "candidate_type": "self_correction",
+                "summary": "今日21:01老板反问后，应主动追问具体缺口。",
+                "risk_level": "low",
+                "status": "ready_for_application",
+                "created_at": "2026-08-12T23:10:00+08:00",
+            }
+        ],
+    )
+
+    report = build_daily_boss_report(
+        "morning",
+        store=store,
+        now=datetime(2026, 8, 13, 8, 30, tzinfo=timezone(timedelta(hours=8))),
+    )
+
+    assert report["ok"] is True
+    assert "今日21:01" not in report["content"]
+    assert "8月12日21:01" in report["content"]
 
 
 def test_daily_report_does_not_surface_stale_owner_attention_as_today_focus(tmp_path):

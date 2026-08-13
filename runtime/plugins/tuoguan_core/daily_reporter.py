@@ -251,7 +251,7 @@ def build_daily_boss_report(kind: str, *, store: TuoguanStore | None = None, now
     identity = _system_identity()
     work = query_hermes_work_items(actual_store, identity=identity, include_closed=False, limit=10)
     brief = query_autonomous_work_brief(actual_store, identity=identity, limit=10)
-    self_evolution = build_self_evolution_brief(actual_store, identity=identity, limit=6)
+    self_evolution = build_self_evolution_brief(actual_store, identity=identity, limit=6, now=timestamp)
     staff_voice = query_staff_voice_radar(actual_store, identity=identity, now_at=timestamp.isoformat(timespec="seconds"), since_hours=24, limit=10)
     attention = query_attention_threads(actual_store, identity=identity, include_closed=False, limit=5)
     items = work.get("items") if isinstance(work.get("items"), list) else []

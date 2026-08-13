@@ -199,7 +199,7 @@ def build_employee_loop_materials(store: TuoguanStore, *, identity: UserIdentity
     multi_agent = query_multi_agent_brief(store, identity=identity, limit=10)
     relationship_policy = relationship_touch_policy(store)
     relationship_touches = query_relationship_touch_candidates(store, identity=identity, include_closed=False, limit=10)
-    self_evolution = build_self_evolution_brief(store, identity=identity, limit=12)
+    self_evolution = build_self_evolution_brief(store, identity=identity, limit=12, now=timestamp)
     owner_messages = query_business_events(store, identity=identity, event_type="owner_inbound_message", limit=10)
     if isinstance(owner_messages.get("events"), list):
         owner_messages["events"] = [
@@ -963,6 +963,7 @@ def materialize_employee_decision(
                 source_text=_limit(candidate.get("source_text") or decision.get("employee_summary") or "", 1000),
                 source_message_id=f"autonomous_employee_loop:{timestamp.strftime('%Y%m%d%H%M%S')}",
                 cadence_mode=cadence_mode,
+                occurred_at=timestamp.isoformat(timespec="seconds"),
             )
             writes.append(_write_result("self_evolution_event", res))
         for idx, obs in enumerate(decision.get("observations") or []):

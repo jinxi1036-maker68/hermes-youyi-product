@@ -9,7 +9,7 @@ remain review material.
 from __future__ import annotations
 
 from copy import deepcopy
-from datetime import datetime
+from datetime import datetime, timedelta
 import hashlib
 import json
 import re
@@ -288,6 +288,7 @@ def submit_self_evolution_event(
     source_message_id: str = "",
     cadence_mode: str = "",
     writeback_verified: bool = False,
+    occurred_at: str = "",
 ) -> dict[str, Any]:
     candidate = normalize_evolution_candidate({
         "candidate_type": candidate_type,
@@ -306,6 +307,12 @@ def submit_self_evolution_event(
     })
     if not candidate["summary"]:
         return {"ok": False, "error": "self_evolution_summary_required", "message": "进化候选必须包含摘要。"}
+    event_at = str(occurred_at or now_iso()).strip()
+    try:
+        parsed_event_at = datetime.fromisoformat(event_at.replace("Z", "+00:00"))
+    except (TypeError, ValueError):
+        return {"ok": False, "error": "invalid_self_evolution_occurred_at", "message": "进化候选发生时间不是有效 ISO 时间。"}
+    event_at = parsed_event_at.isoformat(timespec="seconds")
     fingerprint = _semantic_fingerprint(candidate)
     for existing in reversed(_read_jsonl(store, SELF_EVOLUTION_EVENTS_FILE)[-200:]):
         if str(existing.get("tenant_id") or "") not in {"", current_tenant_id()}:
@@ -313,7 +320,7 @@ def submit_self_evolution_event(
         if str(existing.get("semantic_fingerprint") or "") == fingerprint:
             merged = deepcopy(existing)
             merged["occurrence_count"] = int(existing.get("occurrence_count") or 1) + 1
-            merged["updated_at"] = now_iso()
+            merged["updated_at"] = event_at
             merged["evidence"] = _list_any([*(existing.get("evidence") or []), *candidate["evidence"]], 8)
             if str(existing.get("status") or "") not in {"verified", "applied"}:
                 merged["status"] = candidate["status"]
@@ -361,7 +368,7 @@ def submit_self_evolution_event(
         },
         "semantic_fingerprint": fingerprint,
         "occurrence_count": 1,
-        "created_at": now_iso(),
+        "created_at": event_at,
         "auto_effects": _safe_auto_effects(candidate["risk_level"]),
     }
     _append_jsonl(store, SELF_EVOLUTION_EVENTS_FILE, row)
@@ -420,7 +427,9 @@ def build_self_evolution_brief(
     *,
     identity: UserIdentity,
     limit: int = 12,
+    now: datetime | None = None,
 ) -> dict[str, Any]:
+    reference = now or datetime.now().astimezone()
     if identity.role in {"boss", "manager"} or identity.platform == "system":
         ledger = query_self_evolution_ledger(store, identity=identity, limit=max(limit, 20))
         events = ledger.get("events") if ledger.get("ok") else []
@@ -431,10 +440,10 @@ def build_self_evolution_brief(
     recent_workstyles = _recent_workstyle_preferences(store, identity=identity, limit=6)
     applicable_events = [
         item for item in events
-        if _is_next_context_candidate(item) and _applies_to_identity(item, identity)
+        if _is_next_context_candidate(item, now=reference) and _applies_to_identity(item, identity)
     ][-max(1, min(limit, 12)):]
     applicable = [
-        _evolution_context_line(item)
+        _evolution_context_line(item, now=reference)
         for item in applicable_events
     ]
     applicable = [line for line in applicable if line][-max(1, min(limit, 12)):]
@@ -442,6 +451,13 @@ def build_self_evolution_brief(
         item for item in events
         if str(item.get("status") or "") in {"pending_review", "needs_confirmation"}
     ][-8:]
+    stale_application_count = sum(
+        1
+        for item in events
+        if _is_low_risk_application_status(item)
+        and not _is_next_context_candidate(item, now=reference)
+        and _applies_to_identity(item, identity)
+    )
     return {
         "ok": True,
         "tenant_id": current_tenant_id(),
@@ -450,6 +466,7 @@ def build_self_evolution_brief(
         "recent_events": deepcopy(events[-max(1, min(limit, 20)):]),
         "next_day_context": applicable,
         "next_day_application_ids": [str(item.get("evolution_event_id") or "") for item in applicable_events],
+        "stale_application_count": stale_application_count,
         "review_queue": deepcopy(review_queue),
         "review_queue_count": len(review_queue),
         "recent_workstyle_preferences": recent_workstyles,
@@ -466,8 +483,9 @@ def conversation_evolution_context_for_user(
     *,
     identity: UserIdentity,
     limit: int = 5,
+    now: datetime | None = None,
 ) -> str:
-    brief = build_self_evolution_brief(store, identity=identity, limit=limit)
+    brief = build_self_evolution_brief(store, identity=identity, limit=limit, now=now)
     lines = ["【小优自我进化上下文】"]
     lines.append("来源：夜间复盘账本和已验证工作方式偏好；这是经验材料，不是 Router，也不替模型决定动作。")
     next_context = brief.get("next_day_context") or []
@@ -529,10 +547,12 @@ def record_self_evolution_application(
 ) -> dict[str, Any]:
     """Record that ready experience was actually carried into a real reply."""
 
+    reference = datetime.now().astimezone()
     candidates = [
         item for item in _filtered_events(store)
         if str(item.get("risk_level") or "") == "low"
         and str(item.get("status") or "") == "ready_for_application"
+        and _is_next_context_candidate(item, now=reference)
         and _applies_to_identity(item, identity)
     ][-max(1, min(int(limit or 3), 3)):]
     applied: list[dict[str, Any]] = []
@@ -679,21 +699,68 @@ def _recent_workstyle_preferences(store: TuoguanStore, *, identity: UserIdentity
     return compact
 
 
-def _is_next_context_candidate(item: dict[str, Any]) -> bool:
+def _is_low_risk_application_status(item: dict[str, Any]) -> bool:
+    return (
+        str(item.get("risk_level") or "") == "low"
+        and str(item.get("status") or "") in {"ready_for_application", "applied"}
+    )
+
+
+def _is_next_context_candidate(item: dict[str, Any], *, now: datetime | None = None) -> bool:
     if str(item.get("risk_level") or "") != "low":
         return False
     ctype = str(item.get("candidate_type") or "")
     status = str(item.get("status") or "")
     if ctype == "person_preference_candidate":
         return status == "applied" and bool(item.get("writeback_verified"))
-    return status in {"ready_for_application", "applied"}
+    if status not in {"ready_for_application", "applied"}:
+        return False
+    reference = now or datetime.now().astimezone()
+    event_time = _evolution_event_time(item, reference)
+    if event_time is None:
+        return False
+    max_age = timedelta(hours=36 if ctype == "tomorrow_focus" else 72)
+    return reference - max_age <= event_time <= reference + timedelta(minutes=5)
 
 
-def _evolution_context_line(item: dict[str, Any]) -> str:
+def _evolution_event_time(item: dict[str, Any], reference: datetime) -> datetime | None:
+    for key in ("updated_at", "created_at"):
+        text = str(item.get(key) or "").strip()
+        if not text:
+            continue
+        try:
+            parsed = datetime.fromisoformat(text.replace("Z", "+00:00"))
+        except (TypeError, ValueError):
+            continue
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=reference.tzinfo)
+        return parsed.astimezone(reference.tzinfo) if reference.tzinfo else parsed
+    return None
+
+
+def _anchor_relative_time_text(text: str, *, item: dict[str, Any], now: datetime) -> str:
+    event_time = _evolution_event_time(item, now)
+    if event_time is None or event_time.date() == now.date():
+        return text
+    event_label = f"{event_time.month}月{event_time.day}日"
+    previous = event_time - timedelta(days=1)
+    following = event_time + timedelta(days=1)
+    anchored = str(text or "")
+    anchored = re.sub(r"今日|今天", event_label, anchored)
+    anchored = anchored.replace("今晚", f"{event_label}晚")
+    anchored = anchored.replace("昨晚", f"{previous.month}月{previous.day}日晚")
+    anchored = anchored.replace("明天", f"{following.month}月{following.day}日")
+    anchored = anchored.replace("明日", f"{following.month}月{following.day}日")
+    return anchored
+
+
+def _evolution_context_line(item: dict[str, Any], *, now: datetime | None = None) -> str:
     ctype = str(item.get("candidate_type") or "")
     summary = _limit_text(item.get("summary"), 100)
     if not summary:
         return ""
+    reference = now or datetime.now().astimezone()
+    summary = _limit_text(_anchor_relative_time_text(summary, item=item, now=reference), 120)
     if ctype == "self_correction":
         return f"避免重复错误：{summary}"
     if ctype == "tomorrow_focus":
