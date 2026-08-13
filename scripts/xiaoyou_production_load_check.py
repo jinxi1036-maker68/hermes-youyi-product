@@ -23,8 +23,12 @@ KEY_FILES = [
     "tools.py",
     "runtime_foundation.py",
     "active_work_context.py",
+    "autonomous_employee_loop.py",
     "digital_employee_state.py",
+    "goal_operator.py",
+    "proactive_work.py",
     "daily_reporter.py",
+    "workstyle_profiles.py",
 ]
 WECOM_KEY_FILES = [
     "callback_adapter.py",

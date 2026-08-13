@@ -907,6 +907,35 @@ def _claim_next_notification_outbox_item(store: TuoguanStore, *, excluded_task_i
                 return outbox[-2000:]
             if item.get("delivery_mode") != "direct_wecom":
                 continue
+            notification_type = str(item.get("notification_type") or "")
+            goal_action_id = str(item.get("goal_action_id") or "")
+            if notification_type == "relationship_touch" or (notification_type == "task_created" and goal_action_id):
+                from .proactive_work import effective_proactive_permission
+
+                target_role = str(item.get("role") or "teacher")
+                action_type = (
+                    "assign_low_risk_goal_task"
+                    if notification_type == "task_created"
+                    else str(item.get("proactive_action_type") or "ask_work_fact")
+                )
+                permission = effective_proactive_permission(
+                    store,
+                    target_role=target_role,
+                    target_user_id=str(item.get("touser") or item.get("target_user_id") or ""),
+                    action_type=action_type,
+                    goal_id=str(item.get("goal_id") or ""),
+                    now=now,
+                )
+                if not permission.get("allowed"):
+                    item.update({
+                        "status": "suppressed",
+                        "suppressed_reason": f"delivery_permission_recheck:{permission.get('reason_code') or 'permission_denied'}",
+                        "suppressed_at": now_iso,
+                    })
+                    claim.update({"item": deepcopy(item), "event": "notification_suppressed", "result": str(item["suppressed_reason"])})
+                    return outbox[-2000:]
+                item["delivery_permission_rechecked_at"] = now_iso
+                item["delivery_permission"] = permission
             stale_failure = _stale_outbox_failure_reason(item, now=now)
             if stale_failure:
                 item.update({
@@ -1073,7 +1102,7 @@ def _sync_notification_outbox_receipts(store: TuoguanStore, item: dict[str, Any]
                 failure_reason=str(item.get("last_error") or ""),
                 source_text="企业微信主动提醒发送回执",
             )
-        if str(item.get("relationship_touch_candidate_id") or "") and status in {"sent", "failed", "result_unknown"}:
+        if str(item.get("relationship_touch_candidate_id") or "") and status in {"sent", "failed", "retry_pending", "result_unknown", "suppressed"}:
             identity = _router().identities.resolve(
                 "wecom_callback",
                 str(item.get("touser") or item.get("target_user_id") or ""),
@@ -1084,7 +1113,7 @@ def _sync_notification_outbox_receipts(store: TuoguanStore, item: dict[str, Any]
                 store,
                 identity=identity,
                 candidate_id=str(item.get("relationship_touch_candidate_id") or ""),
-                status=status,
+                status="superseded" if status == "suppressed" else status,
                 operation_id=write_auth["operation_id"],
                 delivery_receipt=_delivery_receipt(item) if status == "sent" else None,
                 failure_reason=str(item.get("last_error") or ""),

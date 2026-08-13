@@ -238,6 +238,12 @@ def _dimension_for_row(row: dict[str, Any]) -> str:
 
 def _active_preferences(events: list[dict[str, Any]], *, target_user_id: str, scope: str = "") -> list[dict[str, Any]]:
     active_by_key: dict[tuple[str, str, str], dict[str, Any]] = {}
+    semantic_mismatches = {
+        str(item.get("preference_id") or "")
+        for item in events
+        if str(item.get("record_type") or "") == "person_workstyle_semantic_mismatch"
+        and str(item.get("status") or "superseded") == "superseded"
+    }
     for item in events:
         if str(item.get("record_type") or "") != "person_workstyle_preference":
             continue
@@ -246,6 +252,8 @@ def _active_preferences(events: list[dict[str, Any]], *, target_user_id: str, sc
         if str(item.get("target_user_id") or "") != str(target_user_id or ""):
             continue
         if str(item.get("status") or "active") != "active":
+            continue
+        if str(item.get("preference_id") or "") in semantic_mismatches:
             continue
         item_scope = str(item.get("scope") or "all_communication")
         if scope and item_scope not in {scope, "all_communication"}:

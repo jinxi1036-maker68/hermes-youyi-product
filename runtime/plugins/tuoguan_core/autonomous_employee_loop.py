@@ -2,8 +2,8 @@
 
 This module lets the timer wakeup hand real operating material to the model and
 persist low-risk autonomous work state. It may queue bounded boss/manager/teacher
-messages through the audited outbox, but it does not contact parents, create
-teacher tasks, change salary, delete data, or store a fixed route/tool step.
+messages and goal-scoped low-risk teacher tasks through audited boundaries, but
+it does not contact parents, change salary, delete data, or store a fixed route.
 """
 
 from __future__ import annotations
@@ -70,6 +70,14 @@ from .self_evolution import (
 )
 from .staff_directory import query_staff_directory
 from .social_market_research import query_social_market_research
+from .proactive_work import (
+    GOAL_ACTIONS_FILE,
+    PROACTIVE_AUTHORIZATIONS_FILE,
+    execute_goal_action_decision,
+    execute_relationship_touch,
+    query_goal_actions,
+    query_proactive_authorizations,
+)
 from .store import JSON_NO_CHANGE, TuoguanStore
 from .tool_service import TuoguanToolService
 from .write_guard import authorized_system_write
@@ -111,8 +119,14 @@ _ALLOWED_FILES = {
     INSTITUTION_FACT_GAP_EVENTS_FILE,
     VALUE_PROGRESS_LEDGER_FILE,
     _NOTIFICATION_OUTBOX_FILE,
+    "tasks.json",
+    "active_task_context.json",
+    "pending_next_task_context.json",
+    "model_focus.json",
     ATTENTION_THREADS_FILE,
     RELATIONSHIP_TOUCH_CANDIDATES_FILE,
+    PROACTIVE_AUTHORIZATIONS_FILE,
+    GOAL_ACTIONS_FILE,
     SELF_EVOLUTION_EVENTS_FILE,
     AGENT_DELEGATIONS_FILE,
     AGENT_DELEGATION_RESULTS_FILE,
@@ -200,6 +214,8 @@ def build_employee_loop_materials(store: TuoguanStore, *, identity: UserIdentity
     multi_agent = query_multi_agent_brief(store, identity=identity, limit=10)
     relationship_policy = relationship_touch_policy(store)
     relationship_touches = query_relationship_touch_candidates(store, identity=identity, include_closed=False, limit=10)
+    proactive_authorizations = query_proactive_authorizations(store, identity=identity, include_inactive=False, now_at=timestamp.isoformat(timespec="seconds"))
+    goal_actions = query_goal_actions(store, identity=identity, due_only=False, include_closed=False, now_at=timestamp.isoformat(timespec="seconds"), limit=20)
     self_evolution = build_self_evolution_brief(store, identity=identity, limit=12, now=timestamp)
     owner_messages = query_business_events(store, identity=identity, event_type="owner_inbound_message", limit=10)
     if isinstance(owner_messages.get("events"), list):
@@ -280,6 +296,8 @@ def build_employee_loop_materials(store: TuoguanStore, *, identity: UserIdentity
         "multi_agent_brief": _compact_for_model(multi_agent),
         "relationship_touch_policy": _compact_for_model(relationship_policy),
         "relationship_touch_candidates": _compact_for_model(relationship_touches),
+        "proactive_authorizations": _compact_for_model(proactive_authorizations, max_chars=4000),
+        "goal_actions": _compact_for_model(goal_actions, max_chars=7000),
         "self_evolution_brief": _compact_for_model(self_evolution, max_chars=5000),
         "recent_owner_messages": _compact_for_model(owner_messages),
         "operating_evidence": _compact_for_model(operating_evidence, max_chars=8000),
@@ -287,7 +305,7 @@ def build_employee_loop_materials(store: TuoguanStore, *, identity: UserIdentity
         "deferred_items": _compact_for_model(deferred_items),
         "new_term_readiness": _compact_for_model(new_term_readiness),
         "patrol_counts": _compact_for_model(patrol_counts),
-        "allowed_internal_outputs": ["observations", "work_item_updates", "questions_to_humans", "boss_attention_candidates", "relationship_touch_candidates", "institution_fact_gaps", "value_progress_entries", "agent_delegation_decisions", "evolution_candidates", "self_review", "stop_or_wait_reason"],
+        "allowed_internal_outputs": ["observations", "work_item_updates", "questions_to_humans", "boss_attention_candidates", "relationship_touch_candidates", "relationship_touch_executions", "goal_action_decisions", "institution_fact_gaps", "value_progress_entries", "agent_delegation_decisions", "evolution_candidates", "self_review", "stop_or_wait_reason"],
         "forbidden_external_outputs": sorted(_FORBIDDEN_EFFECT_KEYS),
     }
     base_onboarding = onboarding.get("data") or onboarding if isinstance(onboarding, dict) else {}
@@ -314,6 +332,9 @@ def build_employee_loop_materials(store: TuoguanStore, *, identity: UserIdentity
         "open_attention_count": int(attention_threads.get("attention_count") or 0),
         "pending_agent_decision_count": int(multi_agent.get("pending_decision_count") or 0) if isinstance(multi_agent, dict) else 0,
         "relationship_touch_candidate_count": int(relationship_touches.get("candidate_count") or 0) if isinstance(relationship_touches, dict) else 0,
+        "effective_proactive_authorization_count": int(proactive_authorizations.get("authorization_count") or 0) if isinstance(proactive_authorizations, dict) else 0,
+        "open_goal_action_count": int(goal_actions.get("goal_action_count") or 0) if isinstance(goal_actions, dict) else 0,
+        "due_goal_action_count": int(goal_actions.get("due_count") or 0) if isinstance(goal_actions, dict) else 0,
         "self_evolution_event_count": int(self_evolution.get("event_count") or 0) if isinstance(self_evolution, dict) else 0,
         "self_evolution_review_queue_count": int(self_evolution.get("review_queue_count") or 0) if isinstance(self_evolution, dict) else 0,
         "recent_owner_message_count": int(owner_messages.get("event_count") or 0),
@@ -544,6 +565,8 @@ def validate_employee_decision(raw: dict[str, Any]) -> dict[str, Any]:
         "questions_to_humans": _list_of_dicts(cleaned.get("questions_to_humans"), 8),
         "boss_attention_candidates": _list_of_dicts(cleaned.get("boss_attention_candidates"), 4),
         "relationship_touch_candidates": _list_of_dicts(cleaned.get("relationship_touch_candidates"), 6),
+        "relationship_touch_executions": _list_of_dicts(cleaned.get("relationship_touch_executions"), 3),
+        "goal_action_decisions": _list_of_dicts(cleaned.get("goal_action_decisions"), 3),
         "institution_fact_gaps": _list_of_dicts(cleaned.get("institution_fact_gaps"), 8),
         "value_progress_entries": _list_of_dicts(cleaned.get("value_progress_entries"), 6),
         "agent_delegation_decisions": _list_of_dicts(cleaned.get("agent_delegation_decisions"), 2),
@@ -601,6 +624,26 @@ def validate_employee_decision(raw: dict[str, Any]) -> dict[str, Any]:
             cleaned_candidates.append(candidate)
     decision["boss_attention_candidates"] = cleaned_candidates
     decision["relationship_touch_candidates"] = _normalize_relationship_touch_candidates(decision.get("relationship_touch_candidates") or [])
+    decision["relationship_touch_executions"] = [
+        {
+            "candidate_id": _limit(item.get("candidate_id"), 120),
+            "decision_reason": _truthful_internal_text(item.get("decision_reason"), 500),
+        }
+        for item in decision.get("relationship_touch_executions") or []
+        if _limit(item.get("candidate_id"), 120)
+    ][:3]
+    decision["goal_action_decisions"] = [
+        {
+            "goal_action_id": _limit(item.get("goal_action_id"), 120),
+            "decision": _limit(item.get("decision"), 40),
+            "message": _limit(item.get("message"), 700),
+            "decision_reason": _truthful_internal_text(item.get("decision_reason"), 700),
+            "next_attention_at": _limit(item.get("next_attention_at"), 80),
+        }
+        for item in decision.get("goal_action_decisions") or []
+        if _limit(item.get("goal_action_id"), 120)
+        and _limit(item.get("decision"), 40) in {"execute", "wait", "adjust", "stop", "escalate"}
+    ][:3]
     decision["evolution_candidates"] = _normalize_evolution_candidates(decision.get("evolution_candidates") or [])
     forbidden_text = json.dumps(cleaned, ensure_ascii=False).lower()
     if any(key.lower() in forbidden_text for key in _FORBIDDEN_EFFECT_KEYS):
@@ -1172,6 +1215,29 @@ def materialize_employee_decision(
                 source_message_id=f"autonomous_employee_loop:{timestamp.strftime('%Y%m%d%H%M%S')}",
             )
             writes.append(_write_result("agent_delegation_decision", res))
+        if cadence_mode == "daytime_goal_progress":
+            for idx, item in enumerate(decision.get("goal_action_decisions") or []):
+                res = execute_goal_action_decision(
+                    store,
+                    identity=identity,
+                    goal_action_id=_limit(item.get("goal_action_id"), 120),
+                    decision=_limit(item.get("decision"), 40),
+                    operation_id=f"{op_prefix}:goal_action:{idx}",
+                    message=_limit(item.get("message"), 700),
+                    decision_reason=_limit(item.get("decision_reason"), 700),
+                    next_attention_at=_limit(item.get("next_attention_at"), 80),
+                    now=timestamp,
+                )
+                writes.append(_write_result("goal_action_decision", res))
+            for idx, item in enumerate(decision.get("relationship_touch_executions") or []):
+                res = execute_relationship_touch(
+                    store,
+                    identity=identity,
+                    candidate_id=_limit(item.get("candidate_id"), 120),
+                    operation_id=f"{op_prefix}:relationship_touch_execute:{idx}",
+                    now=timestamp,
+                )
+                writes.append(_write_result("relationship_touch_execution", res))
         relationship_writes = _materialize_relationship_touch_candidates(
             store,
             identity=identity,
@@ -1260,6 +1326,8 @@ def _call_model_for_decision(materials: dict[str, Any]) -> dict[str, Any]:
         "attention_threads": payload.get("attention_threads"),
         "relationship_touch_policy": payload.get("relationship_touch_policy"),
         "relationship_touch_candidates": payload.get("relationship_touch_candidates"),
+        "proactive_authorizations": payload.get("proactive_authorizations"),
+        "goal_actions": payload.get("goal_actions"),
         "multi_agent_brief": payload.get("multi_agent_brief"),
         "operating_evidence": payload.get("operating_evidence"),
         "term_state": payload.get("term_state"),
@@ -1300,6 +1368,8 @@ def _call_model_for_decision(materials: dict[str, Any]) -> dict[str, Any]:
         "work_item_updates": actions.get("work_item_updates") or [],
         "boss_attention_candidates": actions.get("boss_attention_candidates") or [],
         "relationship_touch_candidates": actions.get("relationship_touch_candidates") or [],
+        "relationship_touch_executions": actions.get("relationship_touch_executions") or [],
+        "goal_action_decisions": actions.get("goal_action_decisions") or [],
         "value_progress_entries": actions.get("value_progress_entries") or [],
         "agent_delegation_decisions": actions.get("agent_delegation_decisions") or [],
         "evolution_candidates": review.get("evolution_candidates") or [],
@@ -1379,10 +1449,11 @@ employee_summary 必须保持身份为“小优，优益托管机构数字员工
 只返回一个精简 JSON 对象，字段固定为 employee_summary、institution_understanding、goal_progress_view、observations、institution_fact_gaps、questions_to_humans。
 observations 最多2条，institution_fact_gaps 最多2条，questions_to_humans 最多2条。不要复制学生名单或长段历史。"""
 
-_ACTIONS_PROMPT = """你是托管机构数字员工小优，本轮只根据已给诊断选择内部行动候选。
-你可以选择继续、等待、更新一个工作事项、提出一个老板关注问题、提出一个白名单老师/店长事实问题、记录一条价值进展或决定一条顾问建议。
-系统只守权限、频率、幂等、审计和外发边界；不要把候选写成已经发送或已经完成。家长永远不在本轮触达范围。
-只返回一个精简 JSON 对象，字段固定为 work_item_updates、boss_attention_candidates、relationship_touch_candidates、value_progress_entries、agent_delegation_decisions。
+_ACTIONS_PROMPT = """你是托管机构数字员工小优，本轮只根据已给诊断选择行动。
+你可以继续、等待、更新一个工作事项、提出一个老板关注问题、创建一个新主动候选、执行一个已有候选，或对一个到期目标行动选择 execute/wait/adjust/stop/escalate。
+goal_action_decisions 必须引用材料里的真实 goal_action_id；relationship_touch_executions 必须引用真实 candidate_id。系统会重新校验权限、频率、幂等、在职状态和发送边界。
+不要把候选写成已经发送，不要把入队写成已经送达，不要把计划写成已经完成。家长永远不在本轮触达范围。
+只返回一个精简 JSON 对象，字段固定为 work_item_updates、boss_attention_candidates、relationship_touch_candidates、relationship_touch_executions、goal_action_decisions、value_progress_entries、agent_delegation_decisions。
 每个数组最多1条；没有必要行动时使用空数组。"""
 
 _REVIEW_PROMPT = """你是托管机构数字员工小优，本轮只做晚间经验复盘。
@@ -1557,6 +1628,8 @@ def _model_payload(materials: dict[str, Any]) -> dict[str, Any]:
         "multi_agent_brief": _compact_for_model(materials.get("multi_agent_brief"), max_chars=3500),
         "relationship_touch_policy": _compact_for_model(materials.get("relationship_touch_policy"), max_chars=2500),
         "relationship_touch_candidates": _compact_for_model(materials.get("relationship_touch_candidates"), max_chars=3500),
+        "proactive_authorizations": _compact_for_model(materials.get("proactive_authorizations"), max_chars=4000),
+        "goal_actions": _compact_for_model(materials.get("goal_actions"), max_chars=7000),
         "self_evolution_brief": _compact_for_model(materials.get("self_evolution_brief"), max_chars=5000),
         "recent_owner_messages": _compact_for_model(materials.get("recent_owner_messages"), max_chars=3500),
         "operating_evidence": _compact_for_model(materials.get("operating_evidence"), max_chars=8000),

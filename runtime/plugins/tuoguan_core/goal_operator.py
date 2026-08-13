@@ -415,7 +415,7 @@ def _goal_execution_plan(review: dict[str, Any], *, goal_id: str, goal_text: str
         ],
         "cadence": {
             "default_attention": "每次醒来先看当前阶段、等待事项和最新事实，不只做周期汇总。",
-            "owner_summary": "老板本人白天低频提醒策略已开放；缺老板事实时可提醒老板确认。老师、店长、家长外发仍只做候选，除非另有渠道授权。",
+            "owner_summary": "白天可在正式授权、灰度、频率和责任证据边界内主动找老板、店长或老师推进；家长外发始终关闭。",
         },
         "boundaries": {
             "auto_parent_message": False,
@@ -539,10 +539,11 @@ def confirm_goal(store: TuoguanStore, *, identity: UserIdentity, goal_text: str,
         "decision_support": deepcopy(review.get("decision_support") or {}),
         "next_step_policy": {
             "auto_parent_message": False,
-            "auto_teacher_message": False,
+            "auto_teacher_message": "only_after_model_selection_and_proactive_authorization",
+            "autonomous_low_risk_goal_subtasks": True,
             "requires_model_decision_for_each_outreach": True,
             "requires_human_confirmation_for_high_risk": True,
-            "note": "确认目标只保存目标和计划快照，不自动向家长或老师发送消息。",
+            "note": "确认目标会建立持久行动账本；每次真实触达仍需模型选择并重新通过权限、频率、幂等和写后反查。",
         },
         "boss_final_approval_required_for_high_risk": True,
     }
@@ -553,6 +554,18 @@ def confirm_goal(store: TuoguanStore, *, identity: UserIdentity, goal_text: str,
     save_goals(store, data)
     append_jsonl(store, EVENT_FILE, {"event": "goal_confirmed", "goal_id": goal_id, "operation_id": operation_id, "actor_user_id": identity.canonical_user_id, "created_at": stamp})
     autonomous_work_item = _sync_goal_autonomous_work_item(store, identity=identity, goal=goal, review=review, operation_id=operation_id)
+    try:
+        from .proactive_work import seed_goal_actions_for_confirmed_goal
+
+        goal_actions = seed_goal_actions_for_confirmed_goal(
+            store,
+            identity=identity,
+            goal=goal,
+            review=review,
+            operation_id=operation_id,
+        )
+    except Exception as exc:
+        goal_actions = [{"ok": False, "error": "goal_action_seed_failed", "message": str(exc)[:300]}]
     verified = any(isinstance(item, dict) and str(item.get("goal_id") or "") == goal_id and str(item.get("status") or "") == "confirmed" for item in load_goals(store).get("goals", []))
     unresolved_count = int((review.get('responsibility_coverage') or {}).get('unresolved_count') or 0)
     next_packet = _manager_question_packet(store, unresolved_count)
@@ -572,7 +585,7 @@ def confirm_goal(store: TuoguanStore, *, identity: UserIdentity, goal_text: str,
         rendered_lines.append(f"先向{'、'.join(next_packet['ask_names'])}确认午托/晚托/全托和主责老师关系。")
     else:
         rendered_lines.append("从第一批责任明确、近期记录不足或风险更高的学生开始推进老师反馈。")
-    rendered_lines.extend(["", "【边界】", "我不会自动给家长发消息；只记录老师明确反馈并汇总进度。"] )
+    rendered_lines.extend(["", "【边界】", "我不会直接联系家长；授权内可主动找责任明确的老师推进并以真实回复更新目标。"] )
     rendered = "\n".join(rendered_lines)
     return {
         "ok": True,
@@ -580,6 +593,7 @@ def confirm_goal(store: TuoguanStore, *, identity: UserIdentity, goal_text: str,
         "goal_id": goal_id,
         "writeback_verified": verified,
         "autonomous_work_item": autonomous_work_item,
+        "goal_actions": goal_actions,
         "rendered_text": rendered,
         "render_verified": True,
         "next_best_action": next_packet,
@@ -645,6 +659,18 @@ def withdraw_goal(
 
     stamp = now_iso()
     reason = str(withdraw_reason or "").strip() or "老板明确要求撤出当前目标。"
+    try:
+        from .proactive_work import stop_goal_execution
+
+        execution_stop = stop_goal_execution(
+            store,
+            identity=identity,
+            goal_id=str(goal.get("goal_id") or ""),
+            operation_id=f"{operation_id}:stop_execution",
+            reason=reason,
+        )
+    except Exception as exc:
+        execution_stop = {"ok": False, "error": "goal_execution_stop_failed", "message": str(exc)[:300]}
     goal["status"] = "withdrawn"
     goal["previous_status"] = previous_status
     goal["withdrawn_at"] = stamp
@@ -713,6 +739,7 @@ def withdraw_goal(
         "previous_status": previous_status,
         "writeback_verified": verified,
         "autonomous_work_item": work_item_update,
+        "goal_execution_stop": execution_stop,
         "rendered_text": rendered,
         "render_verified": True,
         "auto_parent_message": False,

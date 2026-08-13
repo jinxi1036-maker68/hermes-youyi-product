@@ -248,7 +248,11 @@ TUOGUAN_CREATE_TASK_SCHEMA = _schema(
     _identity_props({
         "title": {"type": "string"}, "assignee_user_id": {"type": "string"},
         "due_at": {"type": "string"}, "level": {"type": "string", "enum": ["S", "A", "B", "C"]},
-        "student_name": {"type": "string"}, "operation_id": {"type": "string"},
+        "student_name": {"type": "string"},
+        "goal_id": {"type": "string", "description": "可选；小优自主创建目标内低风险子任务时必须填写已确认目标 id。"},
+        "goal_action_id": {"type": "string", "description": "可选；关联持久目标行动。"},
+        "evidence_requirement": {"type": "string", "description": "可选；任务闭环必须拿到的真实证据。"},
+        "operation_id": {"type": "string"},
     }),
     ["user_id", "title", "assignee_user_id", "operation_id"],
 )
@@ -1096,6 +1100,90 @@ TUOGUAN_UPDATE_ATTENTION_THREAD_SCHEMA = _schema(
     ["user_id", "attention_id", "status", "operation_id"],
 )
 
+TUOGUAN_QUERY_PROACTIVE_AUTHORIZATIONS_SCHEMA = _schema(
+    "只读查询小优当前主动工作授权、灰度对象、行动类型、频率和有效期。它返回真实权限证据，不代表消息已经发送。",
+    _identity_props({
+        "include_inactive": {"type": "boolean", "default": False},
+        "now_at": {"type": "string", "description": "可选当前时间 ISO。"},
+    }),
+    ["user_id"],
+)
+
+TUOGUAN_SUBMIT_PROACTIVE_AUTHORIZATION_SCHEMA = _schema(
+    "老板创建、调整或撤销小优主动工作授权。低风险主动找人和目标子任务必须保存为结构化授权并写后反查；本工具不能授权联系家长、改工资、改权限或删除数据。",
+    _identity_props({
+        "subject_role": {"type": "string", "enum": ["boss", "manager", "teacher"]},
+        "subject_user_ids": {"type": "array", "items": {"type": "string"}},
+        "action_types": {"type": "array", "items": {"type": "string"}},
+        "status": {"type": "string", "enum": ["active", "revoked", "superseded"], "default": "active"},
+        "authorization_id": {"type": "string", "description": "撤销或调整已有授权时填写。"},
+        "goal_ids": {"type": "array", "items": {"type": "string"}},
+        "daily_limit": {"type": "integer", "minimum": 1, "maximum": 3, "default": 1},
+        "effective_at": {"type": "string"},
+        "expires_at": {"type": "string"},
+        "rollout_stage": {"type": "string", "description": "如 pilot、manager、all_active_staff。"},
+        "source_text": {"type": "string", "description": "老板授权原话。"},
+        "operation_id": {"type": "string"},
+    }),
+    ["user_id", "subject_role", "action_types", "operation_id"],
+)
+
+TUOGUAN_EXECUTE_RELATIONSHIP_TOUCH_SCHEMA = _schema(
+    "执行一个已经形成的主动联系候选。工具会重新核验授权、在职状态、灰度、时间窗、频率、幂等和家长边界；只有返回 queued 才能说已安排发送，只有后续 sent 回执才能说已发送。",
+    _identity_props({
+        "candidate_id": {"type": "string"},
+        "operation_id": {"type": "string"},
+    }),
+    ["user_id", "candidate_id", "operation_id"],
+)
+
+TUOGUAN_UPDATE_RELATIONSHIP_TOUCH_SCHEMA = _schema(
+    "把老师/店长/老板的真实回复或发送异常写回主动联系线程。部分事实用 replied_partial，事实完整用 replied_sufficient，核验完成后才 resolved。",
+    _identity_props({
+        "candidate_id": {"type": "string"},
+        "status": {"type": "string", "enum": ["replied_partial", "replied_sufficient", "resolved", "retry_pending", "failed", "result_unknown", "expired", "superseded", "escalated"]},
+        "reply_text": {"type": "string", "description": "对方真实回复。"},
+        "evidence_complete": {"type": "boolean"},
+        "failure_reason": {"type": "string"},
+        "operation_id": {"type": "string"},
+    }),
+    ["user_id", "candidate_id", "status", "operation_id"],
+)
+
+TUOGUAN_QUERY_GOAL_ACTIONS_SCHEMA = _schema(
+    "只读查询已确认目标的持久行动、到期时间、事实归属人、等待回复和证据缺口。行动是模型恢复工作的材料，不是固定 Router。",
+    _identity_props({
+        "goal_id": {"type": "string"},
+        "include_closed": {"type": "boolean", "default": False},
+        "due_only": {"type": "boolean", "default": False},
+        "now_at": {"type": "string"},
+        "limit": {"type": "integer", "default": 30},
+    }),
+    ["user_id"],
+)
+
+TUOGUAN_SUBMIT_GOAL_ACTION_SCHEMA = _schema(
+    "模型为已确认目标保存下一项低风险行动或更新其状态。只保存计划和证据要求；真实外发、派任务仍分别经过主动执行和任务边界。",
+    _identity_props({
+        "goal_id": {"type": "string"},
+        "action_type": {"type": "string", "enum": ["query_internal_data", "fill_institution_fact", "ask_staff_fact", "prepare_material", "create_low_risk_task", "follow_up", "verify_evidence", "review_and_report"]},
+        "summary": {"type": "string"},
+        "target_role": {"type": "string", "enum": ["", "boss", "manager", "teacher"]},
+        "target_user_id": {"type": "string"},
+        "target_name": {"type": "string"},
+        "student_names": {"type": "array", "items": {"type": "string"}},
+        "planned_at": {"type": "string"},
+        "due_at": {"type": "string"},
+        "evidence_requirement": {"type": "string"},
+        "escalation_path": {"type": "array", "items": {"type": "string"}},
+        "status": {"type": "string", "enum": ["planned", "due", "executing", "waiting_reply", "replied_partial", "replied_sufficient", "verified", "resolved", "blocked", "failed", "cancelled", "superseded", "escalated"], "default": "planned"},
+        "goal_action_id": {"type": "string"},
+        "source_text": {"type": "string"},
+        "operation_id": {"type": "string"},
+    }),
+    ["user_id", "goal_id", "action_type", "summary", "operation_id"],
+)
+
 TUOGUAN_QUERY_RELATIONSHIP_TOUCH_CANDIDATES_SCHEMA = _schema(
     "只读查询小优主动找老板/店长/老师的关系触达候选和当前策略。老板问“现在能不能主动找李老师/准备问谁/为什么没问”时应先用本工具核对候选、白名单和策略状态，不能凭旧认知回答。",
     _identity_props({
@@ -1122,6 +1210,11 @@ TUOGUAN_SUBMIT_RELATIONSHIP_TOUCH_CANDIDATE_SCHEMA = _schema(
         "suggested_send_at": {"type": "string", "description": "建议发送时间，可空；最终仍受频率和时间窗限制。"},
         "source_text": {"type": "string", "description": "来源原文或简述。"},
         "source_message_id": {"type": "string", "description": "来源消息 id。"},
+        "action_type": {"type": "string", "description": "本次主动工作的类型，如 ask_work_fact、ask_task_result、ask_student_service_fact。"},
+        "goal_id": {"type": "string", "description": "可选，关联已确认经营目标。"},
+        "goal_action_id": {"type": "string", "description": "可选，关联持久目标行动。"},
+        "evidence_requirement": {"type": "string", "description": "对方回复需要补齐的证据。"},
+        "execute_if_authorized": {"type": "boolean", "default": False, "description": "如果模型本轮已经判断要现在问对方，必须显式传 true，工具会在同一受控操作中进入 outbox；只想保留候选时为 false。"},
         "operation_id": {"type": "string"},
     }),
     ["user_id", "target_role", "touch_type", "message", "reason", "operation_id"],
@@ -1380,6 +1473,12 @@ TOOLS = (
     ("tuoguan_update_attention_thread", TUOGUAN_UPDATE_ATTENTION_THREAD_SCHEMA, _handler("update_attention_thread")),
     ("tuoguan_query_relationship_touch_candidates", TUOGUAN_QUERY_RELATIONSHIP_TOUCH_CANDIDATES_SCHEMA, _handler("query_relationship_touch_candidates")),
     ("tuoguan_submit_relationship_touch_candidate", TUOGUAN_SUBMIT_RELATIONSHIP_TOUCH_CANDIDATE_SCHEMA, _handler("submit_relationship_touch_candidate")),
+    ("tuoguan_query_proactive_authorizations", TUOGUAN_QUERY_PROACTIVE_AUTHORIZATIONS_SCHEMA, _handler("query_proactive_authorizations")),
+    ("tuoguan_submit_proactive_authorization", TUOGUAN_SUBMIT_PROACTIVE_AUTHORIZATION_SCHEMA, _handler("submit_proactive_authorization")),
+    ("tuoguan_execute_relationship_touch", TUOGUAN_EXECUTE_RELATIONSHIP_TOUCH_SCHEMA, _handler("execute_relationship_touch")),
+    ("tuoguan_update_relationship_touch", TUOGUAN_UPDATE_RELATIONSHIP_TOUCH_SCHEMA, _handler("update_relationship_touch")),
+    ("tuoguan_query_goal_actions", TUOGUAN_QUERY_GOAL_ACTIONS_SCHEMA, _handler("query_goal_actions")),
+    ("tuoguan_submit_goal_action", TUOGUAN_SUBMIT_GOAL_ACTION_SCHEMA, _handler("submit_goal_action")),
     ("tuoguan_query_employee_work_map", TUOGUAN_QUERY_EMPLOYEE_WORK_MAP_SCHEMA, _handler("query_employee_work_map")),
     ("tuoguan_query_fact_gap_candidates", TUOGUAN_QUERY_FACT_GAP_CANDIDATES_SCHEMA, _handler("query_fact_gap_candidates")),
     ("tuoguan_submit_fact_gap_candidate", TUOGUAN_SUBMIT_FACT_GAP_CANDIDATE_SCHEMA, _handler("submit_fact_gap_candidate")),

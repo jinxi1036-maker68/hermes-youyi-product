@@ -10,6 +10,7 @@ from typing import Any
 from .digital_employee_state import query_attention_threads, query_relationship_touch_candidates
 from .models import UserIdentity
 from .social_market_research import query_social_market_research
+from .proactive_work import query_goal_actions
 from .store import TuoguanStore
 
 
@@ -297,6 +298,28 @@ def query_active_work_context(
             "status": str(row.get("status") or ""),
             "updated_at": str(row.get("updated_at") or row.get("created_at") or ""),
             "evidence_source": "relationship_touch_candidates",
+            "goal_id": str(row.get("goal_id") or ""),
+            "goal_action_id": str(row.get("goal_action_id") or ""),
+            "delivery_receipt": deepcopy(row.get("delivery_receipt") or {}),
+        })
+    goal_actions = query_goal_actions(
+        store,
+        identity=identity,
+        include_closed=False,
+        due_only=False,
+        now_at=now.isoformat(timespec="seconds"),
+        limit=maximum,
+    )
+    for row in reversed(list(goal_actions.get("goal_actions") or [])):
+        items.append({
+            "context_type": "goal_action",
+            "context_id": str(row.get("goal_action_id") or ""),
+            "summary": str(row.get("summary") or row.get("evidence_requirement") or "")[:240],
+            "status": str(row.get("status") or ""),
+            "updated_at": str(row.get("updated_at") or row.get("planned_at") or row.get("created_at") or ""),
+            "evidence_source": "goal_actions.jsonl",
+            "goal_id": str(row.get("goal_id") or ""),
+            "target_user_id": str(row.get("target_user_id") or ""),
         })
     if identity.role in {"boss", "manager"}:
         research = query_social_market_research(store, identity=identity, limit=maximum)

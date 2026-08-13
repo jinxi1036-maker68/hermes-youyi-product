@@ -70,6 +70,10 @@ WRITE_TOOLS = {
     "tuoguan_submit_fact_gap_candidate",
     "tuoguan_submit_staff_voice_signal",
     "tuoguan_submit_relationship_touch_candidate",
+    "tuoguan_submit_proactive_authorization",
+    "tuoguan_execute_relationship_touch",
+    "tuoguan_update_relationship_touch",
+    "tuoguan_submit_goal_action",
     "tuoguan_update_institution_understanding",
     "tuoguan_submit_employee_self_review",
     "tuoguan_submit_industry_learning_candidate",
@@ -135,6 +139,8 @@ MODEL_SELECTED_READ_TOOLS = {
     "tuoguan_query_agent_delegation_results",
     "tuoguan_query_multi_agent_brief",
     "tuoguan_query_attention_threads",
+    "tuoguan_query_proactive_authorizations",
+    "tuoguan_query_goal_actions",
     "tuoguan_generate_autonomous_recovery_report",
     "tuoguan_generate_due_wakeup_candidates",
     "tuoguan_generate_autonomous_acceptance_pack",
@@ -207,6 +213,7 @@ def _sanitize_external_reply(
     used_trusted_tool: bool = False,
     actor_role: str = "",
     actor_name: str = "",
+    outreach_state: str = "",
 ) -> str:
     value = str(text or "")
     technical_refs: list[str] = []
@@ -251,6 +258,14 @@ def _sanitize_external_reply(
     )
     if not verified_state_change and any(term in value for term in unverified_task_claim_terms):
         return "我刚才不能在没有任务工具确认的情况下说任务已闭环。请告诉我具体是哪一个任务或学生，我会按任务记录核验后再确认。"
+    sent_claim_terms = ("已经发给", "已发给", "已经通知", "已通知", "我刚问了", "我已经问了", "已经联系")
+    queued_claim_terms = ("我现在就去找", "我这就去找", "我马上去问", "现在去问", "已安排发送", "已经安排发送")
+    if any(term in value for term in sent_claim_terms) and outreach_state != "sent":
+        if outreach_state == "queued":
+            return "这条消息已经安排发送，但目前只有入队回执，是否送达还没有确认。"
+        return "我已经形成了主动联系候选，但还没有真实发送回执，不能说已经通知对方。"
+    if any(term in value for term in queued_claim_terms) and outreach_state not in {"queued", "sent"}:
+        return "我已经形成了主动联系候选，但它尚未进入发送队列；我不能把候选说成已经在执行。"
     if str(actor_role or "") in {"teacher", "manager"}:
         staff_side_leak_terms = (
             "汇报给老板",
@@ -761,6 +776,10 @@ def write_authorization_for(user_id: str, operation: str) -> dict[str, str] | No
         "submit_fact_gap_candidate",
         "submit_staff_voice_signal",
         "submit_relationship_touch_candidate",
+        "submit_proactive_authorization",
+        "execute_relationship_touch",
+        "update_relationship_touch",
+        "submit_goal_action",
         "update_institution_understanding",
         "submit_employee_self_review",
         "submit_industry_learning_candidate",
@@ -957,6 +976,10 @@ def inject_model_context(*, session_id: str, sender_id: str, user_message: str) 
             "可以自由分析用户问题，但不能凭聊天记忆、上下文印象或系统提示直接把老师名单、学生资料、电话、数量、排名、任务状态、经营结论说成真实数据。"
             "只有用户明确要求查询实时业务事实或修改业务数据时，才选择对应可信工具；没有可信结果时不得声称数据已改变。"
             "需要执行时，模型可以从可用的 tuoguan_ 可信工具中自主选择合适功能，系统只校验身份、权限和执行结果。"
+            "当你已经判断要现在主动问老板、店长或老师时，调用 tuoguan_submit_relationship_touch_candidate 并显式设置 execute_if_authorized=true；"
+            "若只是在准备材料则保持 false。候选不能说已经去问，queued 只能说已安排发送，sent 回执后才能说已经发出。"
+            "对方回复主动问题时，先从当前活动线程找到 candidate_id，再用 tuoguan_update_relationship_touch 记录 partial/sufficient/resolved，不能把计划当结果。"
+            "已确认经营目标的下一行动使用 tuoguan_submit_goal_action 保存，并用 tuoguan_query_goal_actions 恢复；不要只把方案写在聊天里。"
             "说做不了、查不到或需要技术前，先完成自救顺序：当前上下文、可信业务读工具、人员目录、历史事实/候选、必要时只读联网；仍失败时只问一个最关键问题。"
             "用户明确询问‘能做什么’时，可以自然说明你能理解、分析、提醒和协助推进机构工作；"
             "但如果要声明真实数据、写入、通知或状态变更已经发生，需要先取得可信工具结果并通过权限和反查。"
@@ -1512,6 +1535,7 @@ def transform_final_response(*, store: TuoguanStore, session_id: str, response_t
     used_trusted_tool = False
     actor_role = ""
     actor_name = ""
+    outreach_state = ""
     with _LOCK:
         item = _TURN_BY_SESSION.get(str(session_id or "")) or {}
         actor_role = str(item.get("role") or "")
@@ -1523,10 +1547,35 @@ def transform_final_response(*, store: TuoguanStore, session_id: str, response_t
                 verified_state_change = _tool_results_have_verified_write(item.get("tool_results") or [])
                 if verified_state_change:
                     break
+        outreach_state = _tool_results_outreach_state(item.get("tool_results") or [])
     return _sanitize_external_reply(
         response_text,
         verified_state_change=verified_state_change,
         used_trusted_tool=used_trusted_tool,
         actor_role=actor_role,
         actor_name=actor_name,
+        outreach_state=outreach_state,
     )
+
+
+def _tool_results_outreach_state(results: Any) -> str:
+    rank = {"": 0, "candidate": 1, "authorized": 2, "queued": 3, "sending": 4, "sent": 5}
+    best = ""
+    values = results if isinstance(results, list) else [results]
+    for item in values:
+        if not isinstance(item, dict):
+            continue
+        data = item.get("data") if isinstance(item.get("data"), dict) else item
+        candidates: list[Any] = [data]
+        if isinstance(data, dict):
+            candidates.extend([data.get("candidate"), data.get("outbox_item"), data.get("execution")])
+            candidates.extend(data.get("candidates") or [] if isinstance(data.get("candidates"), list) else [])
+        for value in candidates:
+            if not isinstance(value, dict):
+                continue
+            state = str(value.get("delivery_state") or value.get("status") or "")
+            if state == "pending":
+                state = "queued"
+            if rank.get(state, 0) > rank.get(best, 0):
+                best = state
+    return best

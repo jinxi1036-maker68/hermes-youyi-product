@@ -61,6 +61,14 @@ from .active_work_context import query_active_work_context as build_active_work_
 from .staff_conversation_activity import query_staff_conversation_activity as build_staff_conversation_activity
 from .self_evolution import query_self_evolution_ledger as build_self_evolution_ledger
 from .social_market_research import query_social_market_research as build_social_market_research
+from .proactive_work import (
+    execute_relationship_touch as execute_relationship_touch_state,
+    query_goal_actions as build_goal_actions,
+    query_proactive_authorizations as build_proactive_authorizations,
+    submit_goal_action as save_goal_action,
+    submit_proactive_authorization as save_proactive_authorization,
+    update_relationship_touch as update_relationship_touch_state,
+)
 from .workstyle_profiles import (
     query_person_workstyle_profile as build_person_workstyle_profile,
     query_workstyle_adaptation_health as build_workstyle_adaptation_health,
@@ -717,6 +725,10 @@ class TuoguanToolService:
             "submit_fact_gap_candidate",
             "submit_staff_voice_signal",
             "submit_relationship_touch_candidate",
+            "submit_proactive_authorization",
+            "execute_relationship_touch",
+            "update_relationship_touch",
+            "submit_goal_action",
             "update_attention_thread",
         }
         if compact_raw in {
@@ -1213,12 +1225,51 @@ class TuoguanToolService:
         due_at: str = "",
         level: str = "A",
         student_name: str = "",
+        goal_id: str = "",
+        goal_action_id: str = "",
+        evidence_requirement: str = "",
     ) -> dict[str, Any]:
         denied = self._approved()
         if denied:
             return denied
         if not self.permissions.can_manage_tasks(self.identity):
             return self._error("permission_denied", "只有老板或店长可以创建并分配任务。")
+        if goal_id:
+            from .goal_operator import find_active_goal
+            from .proactive_work import GOAL_TASK_HIGH_RISK_TERMS, effective_proactive_permission, verify_goal_task_responsibility
+
+            if not find_active_goal(self.store, goal_id=goal_id):
+                return self._error("active_goal_required", "目标未确认、已撤销或不存在，不能创建目标子任务。")
+            if any(term in f"{title}{evidence_requirement}" for term in GOAL_TASK_HIGH_RISK_TERMS):
+                return self._error("high_risk_goal_task_requires_confirmation", "该任务涉及高风险制度或家长外发边界，不能由小优自主创建。")
+            permission = effective_proactive_permission(
+                self.store,
+                target_role="teacher",
+                target_user_id=assignee_user_id,
+                action_type="assign_low_risk_goal_task",
+                goal_id=goal_id,
+            )
+            if not permission.get("allowed"):
+                return self._error(str(permission.get("reason_code") or "permission_denied"), "目标子任务没有通过当前主动授权、灰度或在职状态校验。")
+            responsibility = verify_goal_task_responsibility(
+                self.store,
+                target_user_id=assignee_user_id,
+                student_names=[student_name] if student_name else [],
+            )
+            if not responsibility.get("ok"):
+                return self._error(str(responsibility.get("error") or "responsibility_evidence_required"), str(responsibility.get("message") or "目标子任务缺少可信责任关系。"))
+            today = datetime.now().astimezone().date().isoformat()
+            existing_goal_tasks = [
+                task for task in self.store.load_tasks()
+                if isinstance(task, dict)
+                and str(task.get("goal_id") or "") == str(goal_id)
+                and str(task.get("created_at") or "").startswith(today)
+                and str(task.get("status") or "") not in _CLOSED_STATUSES
+            ]
+            if sum(str(task.get("assignee_userid") or "") == str(assignee_user_id) for task in existing_goal_tasks) >= 1:
+                return self._error("goal_task_person_daily_limit", "这位老师今天已经有一个该目标的新子任务，本轮不再重复创建。")
+            if len(existing_goal_tasks) >= 3:
+                return self._error("goal_task_institution_daily_limit", "今天全机构已经创建三个目标子任务，本轮不再追加。")
         try:
             from .runtime_foundation import current_raw_text
             raw_text_for_boundary = current_raw_text(self.identity.canonical_user_id)
@@ -1255,6 +1306,25 @@ class TuoguanToolService:
             if result.get("ok") and not result.get("already_applied"):
                 task = result.get("task") if isinstance(result.get("task"), dict) else {}
                 task_id = str(result.get("task_id") or task.get("id") or "")
+                if goal_id and task_id:
+                    persisted = self.store.update_task(
+                        task_id,
+                        lambda current: {
+                            **current,
+                            "goal_id": str(goal_id),
+                            "goal_action_id": str(goal_action_id or ""),
+                            "evidence_requirement": str(evidence_requirement or "").strip(),
+                            "responsibility_evidence": responsibility.get("evidence") or [],
+                            "created_autonomously_within_goal": True,
+                        },
+                    )
+                    if isinstance(persisted, dict):
+                        task = persisted
+                        result["task"] = deepcopy(persisted)
+                        result["writeback_verified"] = (
+                            str(persisted.get("goal_id") or "") == str(goal_id)
+                            and str(persisted.get("goal_action_id") or "") == str(goal_action_id or "")
+                        )
                 content = (
                     f"你收到一项新任务：{task.get('title') or title}\n"
                     f"等级：{task.get('level') or level}\n"
@@ -1263,6 +1333,8 @@ class TuoguanToolService:
                     f"关联学生：{task.get('student_name') or student_name or '无'}\n"
                     "请直接回复处理进展；完成后可说“这个任务已经完成”。"
                 )
+                if evidence_requirement:
+                    content += f"\n闭环证据：{str(evidence_requirement).strip()}"
                 try:
                     from .runtime_foundation import current_ledger_id
                     ledger_id = current_ledger_id(self.identity.canonical_user_id)
@@ -2275,6 +2347,45 @@ class TuoguanToolService:
                     f"已记录你刚才的反馈，但这个任务还没有完成。还需要补充：{missing_text}。"
                     "你直接按实际情况继续说，我会接着记录并告诉你何时完成。"
                 )
+            goal_action_update: dict[str, Any] = {}
+            goal_id = str(target.get("goal_id") or "")
+            goal_action_id = str(target.get("goal_action_id") or "")
+            if goal_id and goal_action_id:
+                from .proactive_work import submit_goal_action
+
+                goal_action_status = (
+                    "replied_sufficient"
+                    if str(target.get("status") or "") in _CLOSED_STATUSES and not current_missing
+                    else "replied_partial"
+                )
+                system_identity = UserIdentity(
+                    platform="system",
+                    platform_user_id="task_reply_sync",
+                    canonical_user_id="task_reply_sync",
+                    person_name="小优",
+                    role="boss",
+                    approval_state="approved",
+                )
+                goal_action_update = submit_goal_action(
+                    self.store,
+                    identity=system_identity,
+                    goal_id=goal_id,
+                    action_type="create_low_risk_task",
+                    summary=str(target.get("title") or "目标内低风险子任务"),
+                    operation_id=f"{operation_id}:goal_action_sync",
+                    goal_action_id=goal_action_id,
+                    status=goal_action_status,
+                    evidence_requirement=str(target.get("evidence_requirement") or ""),
+                    source_text=(
+                        f"task_id={target.get('id')}; actor={self.identity.canonical_user_id}; "
+                        f"task_status={target.get('status')}; evidence={evidence_text}"
+                    ),
+                )
+                if not goal_action_update.get("writeback_verified"):
+                    final_message = (
+                        f"{final_message.rstrip('。')}。任务记录已经更新，但关联目标进度反查失败，"
+                        "我暂时不能说目标已同步推进。"
+                    )
             self._write_focus(
                 task_id=str(target.get("id") or ""),
                 student_name=str(target.get("student_name") or ""),
@@ -2286,7 +2397,12 @@ class TuoguanToolService:
                 data={
                     "result_action": result_action,
                     "task": deepcopy(target),
-                    "writeback_verified": task_verified,
+                    "writeback_verified": bool(
+                        task_verified
+                        and (not goal_action_id or goal_action_update.get("writeback_verified"))
+                    ),
+                    "task_writeback_verified": task_verified,
+                    "goal_action_update": goal_action_update,
                     "missing_fields": current_missing,
                 },
                 message=final_message,
@@ -3503,6 +3619,11 @@ class TuoguanToolService:
         suggested_send_at: str = "",
         source_text: str = "",
         source_message_id: str = "",
+        action_type: str = "ask_work_fact",
+        goal_id: str = "",
+        goal_action_id: str = "",
+        evidence_requirement: str = "",
+        execute_if_authorized: bool = False,
     ) -> dict[str, Any]:
         denied = self._approved()
         if denied:
@@ -3551,6 +3672,10 @@ class TuoguanToolService:
                 status=status,
                 source_text=source_text,
                 source_message_id=source_message_id,
+                action_type=action_type,
+                goal_id=goal_id,
+                goal_action_id=goal_action_id,
+                evidence_requirement=evidence_requirement,
             )
             if not result.get("ok"):
                 return result
@@ -3561,14 +3686,200 @@ class TuoguanToolService:
                 "external_send_allowed_by_policy": external_send_allowed,
                 "policy_mode": mode,
             }
+            if external_send_allowed and execute_if_authorized:
+                candidate_id = str((result.get("candidate") or {}).get("candidate_id") or "")
+                execution = execute_relationship_touch_state(
+                    self.store,
+                    identity=self.identity,
+                    candidate_id=candidate_id,
+                    operation_id=f"{operation_id}:execute",
+                )
+                data["execution"] = execution
+                if not execution.get("ok"):
+                    return self._error(
+                        str(execution.get("error") or "relationship_touch_execute_failed"),
+                        str(execution.get("message") or "主动候选已保存，但没有进入发送队列。"),
+                    )
             message_text = (
-                "已保存可主动触达候选；当前测试白名单允许该对象进入外发候选。"
+                "主动联系已安排发送；当前只有入队回执，尚不能声称对方已经收到。"
+                if external_send_allowed and execute_if_authorized
+                else "已保存可主动触达候选；当前测试白名单允许该对象进入外发候选。"
                 if external_send_allowed
                 else "已保存内部候选；该对象不在当前直接主动外发范围内，不会真实外发。"
             )
             return self._ok("submit_relationship_touch_candidate", data=data, message=message_text)
 
         return self._operation(operation_id, "submit_relationship_touch_candidate", execute)
+
+    def query_proactive_authorizations(self, *, include_inactive: bool = False, now_at: str = "") -> dict[str, Any]:
+        denied = self._approved()
+        if denied:
+            return denied
+        result = build_proactive_authorizations(
+            self.store,
+            identity=self.identity,
+            include_inactive=include_inactive,
+            now_at=now_at,
+        )
+        if not result.get("ok"):
+            return self._error(str(result.get("error") or "authorization_query_failed"), str(result.get("message") or "主动授权查询失败。"))
+        return self._ok("query_proactive_authorizations", data=result, message=str(result.get("rendered_text") or ""))
+
+    def submit_proactive_authorization(
+        self,
+        *,
+        subject_role: str,
+        action_types: list[str],
+        operation_id: str,
+        subject_user_ids: list[str] | None = None,
+        status: str = "active",
+        authorization_id: str = "",
+        goal_ids: list[str] | None = None,
+        daily_limit: int = 1,
+        effective_at: str = "",
+        expires_at: str = "",
+        rollout_stage: str = "pilot",
+        source_text: str = "",
+    ) -> dict[str, Any]:
+        denied = self._approved()
+        if denied:
+            return denied
+
+        def execute() -> dict[str, Any]:
+            result = save_proactive_authorization(
+                self.store,
+                identity=self.identity,
+                operation_id=operation_id,
+                subject_role=subject_role,
+                subject_user_ids=subject_user_ids,
+                action_types=action_types,
+                status=status,
+                authorization_id=authorization_id,
+                goal_ids=goal_ids,
+                daily_limit=daily_limit,
+                effective_at=effective_at,
+                expires_at=expires_at,
+                rollout_stage=rollout_stage,
+                source_text=source_text,
+            )
+            return result if not result.get("ok") else self._ok("submit_proactive_authorization", data=result, message=str(result.get("rendered_text") or ""))
+
+        return self._operation(operation_id, "submit_proactive_authorization", execute)
+
+    def execute_relationship_touch(self, *, candidate_id: str, operation_id: str) -> dict[str, Any]:
+        denied = self._approved()
+        if denied:
+            return denied
+
+        def execute() -> dict[str, Any]:
+            result = execute_relationship_touch_state(
+                self.store,
+                identity=self.identity,
+                candidate_id=candidate_id,
+                operation_id=operation_id,
+            )
+            return result if not result.get("ok") else self._ok("execute_relationship_touch", data=result, message=str(result.get("rendered_text") or ""))
+
+        return self._operation(operation_id, "execute_relationship_touch", execute)
+
+    def update_relationship_touch(
+        self,
+        *,
+        candidate_id: str,
+        status: str,
+        operation_id: str,
+        reply_text: str = "",
+        evidence_complete: bool | None = None,
+        failure_reason: str = "",
+    ) -> dict[str, Any]:
+        denied = self._approved()
+        if denied:
+            return denied
+
+        def execute() -> dict[str, Any]:
+            result = update_relationship_touch_state(
+                self.store,
+                identity=self.identity,
+                candidate_id=candidate_id,
+                status=status,
+                operation_id=operation_id,
+                reply_text=reply_text,
+                evidence_complete=evidence_complete,
+                failure_reason=failure_reason,
+            )
+            return result if not result.get("ok") else self._ok("update_relationship_touch", data=result, message=str(result.get("rendered_text") or "主动联系状态已更新并完成反查。"))
+
+        return self._operation(operation_id, "update_relationship_touch", execute)
+
+    def query_goal_actions(
+        self,
+        *,
+        goal_id: str = "",
+        include_closed: bool = False,
+        due_only: bool = False,
+        now_at: str = "",
+        limit: int = 30,
+    ) -> dict[str, Any]:
+        denied = self._approved()
+        if denied:
+            return denied
+        result = build_goal_actions(
+            self.store,
+            identity=self.identity,
+            goal_id=goal_id,
+            include_closed=include_closed,
+            due_only=due_only,
+            now_at=now_at,
+            limit=limit,
+        )
+        return self._ok("query_goal_actions", data=result, message=str(result.get("rendered_text") or ""))
+
+    def submit_goal_action(
+        self,
+        *,
+        goal_id: str,
+        action_type: str,
+        summary: str,
+        operation_id: str,
+        target_role: str = "",
+        target_user_id: str = "",
+        target_name: str = "",
+        student_names: list[str] | None = None,
+        planned_at: str = "",
+        due_at: str = "",
+        evidence_requirement: str = "",
+        escalation_path: list[str] | None = None,
+        status: str = "planned",
+        goal_action_id: str = "",
+        source_text: str = "",
+    ) -> dict[str, Any]:
+        denied = self._approved()
+        if denied:
+            return denied
+
+        def execute() -> dict[str, Any]:
+            result = save_goal_action(
+                self.store,
+                identity=self.identity,
+                goal_id=goal_id,
+                action_type=action_type,
+                summary=summary,
+                operation_id=operation_id,
+                target_role=target_role,
+                target_user_id=target_user_id,
+                target_name=target_name,
+                student_names=student_names,
+                planned_at=planned_at,
+                due_at=due_at,
+                evidence_requirement=evidence_requirement,
+                escalation_path=escalation_path,
+                status=status,
+                goal_action_id=goal_action_id,
+                source_text=source_text,
+            )
+            return result if not result.get("ok") else self._ok("submit_goal_action", data=result, message=str(result.get("rendered_text") or ""))
+
+        return self._operation(operation_id, "submit_goal_action", execute)
 
     def query_employee_work_map(self, *, limit: int = 12) -> dict[str, Any]:
         denied = self._approved()

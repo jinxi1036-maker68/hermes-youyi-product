@@ -62,8 +62,17 @@ _RELATIONSHIP_TOUCH_TYPES = {
     "material整理", "material_support", "manager_assist", "owner_business",
     "owner_progress", "presence_report",
 }
-_RELATIONSHIP_TOUCH_STATUSES = {"candidate", "queued", "sent", "suppressed", "resolved", "failed", "superseded"}
-_OPEN_RELATIONSHIP_TOUCH_STATUSES = {"candidate", "queued", "sent", "failed"}
+_RELATIONSHIP_TOUCH_STATUSES = {
+    "candidate", "authorized", "queued", "sending", "sent",
+    "replied_partial", "replied_sufficient", "resolved",
+    "retry_pending", "failed", "result_unknown", "expired",
+    "suppressed", "superseded", "escalated",
+}
+_OPEN_RELATIONSHIP_TOUCH_STATUSES = {
+    "candidate", "authorized", "queued", "sending", "sent",
+    "replied_partial", "replied_sufficient", "retry_pending",
+    "failed", "result_unknown", "escalated",
+}
 _STAFF_VOICE_CATEGORIES = {
     "workload_pressure",
     "schedule_or_staffing",
@@ -3112,7 +3121,7 @@ def query_relationship_touch_candidates(
         "candidate_count": len(rows),
         "candidates": rows,
         "policy": relationship_touch_policy(store),
-        "rendered_text": f"查到 {len(rows)} 条 Hermes 关系经营候选。候选只是材料，不自动联系老师、店长或家长。",
+        "rendered_text": f"查到 {len(rows)} 条小优主动工作线程。candidate 只是候选；只有 queued/sent 和发送回执才能证明进入发送链路。",
         "render_verified": True,
     }
 
@@ -3137,6 +3146,10 @@ def submit_relationship_touch_candidate(
     status: str = "candidate",
     source_text: str = "",
     source_message_id: str = "",
+    action_type: str = "ask_work_fact",
+    goal_id: str = "",
+    goal_action_id: str = "",
+    evidence_requirement: str = "",
 ) -> dict[str, Any]:
     role = str(target_role or "").strip()
     touch = str(touch_type or "").strip()
@@ -3190,6 +3203,10 @@ def submit_relationship_touch_candidate(
         "requires_authorization": bool(requires_authorization),
         "external_send_allowed": bool(external_send_allowed),
         "suggested_send_at": str(suggested_send_at or "").strip(),
+        "action_type": _limit_text(action_type, 80),
+        "goal_id": str(goal_id or "").strip(),
+        "goal_action_id": str(goal_action_id or "").strip(),
+        "evidence_requirement": _limit_text(evidence_requirement, 700),
         "status": normalized_status,
         "semantic_fingerprint": semantic_fingerprint,
         "source_text": _limit_text(source_text),
@@ -3228,6 +3245,10 @@ def update_relationship_touch_candidate_status(
     failure_reason: str = "",
     source_text: str = "",
     source_message_id: str = "",
+    evidence_summary: str = "",
+    evidence_complete: bool | None = None,
+    retry_count: int | None = None,
+    escalation_reason: str = "",
 ) -> dict[str, Any]:
     normalized_id = str(candidate_id or "").strip()
     if normalized_id not in _fold_relationship_touch_candidates(store):
@@ -3243,6 +3264,10 @@ def update_relationship_touch_candidate_status(
         "status": normalized_status,
         "delivery_receipt": _strip_forbidden(delivery_receipt or {}),
         "failure_reason": _limit_text(failure_reason, 500),
+        "evidence_summary": _limit_text(evidence_summary, 1000),
+        "evidence_complete": evidence_complete,
+        "retry_count": retry_count,
+        "escalation_reason": _limit_text(escalation_reason, 500),
         "source_text": _limit_text(source_text),
         "source": _autonomous_source(identity, operation_id, source_message_id),
         "created_at": now_iso(),
@@ -3297,6 +3322,9 @@ def _fold_relationship_touch_candidates(store: TuoguanStore) -> dict[str, dict[s
             result[candidate_id]["delivery_receipt"] = latest.get("delivery_receipt")
         if latest.get("failure_reason"):
             result[candidate_id]["failure_reason"] = latest.get("failure_reason")
+        for field in ("evidence_summary", "evidence_complete", "retry_count", "escalation_reason"):
+            if latest.get(field) is not None and latest.get(field) != "":
+                result[candidate_id][field] = latest.get(field)
     return result
 
 
@@ -4962,6 +4990,12 @@ def query_xiaoyou_health(
     autonomous_loop = _xiaoyou_autonomous_loop_health(store, since_ts)
     runtime_learning = _xiaoyou_runtime_learning_health(store, since_ts)
     social_market = _xiaoyou_social_market_health(store, since_ts)
+    try:
+        from .proactive_work import proactive_health_snapshot
+
+        proactive_work = proactive_health_snapshot(store, now=now)
+    except Exception:
+        proactive_work = {"error": "proactive_health_unavailable"}
     attention = query_attention_threads(store, identity=identity, include_closed=False, limit=limit)
     fact_gaps = query_fact_gap_candidates(store, identity=identity, limit=limit)
     staff_voice = (
@@ -4994,6 +5028,8 @@ def query_xiaoyou_health(
         issues.append(f"过去24小时有 {runtime_learning['core_skill_missing_count']} 个模型回合没有记录 xiaoyou-core 加载证据。")
     if runtime_learning["inbound_receipts"].get("failed_count"):
         issues.append(f"过去24小时有 {runtime_learning['inbound_receipts']['failed_count']} 条入站消息处理失败回执。")
+    if int(proactive_work.get("stuck_candidate_count") or 0):
+        issues.append(f"有 {int(proactive_work.get('stuck_candidate_count') or 0)} 条主动联系候选超过6小时仍未进入执行或关闭状态。")
     tool_failure_count = int(((evolution.get("health_signals") or {}).get("tool_failure_candidate_count") or 0)) if isinstance(evolution, dict) else 0
     if tool_failure_count:
         issues.append(f"有 {tool_failure_count} 条工具失败/能力缺口候选等待复盘。")
@@ -5024,6 +5060,7 @@ def query_xiaoyou_health(
             "waiting_work_item_count": int(work.get("waiting_count") or 0) if isinstance(work, dict) else 0,
             "outbox": outbox_health,
             "autonomous_loop": autonomous_loop,
+            "execution_loop": proactive_work,
         },
         "fact_gaps": {
             "candidate_count": fact_gap_count,

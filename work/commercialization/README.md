@@ -28,6 +28,8 @@ Hermes 商业化第一步采用“单机构隔离复制 + 标准化配置”：
 - `standard_install_package_v0/`：未来新机构标准安装包 V0 设计，包括目录结构、初始化流程、生成文件规则、首次启动验收、备份升级和安装脚本蓝图。
 - `sales_demo_package_v0/`：面向第二家机构老板的成交演示材料。
 - `maintenance_package_v0/`：生产巡检、最小升级和回滚维护手册。
+- `xiaoyou_real_digital_employee_loop_v1.md`：小优从经营目标到真实结果的持续工作闭环、权限边界和灰度验收说明。
+- `xiaoyou_real_employee_adversarial_review_2026-08-13.md`：本轮真实数字员工闭环的对抗审查、修复和生产门禁记录。
 
 ## 使用原则
 

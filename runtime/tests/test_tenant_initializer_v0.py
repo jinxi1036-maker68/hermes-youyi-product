@@ -68,6 +68,8 @@ def test_tenant_initializer_generates_clean_demo_tenant(tmp_path):
         "action_executions.jsonl",
         "attention_threads.jsonl",
         "relationship_touch_candidates.jsonl",
+        "proactive_authorizations.jsonl",
+        "goal_actions.jsonl",
         "daily_report_runs.jsonl",
         "hermes_employee_scorecard.jsonl",
         "value_progress_ledger.jsonl",
