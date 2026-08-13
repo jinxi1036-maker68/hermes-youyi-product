@@ -25,6 +25,7 @@ from plugins.tuoguan_core.digital_employee_state import (  # noqa: E402
     update_relationship_touch_candidate_status,
 )
 from plugins.tuoguan_core.models import UserIdentity  # noqa: E402
+from plugins.tuoguan_core.self_evolution import evolution_evidence_is_usable  # noqa: E402
 from plugins.tuoguan_core.proactive_work import (  # noqa: E402
     GOAL_ACTIONS_FILE,
     PROACTIVE_AUTHORIZATIONS_FILE,
@@ -115,7 +116,7 @@ def build_plan(store: TuoguanStore) -> dict[str, Any]:
     unsupported_evolution = [
         row for row in folded_evolution.values()
         if str(row.get("status") or "") in {"candidate", "ready_for_application", "applied", "pending_review", "needs_confirmation"}
-        and not (row.get("evidence") or [])
+        and not evolution_evidence_is_usable(row.get("evidence"))
         and str((row.get("source") or {}).get("actor_user_id") or "") == "autonomous_employee_loop"
     ]
     return {

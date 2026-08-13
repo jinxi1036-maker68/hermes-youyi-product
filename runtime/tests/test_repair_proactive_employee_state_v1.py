@@ -85,7 +85,7 @@ def test_repair_is_append_only_and_converts_authorization_semantics(tmp_path):
             "semantic_fingerprint": "fingerprint_without_evidence",
             "candidate_type": "tomorrow_focus",
             "summary": "明天去问店长旧名单。",
-            "evidence": [],
+            "evidence": ["不可追溯的旧字符串证据"],
             "status": "ready_for_application",
             "source": {"actor_user_id": "autonomous_employee_loop"},
             "created_at": "2026-08-13T19:00:00+08:00",

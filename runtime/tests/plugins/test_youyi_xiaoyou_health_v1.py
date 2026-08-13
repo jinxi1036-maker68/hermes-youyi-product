@@ -118,6 +118,7 @@ def _seed_store(tmp_path: Path):
                 "tenant_id": "youyi_tuoguan",
                 "candidate_type": "self_correction",
                 "summary": "日报只说重点。",
+                "evidence": [{"source": "owner_feedback", "text": "老板要求日报只说重点。"}],
                 "risk_level": "low",
                 "status": "ready_for_application",
                 "created_at": "2026-08-09T01:00:00+08:00",

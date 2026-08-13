@@ -153,6 +153,25 @@ def _list_any(value: Any, limit: int = 8) -> list[Any]:
     return cleaned
 
 
+def evolution_evidence_is_usable(value: Any) -> bool:
+    if not isinstance(value, list) or not value:
+        return False
+    evidence_keys = {
+        "text", "excerpt", "fact", "summary", "result", "raw_text", "final_reply",
+        "message_id", "ledger_id", "preference_id", "authorization_id", "goal_action_id",
+        "task_id", "writeback_verified",
+    }
+    for item in value[:8]:
+        if not isinstance(item, dict):
+            continue
+        source = str(item.get("source") or item.get("source_type") or "").strip()
+        serialized = json.dumps(item, ensure_ascii=False)
+        has_trace = any(item.get(key) not in (None, "", False, []) for key in evidence_keys)
+        if source and has_trace and "historical_requires_revalidation" not in serialized:
+            return True
+    return False
+
+
 def _safe_value(value: Any) -> Any:
     if isinstance(value, str):
         return _limit_text(value, 500)
@@ -802,6 +821,8 @@ def _is_low_risk_application_status(item: dict[str, Any]) -> bool:
 def _is_next_context_candidate(item: dict[str, Any], *, now: datetime | None = None) -> bool:
     if str(item.get("risk_level") or "") != "low":
         return False
+    if not evolution_evidence_is_usable(item.get("evidence")):
+        return False
     ctype = str(item.get("candidate_type") or "")
     status = str(item.get("status") or "")
     if _summary_is_incomplete(str(item.get("summary") or "")):
@@ -891,12 +912,18 @@ def _health_signals(rows: list[dict[str, Any]]) -> dict[str, Any]:
         row for row in rows
         if str(row.get("candidate_type") or "") == "self_correction"
     ]
+    unverified_evidence = [
+        row for row in rows
+        if _is_low_risk_application_status(row)
+        and not evolution_evidence_is_usable(row.get("evidence"))
+    ]
     return {
         "open_review_count": len(open_review),
         "tool_failure_candidate_count": len(tool_failures),
         "self_correction_count": len(corrections),
         "has_repeated_tool_failure": len(tool_failures) >= 2,
         "has_recent_self_correction": bool(corrections),
+        "unverified_application_evidence_count": len(unverified_evidence),
     }
 
 

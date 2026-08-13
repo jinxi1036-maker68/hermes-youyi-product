@@ -291,7 +291,7 @@ def test_daily_report_applies_next_day_self_evolution_context(tmp_path):
             operation_id="daily-report-evolution-1",
             candidate_type="self_correction",
                 summary="昨天老板嫌晚报太长，今天日报只放重点和异常，不展开过程。",
-                evidence=[{"source": "owner_feedback"}],
+                evidence=[{"source": "owner_feedback", "text": "老板要求日报只说重点。"}],
                 occurred_at="2026-08-08T23:00:00+08:00",
             )
 
@@ -320,7 +320,8 @@ def test_morning_report_does_not_relabel_yesterday_relative_time_as_today(tmp_pa
                 "semantic_fingerprint": "relative-time-report",
                 "tenant_id": "youyi_tuoguan",
                 "candidate_type": "self_correction",
-                "summary": "今日21:01老板反问后，应主动追问具体缺口。",
+                    "summary": "今日21:01老板反问后，应主动追问具体缺口。",
+                    "evidence": [{"source": "conversation_replay", "text": "老板21:01反问当前事项。"}],
                 "risk_level": "low",
                 "status": "ready_for_application",
                 "created_at": "2026-08-12T23:10:00+08:00",

@@ -120,6 +120,7 @@ def test_self_evolution_is_deduplicated_scoped_and_applied(tmp_path: Path):
         candidate_type="self_correction",
         summary="给老板汇报时先说结论，避免重复解释。",
         applies_to_user_id="JinWenJie",
+        evidence=[{"source": "conversation_replay", "text": "老板要求先说结论。"}],
     )
     repeated = submit_self_evolution_event(
         store,
@@ -128,7 +129,7 @@ def test_self_evolution_is_deduplicated_scoped_and_applied(tmp_path: Path):
         candidate_type="self_correction",
         summary="给老板汇报时先说结论，避免重复解释。",
         applies_to_user_id="JinWenJie",
-        evidence=[{"source": "second_occurrence"}],
+        evidence=[{"source": "second_occurrence", "text": "老板再次要求先说结论。"}],
     )
     submit_self_evolution_event(
         store,
@@ -137,6 +138,7 @@ def test_self_evolution_is_deduplicated_scoped_and_applied(tmp_path: Path):
         candidate_type="self_correction",
         summary="给李老师回复时不要重复追问已经回答的事实。",
         applies_to_user_id="CeShi",
+        evidence=[{"source": "conversation_replay", "text": "李老师已经回答该事实。"}],
     )
 
     assert first["ok"] is True

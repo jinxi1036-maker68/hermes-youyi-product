@@ -142,7 +142,8 @@ def test_next_day_context_anchors_relative_time_and_expires_old_ready_items(tmp_
                 "semantic_fingerprint": "fresh-relative-time",
                 "tenant_id": "youyi_tuoguan",
                 "candidate_type": "self_correction",
-                "summary": "今日21:01老板反问后，应主动追问具体缺口。",
+                    "summary": "今日21:01老板反问后，应主动追问具体缺口。",
+                    "evidence": [{"source": "conversation_replay", "text": "老板21:01反问当前事项。"}],
                 "risk_level": "low",
                 "status": "ready_for_application",
                 "created_at": "2026-08-12T23:10:00+08:00",
@@ -153,7 +154,8 @@ def test_next_day_context_anchors_relative_time_and_expires_old_ready_items(tmp_
                 "semantic_fingerprint": "old-relative-time",
                 "tenant_id": "youyi_tuoguan",
                 "candidate_type": "self_correction",
-                "summary": "今天旧问题仍需继续追问。",
+                    "summary": "今天旧问题仍需继续追问。",
+                    "evidence": [{"source": "conversation_replay", "text": "旧问题历史记录。"}],
                 "risk_level": "low",
                 "status": "ready_for_application",
                 "created_at": "2026-08-06T23:10:00+08:00",
@@ -198,6 +200,7 @@ def test_self_evolution_rejects_incomplete_and_deduplicates_similar_lessons(tmp_
             operation_id="evolution-format-1",
             candidate_type="self_correction",
             summary="老板反馈格式问题后，应主动在回复中先说明改进，再询问具体建议，避免只答问题。",
+            evidence=[{"source": "conversation_replay", "text": "老板反馈格式问题。"}],
             occurred_at="2026-08-12T20:00:00+08:00",
         )
         repeated = submit_self_evolution_event(
@@ -206,6 +209,7 @@ def test_self_evolution_rejects_incomplete_and_deduplicates_similar_lessons(tmp_
             operation_id="evolution-format-2",
             candidate_type="self_correction",
             summary="老板反馈格式问题后，8月12日回复时应主动先说明改进，再询问具体建议，避免仅答问题导致追问。",
+            evidence=[{"source": "conversation_replay", "text": "老板再次反馈格式问题。"}],
             occurred_at="2026-08-12T21:00:00+08:00",
         )
 
@@ -239,7 +243,8 @@ def test_existing_similar_lessons_are_compacted_without_rewriting_history(tmp_pa
                 "semantic_fingerprint": "format-1",
                 "tenant_id": "youyi_tuoguan",
                 "candidate_type": "self_correction",
-                "summary": "老板反馈格式问题后，应主动先说明改进，再询问具体建议，避免只答问题。",
+                    "summary": "老板反馈格式问题后，应主动先说明改进，再询问具体建议，避免只答问题。",
+                    "evidence": [{"source": "conversation_replay", "text": "老板第一次反馈格式问题。"}],
                 "risk_level": "low",
                 "status": "ready_for_application",
                 "created_at": "2026-08-12T20:00:00+08:00",
@@ -250,7 +255,8 @@ def test_existing_similar_lessons_are_compacted_without_rewriting_history(tmp_pa
                 "semantic_fingerprint": "format-2",
                 "tenant_id": "youyi_tuoguan",
                 "candidate_type": "self_correction",
-                "summary": "老板反馈格式问题后，8月12日回复时应主动先说明改进，再询问具体建议，避免仅答问题导致追问。",
+                    "summary": "老板反馈格式问题后，8月12日回复时应主动先说明改进，再询问具体建议，避免仅答问题导致追问。",
+                    "evidence": [{"source": "conversation_replay", "text": "老板第二次反馈格式问题。"}],
                 "risk_level": "low",
                 "status": "ready_for_application",
                 "created_at": "2026-08-12T21:00:00+08:00",
@@ -261,7 +267,8 @@ def test_existing_similar_lessons_are_compacted_without_rewriting_history(tmp_pa
                 "semantic_fingerprint": "format-incomplete",
                 "tenant_id": "youyi_tuoguan",
                 "candidate_type": "self_correction",
-                "summary": "老板反馈格式问题后，应先说明改进，避免只说",
+                    "summary": "老板反馈格式问题后，应先说明改进，避免只说",
+                    "evidence": [{"source": "conversation_replay", "text": "老板反馈格式问题。"}],
                 "risk_level": "low",
                 "status": "ready_for_application",
                 "created_at": "2026-08-12T22:00:00+08:00",
@@ -298,6 +305,7 @@ def test_long_evolution_context_keeps_a_complete_first_sentence(tmp_path):
                     "8月12日老板再次追问，但主工作项仍停滞，下一次需要主动明确提问并核验结果，"
                     "同时检查最近主动消息、当前任务、事实归属人和写后反查证据，不能继续依赖旧工作项里的等待描述。"
                 ),
+                "evidence": [{"source": "conversation_replay", "text": "老板反问后工作项没有推进。"}],
             "risk_level": "low",
             "status": "ready_for_application",
             "created_at": "2026-08-12T21:00:00+08:00",
