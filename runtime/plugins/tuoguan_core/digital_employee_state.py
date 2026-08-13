@@ -2792,6 +2792,8 @@ def _fold_agent_delegations(store: TuoguanStore) -> dict[str, dict[str, Any]]:
         if record_type == "agent_delegation_decision":
             decisions.setdefault(delegation_id, []).append(deepcopy(row))
             continue
+        if record_type not in {"", "agent_delegation"} or delegation_id in result:
+            continue
         item = deepcopy(row)
         item.setdefault("record_type", "agent_delegation")
         item.setdefault("status", "queued")
@@ -3274,6 +3276,8 @@ def _fold_relationship_touch_candidates(store: TuoguanStore) -> dict[str, dict[s
         if str(row.get("record_type") or "") == "relationship_touch_update":
             updates.setdefault(candidate_id, []).append(deepcopy(row))
             continue
+        if str(row.get("record_type") or "") not in {"", "relationship_touch_candidate"} or candidate_id in result:
+            continue
         item = deepcopy(row)
         item.setdefault("record_type", "relationship_touch_candidate")
         item.setdefault("status", "candidate")
@@ -3474,6 +3478,8 @@ def _fold_staff_voice_signals(store: TuoguanStore) -> dict[str, dict[str, Any]]:
     for row in _read_jsonl(store, STAFF_VOICE_SIGNALS_FILE):
         signal_id = str(row.get("signal_id") or "")
         if not signal_id:
+            continue
+        if str(row.get("record_type") or "") not in {"", "staff_voice_signal"} or signal_id in result:
             continue
         item = deepcopy(row)
         item.setdefault("record_type", "staff_voice_signal")
@@ -3859,6 +3865,8 @@ def _fold_hermes_work_items(store: TuoguanStore) -> dict[str, dict[str, Any]]:
             continue
         if record_type == "work_item_update":
             updates.setdefault(work_item_id, []).append(deepcopy(row))
+            continue
+        if record_type not in {"", "work_item"} or work_item_id in result:
             continue
         item = deepcopy(row)
         item.setdefault("status", "active")
@@ -4332,6 +4340,8 @@ def _fold_wakeup_requests(store: TuoguanStore) -> dict[str, dict[str, Any]]:
         if record_type == "wakeup_request_update":
             updates.setdefault(request_id, []).append(deepcopy(row))
             continue
+        if record_type not in {"", "wakeup_request"} or request_id in result:
+            continue
         item = deepcopy(row)
         item.setdefault("record_type", "wakeup_request")
         item.setdefault("status", "pending")
@@ -4616,6 +4626,8 @@ def _fold_attention_threads(store: TuoguanStore) -> dict[str, dict[str, Any]]:
             continue
         if str(row.get("record_type") or "") == "attention_thread_update":
             updates.setdefault(attention_id, []).append(row)
+            continue
+        if str(row.get("record_type") or "") not in {"", "attention_thread"} or attention_id in threads:
             continue
         item = deepcopy(row)
         item.setdefault("status", "candidate")
@@ -5969,6 +5981,8 @@ def _fold_information_requests(store: TuoguanStore) -> dict[str, dict[str, Any]]
             continue
         request_id = str(row.get("request_id") or "")
         if not request_id:
+            continue
+        if record_type not in {"", "information_request"} or request_id in result:
             continue
         item = deepcopy(row)
         item.setdefault("status", "asked")
