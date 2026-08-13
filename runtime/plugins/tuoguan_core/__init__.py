@@ -37,6 +37,13 @@ from .runtime_foundation import (
     should_clarify_without_tool as _foundation_should_clarify_without_tool,
     transform_final_response as _foundation_transform_final_response,
 )
+from .turn_trace import (
+    begin_turn_trace as _begin_turn_trace,
+    finalize_turn_trace as _finalize_turn_trace,
+    record_context_sources as _record_trace_context_sources,
+    record_guard_event as _record_trace_guard_event,
+    record_tool_event as _record_trace_tool_event,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -71,6 +78,7 @@ _ACTIVE_CONVERSATION_QUIET_PERIOD = timedelta(minutes=3)
 _CLAIMED_REPLY_MESSAGE_IDS: dict[str, datetime] = {}
 _ACTIVE_MODEL_TURNS: dict[str, dict[str, Any]] = {}
 _REPLY_CLAIM_TTL = timedelta(hours=2)
+_REGISTERED_TOOL_COUNT = 0
 
 _SYSTEM_REPLY_MARKERS = (
     "没有权限",
@@ -1387,6 +1395,16 @@ def _on_pre_llm_call(**kwargs: Any) -> dict[str, str] | None:
         activity_key = (str(_router().store.data_dir.resolve()), identity.canonical_user_id)
         _ACTIVE_WECom_USERS[activity_key] = datetime.now().astimezone()
         turn_key = session_id or chat_id or identity.canonical_user_id
+        _begin_turn_trace(
+            session_id=turn_key,
+            message_id=message_id,
+            tenant_id=current_tenant_id(),
+            app_id=str(get_session_env("HERMES_SESSION_APP_NAME", "") or platform) if get_session_env else platform,
+            user_id=identity.canonical_user_id,
+            role=identity.role,
+            raw_text=raw_text,
+            visible_tool_count=_REGISTERED_TOOL_COUNT,
+        )
         _ACTIVE_MODEL_TURNS[turn_key] = {
             "message_id": message_id,
             "conversation_id": chat_id or session_id or identity.canonical_user_id,
@@ -1408,21 +1426,41 @@ def _on_pre_llm_call(**kwargs: Any) -> dict[str, str] | None:
             user_message=raw_text,
         )
         logger.warning(
-            "YOUYI_PRE_LLM_CONTEXT_READY sender=%s canonical=%s role=%s session_id=%s chat_id=%s began=%s injected=%s raw=%s",
-            sender_id,
-            identity.canonical_user_id,
+            "YOUYI_PRE_LLM_CONTEXT_READY actor_hash=%s role=%s session_id=%s chat_id_hash=%s began=%s injected=%s message_hash=%s chars=%s",
+            hashlib.sha256(identity.canonical_user_id.encode("utf-8")).hexdigest()[:12],
             identity.role,
             session_id,
-            chat_id,
+            hashlib.sha256(chat_id.encode("utf-8")).hexdigest()[:12],
             bool(turn),
             bool(injected),
-            raw_text[:80],
+            hashlib.sha256(raw_text.encode("utf-8")).hexdigest()[:12],
+            len(raw_text),
         )
     except Exception:
         logger.exception("tuoguan_core failed to establish model-led runtime context")
+    trace_key = session_id or chat_id or message_id
     context_parts: list[str] = []
+    context_sources: list[str] = []
+
+    def append_context(value: str, source: str, *, first: bool = False) -> None:
+        if not value:
+            return
+        if first:
+            context_parts.insert(0, value)
+        else:
+            context_parts.append(value)
+        if source not in context_sources:
+            context_sources.append(source)
+
+    def context_result() -> dict[str, str]:
+        _record_trace_context_sources(trace_key, context_sources)
+        return {"context": "\n\n".join(context_parts)}
+
     if "identity" in locals():
-        context_parts.append(_xiaoyou_core_skill_context(identity=identity))
+        append_context(_xiaoyou_core_skill_context(identity=identity), "xiaoyou_core_skill")
+        context_sources.append("trusted_gateway_identity")
+        if injected:
+            context_sources.append("runtime_foundation")
     try:
         if "identity" in locals():
             _record_owner_inbound_fact(
@@ -1438,12 +1476,12 @@ def _on_pre_llm_call(**kwargs: Any) -> dict[str, str] | None:
             current_message=raw_text,
         ) if "identity" in locals() else ""
         if recent_outbound_context:
-            context_parts.append(recent_outbound_context)
+            append_context(recent_outbound_context, "recent_owner_outbound")
             logger.warning(
-                "YOUYI_RECENT_OUTBOUND_CONTEXT_READY sender=%s session_id=%s raw=%s",
-                sender_id,
+                "YOUYI_RECENT_OUTBOUND_CONTEXT_READY actor_hash=%s session_id=%s message_hash=%s",
+                hashlib.sha256(sender_id.encode("utf-8")).hexdigest()[:12],
                 session_id,
-                raw_text[:80],
+                hashlib.sha256(raw_text.encode("utf-8")).hexdigest()[:12],
             )
         recent_outbound_follow_up = bool(
             recent_outbound_context
@@ -1457,12 +1495,12 @@ def _on_pre_llm_call(**kwargs: Any) -> dict[str, str] | None:
                 current_message=raw_text,
             )
         if owner_attention_context:
-            context_parts.append(owner_attention_context)
+            append_context(owner_attention_context, "owner_attention")
             logger.warning(
-                "YOUYI_OWNER_ATTENTION_CONTEXT_READY sender=%s session_id=%s raw=%s",
-                sender_id,
+                "YOUYI_OWNER_ATTENTION_CONTEXT_READY actor_hash=%s session_id=%s message_hash=%s",
+                hashlib.sha256(sender_id.encode("utf-8")).hexdigest()[:12],
                 session_id,
-                raw_text[:80],
+                hashlib.sha256(raw_text.encode("utf-8")).hexdigest()[:12],
             )
         term_context = _term_boundary_context(
             _router().store,
@@ -1470,13 +1508,13 @@ def _on_pre_llm_call(**kwargs: Any) -> dict[str, str] | None:
             include_for_attention=bool(owner_attention_context),
         )
         if term_context:
-            context_parts.append(term_context)
+            append_context(term_context, "academic_term")
     except Exception:
         logger.exception("tuoguan_core failed to recall owner attention context")
     try:
         identity_context = _public_identity_context(_router().store)
         if identity_context:
-            context_parts.insert(0, identity_context)
+            append_context(identity_context, "public_employee_identity", first=True)
     except Exception:
         logger.exception("tuoguan_core failed to recall public identity context")
     try:
@@ -1490,7 +1528,7 @@ def _on_pre_llm_call(**kwargs: Any) -> dict[str, str] | None:
                 platform=platform,
             )
             if temporal_context:
-                context_parts.append(temporal_context)
+                append_context(temporal_context, "temporal_grounding")
     except Exception:
         logger.exception("tuoguan_core failed to append temporal grounding context")
     try:
@@ -1500,7 +1538,7 @@ def _on_pre_llm_call(**kwargs: Any) -> dict[str, str] | None:
                 identity=identity,
             )
             if self_evolution_context:
-                context_parts.append(self_evolution_context)
+                append_context(self_evolution_context, "self_evolution")
     except Exception:
         logger.exception("tuoguan_core failed to append self-evolution context")
     try:
@@ -1511,7 +1549,7 @@ def _on_pre_llm_call(**kwargs: Any) -> dict[str, str] | None:
                 raw_text=raw_text,
             )
             if workstyle_context:
-                context_parts.append(workstyle_context)
+                append_context(workstyle_context, "person_workstyle")
     except Exception:
         logger.exception("tuoguan_core failed to append workstyle context")
     try:
@@ -1521,7 +1559,7 @@ def _on_pre_llm_call(**kwargs: Any) -> dict[str, str] | None:
                 raw_text=raw_text,
             )
             if role_layer_context:
-                context_parts.append(role_layer_context)
+                append_context(role_layer_context, "role_layer")
     except Exception:
         logger.exception("tuoguan_core failed to append role layer context")
     try:
@@ -1534,7 +1572,7 @@ def _on_pre_llm_call(**kwargs: Any) -> dict[str, str] | None:
                 raw_text=raw_text,
             )
             if companion_context:
-                context_parts.append(companion_context)
+                append_context(companion_context, "task_companion")
     except Exception:
         logger.exception("tuoguan_core failed to append current task companion context")
     compact_raw = "".join(raw_text.split())
@@ -1604,21 +1642,23 @@ def _on_pre_llm_call(**kwargs: Any) -> dict[str, str] | None:
     write_like = write_like or (task_completion_like and not asks_how_to_confirm)
     if short_context_reference and not write_like:
         if active_context:
-            context_parts.append(active_context)
-            context_parts.append(
+            append_context(active_context, "active_work_context")
+            append_context(
                 "【短回复衔接规则】短回复本身不是拒绝执行的理由。先结合本轮原话、最近主动外发和上述活动线程判断指向；"
                 "“什么意思/这个/展开”优先解释最近活动；“继续/可以”优先沿最近活动推进；"
-                "相关时自然衔接，并在真实写入前调用对应可信工具。若多个线程同样可能或没有任何证据，只追问一个最关键的区分问题。"
+                "相关时自然衔接，并在真实写入前调用对应可信工具。若多个线程同样可能或没有任何证据，只追问一个最关键的区分问题。",
+                "short_reply_contract",
             )
         else:
-            context_parts.append(
+            append_context(
                 "【短回复衔接规则】当前没有可验证的活动线程。不要猜测历史对象；只追问一个最关键的区分问题。"
+                , "short_reply_contract"
             )
-        return {"context": "\n\n".join(context_parts)}
+        return context_result()
     if write_like:
         if active_context:
-            context_parts.append(active_context)
-        context_parts.append(
+            append_context(active_context, "active_work_context")
+        append_context(
             "【优益当前轮写入规则】如果用户本轮明确要求记录、修改、加扣分、创建、完成、确认、提交或上报，"
             "必须调用对应 tuoguan_ 可信工具，以本轮工具结果为唯一执行依据。"
             "模型仍负责理解用户、判断是否追问、是否写入或是否先说明边界；系统只负责权限、审计、幂等和写后核验。"
@@ -1627,21 +1667,27 @@ def _on_pre_llm_call(**kwargs: Any) -> dict[str, str] | None:
             "用户明确要求取消、关闭、删除任务或停止任务提醒时，必须优先调用 tuoguan_cancel_task；"
             "tuoguan_update_task 只用于任务反馈、进展和完成闭环，不能用于取消任务。"
             "只有本轮工具返回 ok=false 时，才可以说明本轮未成功。"
-            "写入成功必须来自工具 ok=true 且 writeback_verified=true；不要伪造成功。"
+            "写入成功必须来自工具 ok=true 且 writeback_verified=true；不要伪造成功。",
+            "verified_write_contract",
         )
-        return {"context": "\n\n".join(context_parts)}
+        return context_result()
     if context_parts:
-        return {"context": "\n\n".join(context_parts)}
+        return context_result()
+    _record_trace_context_sources(trace_key, context_sources)
     return None
 
 
 def _on_post_tool_call(**kwargs: Any) -> None:
+    session_id = str(kwargs.get("session_id") or "")
+    tool_name = str(kwargs.get("tool_name") or "")
+    result = kwargs.get("result")
     _foundation_observe_tool_result(
-        session_id=str(kwargs.get("session_id") or ""),
-        tool_name=str(kwargs.get("tool_name") or ""),
+        session_id=session_id,
+        tool_name=tool_name,
         args=kwargs.get("args"),
-        result=kwargs.get("result"),
+        result=result,
     )
+    _record_trace_tool_event(session_id, tool_name=tool_name, result=result)
 
 
 def _on_pre_tool_call(**kwargs: Any) -> dict[str, str] | None:
@@ -1657,11 +1703,17 @@ def _on_transform_llm_output(**kwargs: Any) -> str | None:
     response_text = str(kwargs.get("response_text") or "")
     if platform != "wecom_callback" or not session_id or not response_text:
         return None
-    return _foundation_transform_final_response(
+    transformed = _foundation_transform_final_response(
         store=_router().store,
         session_id=session_id,
         response_text=response_text,
     )
+    _record_trace_guard_event(
+        session_id,
+        guard="final_reply_claim_guard",
+        result="rewritten" if transformed is not None and transformed != response_text else "allowed",
+    )
+    return transformed
 
 
 def _on_post_llm_call_v020(**kwargs: Any) -> None:
@@ -1690,6 +1742,15 @@ def _on_post_llm_call_v020(**kwargs: Any) -> None:
         session_id=session_id,
         route_decision="model_first_v020",
     )
+    try:
+        _finalize_turn_trace(
+            _router().store,
+            session_id=session_id,
+            delivery_status="prepared",
+            final_reply=final_reply,
+        )
+    except Exception:
+        logger.exception("tuoguan_core failed to persist sanitized turn trace")
     logger.warning(
         "YOUYI_POST_LLM_RESPONSE_RECORDED sender=%s session_id=%s message_id=%s",
         str(turn.get("user_id") or ""),
@@ -1735,6 +1796,16 @@ def _on_post_gateway_response(**kwargs: Any) -> None:
             source_message_id=source_message_id,
             platform_message_id=str(kwargs.get("platform_message_id") or ""),
         )
+    trace_key = str(kwargs.get("session_id") or getattr(source, "chat_id", "") or source_message_id)
+    try:
+        _finalize_turn_trace(
+            _router().store,
+            session_id=trace_key,
+            delivery_status=str(kwargs.get("delivery_status") or "unknown"),
+            final_reply=str(kwargs.get("response_text") or ""),
+        )
+    except Exception:
+        logger.exception("tuoguan_core failed to persist sanitized turn trace")
     logger.warning(
         "YOUYI_POST_GATEWAY_RESPONSE_RECORDED sender=%s session_id=%s message_id=%s delivery_status=%s",
         identity.canonical_user_id,
@@ -1759,7 +1830,10 @@ def _on_post_gateway_response(**kwargs: Any) -> None:
 
 def register(ctx) -> None:
     """Register the tutoring business router for Enterprise WeChat callback DMs."""
+    global _REGISTERED_TOOL_COUNT
     from .tools import TOOLS, TOOLSET
+
+    _REGISTERED_TOOL_COUNT = len(TOOLS)
 
     _log_runtime_module_manifest()
     # Model-led restore: old business routers and runtime prompt/response hooks are
