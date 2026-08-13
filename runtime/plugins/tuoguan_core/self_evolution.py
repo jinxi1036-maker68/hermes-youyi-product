@@ -10,6 +10,7 @@ from __future__ import annotations
 
 from copy import deepcopy
 from datetime import datetime, timedelta
+from difflib import SequenceMatcher
 import hashlib
 import json
 import re
@@ -307,6 +308,12 @@ def submit_self_evolution_event(
     })
     if not candidate["summary"]:
         return {"ok": False, "error": "self_evolution_summary_required", "message": "进化候选必须包含摘要。"}
+    if _summary_is_incomplete(candidate["summary"]):
+        return {
+            "ok": False,
+            "error": "incomplete_self_evolution_summary",
+            "message": "进化候选像半句话，未写入账本；请形成完整、可执行的经验后再保存。",
+        }
     event_at = str(occurred_at or now_iso()).strip()
     try:
         parsed_event_at = datetime.fromisoformat(event_at.replace("Z", "+00:00"))
@@ -317,11 +324,19 @@ def submit_self_evolution_event(
     for existing in reversed(_read_jsonl(store, SELF_EVOLUTION_EVENTS_FILE)[-200:]):
         if str(existing.get("tenant_id") or "") not in {"", current_tenant_id()}:
             continue
-        if str(existing.get("semantic_fingerprint") or "") == fingerprint:
+        if (
+            str(existing.get("semantic_fingerprint") or "") == fingerprint
+            or _same_application_lesson(existing, candidate)
+        ):
             merged = deepcopy(existing)
             merged["occurrence_count"] = int(existing.get("occurrence_count") or 1) + 1
             merged["updated_at"] = event_at
             merged["evidence"] = _list_any([*(existing.get("evidence") or []), *candidate["evidence"]], 8)
+            if _prefer_candidate_summary(candidate["summary"], str(existing.get("summary") or "")):
+                merged["summary"] = candidate["summary"]
+                merged["source_text"] = candidate["source_text"]
+                merged["proposed_effect"] = candidate["proposed_effect"]
+                merged["next_effect"] = candidate["next_effect"]
             if str(existing.get("status") or "") not in {"verified", "applied"}:
                 merged["status"] = candidate["status"]
             merged["source"] = {
@@ -438,10 +453,12 @@ def build_self_evolution_brief(
         events = [item for item in _filtered_events(store) if _applies_to_identity(item, identity)][-max(limit, 20):]
         ledger = {"health_signals": _health_signals(events)}
     recent_workstyles = _recent_workstyle_preferences(store, identity=identity, limit=6)
-    applicable_events = [
+    eligible_events = [
         item for item in events
         if _is_next_context_candidate(item, now=reference) and _applies_to_identity(item, identity)
-    ][-max(1, min(limit, 12)):]
+    ]
+    applicable_events, suppressed_duplicate_count = _dedupe_application_events(eligible_events)
+    applicable_events = applicable_events[-max(1, min(limit, 12)):]
     applicable = [
         _evolution_context_line(item, now=reference)
         for item in applicable_events
@@ -458,6 +475,13 @@ def build_self_evolution_brief(
         and not _is_next_context_candidate(item, now=reference)
         and _applies_to_identity(item, identity)
     )
+    incomplete_application_count = sum(
+        1
+        for item in events
+        if _is_low_risk_application_status(item)
+        and _applies_to_identity(item, identity)
+        and _summary_is_incomplete(str(item.get("summary") or ""))
+    )
     return {
         "ok": True,
         "tenant_id": current_tenant_id(),
@@ -467,6 +491,8 @@ def build_self_evolution_brief(
         "next_day_context": applicable,
         "next_day_application_ids": [str(item.get("evolution_event_id") or "") for item in applicable_events],
         "stale_application_count": stale_application_count,
+        "suppressed_duplicate_application_count": suppressed_duplicate_count,
+        "incomplete_application_count": incomplete_application_count,
         "review_queue": deepcopy(review_queue),
         "review_queue_count": len(review_queue),
         "recent_workstyle_preferences": recent_workstyles,
@@ -554,7 +580,9 @@ def record_self_evolution_application(
         and str(item.get("status") or "") == "ready_for_application"
         and _is_next_context_candidate(item, now=reference)
         and _applies_to_identity(item, identity)
-    ][-max(1, min(int(limit or 3), 3)):]
+    ]
+    candidates, _ = _dedupe_application_events(candidates)
+    candidates = candidates[-max(1, min(int(limit or 3), 3)):]
     applied: list[dict[str, Any]] = []
     for candidate in candidates:
         row = deepcopy(candidate)
@@ -635,6 +663,71 @@ def _semantic_fingerprint(candidate: dict[str, Any]) -> str:
     return hashlib.sha256(base.encode("utf-8")).hexdigest()[:24]
 
 
+def _summary_is_incomplete(summary: str) -> bool:
+    text = _limit_text(summary, 700).rstrip("，,；;：:。.!！?？… ")
+    return any(text.endswith(suffix) for suffix in (
+        "避免只说",
+        "不要只说",
+        "不能只说",
+        "避免仅说",
+        "不要仅说",
+        "需要先",
+        "必须先",
+        "并且",
+        "以及",
+        "因为",
+        "所以",
+    ))
+
+
+def _normalized_lesson_text(summary: str) -> str:
+    text = str(summary or "").lower()
+    text = re.sub(r"\d{4}[-年/]\d{1,2}[-月/]\d{1,2}日?", "", text)
+    text = re.sub(r"\d{1,2}月\d{1,2}日", "", text)
+    text = re.sub(r"\d{1,2}[:：]\d{2}", "", text)
+    text = text.replace("仅答", "只说").replace("仅说", "只说").replace("小优", "")
+    return re.sub(r"[^0-9a-z\u4e00-\u9fff]+", "", text)
+
+
+def _same_application_lesson(existing: dict[str, Any], candidate: dict[str, Any]) -> bool:
+    if str(existing.get("candidate_type") or "") != str(candidate.get("candidate_type") or ""):
+        return False
+    for key in ("target_store", "applies_to_user_id", "applies_to_role"):
+        if str(existing.get(key) or "") != str(candidate.get(key) or ""):
+            return False
+    left = _normalized_lesson_text(str(existing.get("summary") or ""))
+    right = _normalized_lesson_text(str(candidate.get("summary") or ""))
+    if min(len(left), len(right)) < 12:
+        return False
+    return SequenceMatcher(None, left, right).ratio() >= 0.78
+
+
+def _prefer_candidate_summary(candidate: str, existing: str) -> bool:
+    if _summary_is_incomplete(existing) and not _summary_is_incomplete(candidate):
+        return True
+    if _summary_is_incomplete(candidate):
+        return False
+    return len(_normalized_lesson_text(candidate)) > len(_normalized_lesson_text(existing))
+
+
+def _dedupe_application_events(events: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], int]:
+    selected: list[dict[str, Any]] = []
+    suppressed = 0
+    for item in events:
+        match_index = next(
+            (index for index, existing in enumerate(selected) if _same_application_lesson(existing, item)),
+            None,
+        )
+        if match_index is None:
+            selected.append(item)
+            continue
+        suppressed += 1
+        existing = selected[match_index]
+        if _prefer_candidate_summary(str(item.get("summary") or ""), str(existing.get("summary") or "")):
+            selected[match_index] = item
+    return selected, suppressed
+
+
 def _default_reviewer(risk_level: str) -> str:
     if risk_level == "high":
         return "boss"
@@ -711,6 +804,8 @@ def _is_next_context_candidate(item: dict[str, Any], *, now: datetime | None = N
         return False
     ctype = str(item.get("candidate_type") or "")
     status = str(item.get("status") or "")
+    if _summary_is_incomplete(str(item.get("summary") or "")):
+        return False
     if ctype == "person_preference_candidate":
         return status == "applied" and bool(item.get("writeback_verified"))
     if status not in {"ready_for_application", "applied"}:

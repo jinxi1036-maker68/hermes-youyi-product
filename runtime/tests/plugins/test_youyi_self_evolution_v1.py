@@ -173,6 +173,113 @@ def test_next_day_context_anchors_relative_time_and_expires_old_ready_items(tmp_
     assert brief["stale_application_count"] == 1
 
 
+def test_self_evolution_rejects_incomplete_and_deduplicates_similar_lessons(tmp_path):
+    from plugins.tuoguan_core.self_evolution import (
+        SELF_EVOLUTION_EVENTS_FILE,
+        build_self_evolution_brief,
+        query_self_evolution_ledger,
+        submit_self_evolution_event,
+    )
+    from plugins.tuoguan_core.write_guard import authorized_system_write
+
+    store = _seed_store(tmp_path)
+    identity = _boss_identity()
+    with authorized_system_write(store.data_dir, job_name="self_evolution_quality_test", allowed_files={SELF_EVOLUTION_EVENTS_FILE}):
+        incomplete = submit_self_evolution_event(
+            store,
+            identity=identity,
+            operation_id="evolution-incomplete",
+            candidate_type="self_correction",
+            summary="老板反馈格式问题后，应先说明改进，避免只说",
+        )
+        first = submit_self_evolution_event(
+            store,
+            identity=identity,
+            operation_id="evolution-format-1",
+            candidate_type="self_correction",
+            summary="老板反馈格式问题后，应主动在回复中先说明改进，再询问具体建议，避免只答问题。",
+            occurred_at="2026-08-12T20:00:00+08:00",
+        )
+        repeated = submit_self_evolution_event(
+            store,
+            identity=identity,
+            operation_id="evolution-format-2",
+            candidate_type="self_correction",
+            summary="老板反馈格式问题后，8月12日回复时应主动先说明改进，再询问具体建议，避免仅答问题导致追问。",
+            occurred_at="2026-08-12T21:00:00+08:00",
+        )
+
+    assert incomplete["ok"] is False
+    assert incomplete["error"] == "incomplete_self_evolution_summary"
+    assert first["ok"] is True
+    assert repeated["deduplicated_update"] is True
+    ledger = query_self_evolution_ledger(store, identity=identity, limit=10)
+    assert ledger["event_count"] == 1
+    assert ledger["events"][0]["occurrence_count"] == 2
+    brief = build_self_evolution_brief(
+        store,
+        identity=identity,
+        now=datetime(2026, 8, 13, 8, 30, tzinfo=timezone(timedelta(hours=8))),
+    )
+    assert len(brief["next_day_context"]) == 1
+    assert brief["incomplete_application_count"] == 0
+
+
+def test_existing_similar_lessons_are_compacted_without_rewriting_history(tmp_path):
+    from plugins.tuoguan_core.self_evolution import build_self_evolution_brief
+
+    store = _seed_store(tmp_path)
+    _append_jsonl(
+        tmp_path,
+        "self_evolution_events.jsonl",
+        [
+            {
+                "record_type": "self_evolution_event",
+                "evolution_event_id": "format-1",
+                "semantic_fingerprint": "format-1",
+                "tenant_id": "youyi_tuoguan",
+                "candidate_type": "self_correction",
+                "summary": "老板反馈格式问题后，应主动先说明改进，再询问具体建议，避免只答问题。",
+                "risk_level": "low",
+                "status": "ready_for_application",
+                "created_at": "2026-08-12T20:00:00+08:00",
+            },
+            {
+                "record_type": "self_evolution_event",
+                "evolution_event_id": "format-2",
+                "semantic_fingerprint": "format-2",
+                "tenant_id": "youyi_tuoguan",
+                "candidate_type": "self_correction",
+                "summary": "老板反馈格式问题后，8月12日回复时应主动先说明改进，再询问具体建议，避免仅答问题导致追问。",
+                "risk_level": "low",
+                "status": "ready_for_application",
+                "created_at": "2026-08-12T21:00:00+08:00",
+            },
+            {
+                "record_type": "self_evolution_event",
+                "evolution_event_id": "format-incomplete",
+                "semantic_fingerprint": "format-incomplete",
+                "tenant_id": "youyi_tuoguan",
+                "candidate_type": "self_correction",
+                "summary": "老板反馈格式问题后，应先说明改进，避免只说",
+                "risk_level": "low",
+                "status": "ready_for_application",
+                "created_at": "2026-08-12T22:00:00+08:00",
+            },
+        ],
+    )
+    brief = build_self_evolution_brief(
+        store,
+        identity=_boss_identity(),
+        now=datetime(2026, 8, 13, 8, 30, tzinfo=timezone(timedelta(hours=8))),
+    )
+
+    assert len(brief["next_day_context"]) == 1
+    assert brief["suppressed_duplicate_application_count"] == 1
+    assert brief["incomplete_application_count"] == 1
+    assert (tmp_path / "self_evolution_events.jsonl").read_text(encoding="utf-8").count("\n") == 3
+
+
 def test_verified_person_preference_candidate_can_enter_next_day_context(tmp_path):
     from plugins.tuoguan_core.self_evolution import SELF_EVOLUTION_EVENTS_FILE, build_self_evolution_brief, submit_self_evolution_event
     from plugins.tuoguan_core.write_guard import authorized_system_write
