@@ -72,10 +72,17 @@ def build_plan(store: TuoguanStore) -> dict[str, Any]:
         and str(row.get("created_at") or "")[:10] <= "2026-08-13"
     ]
     workstyle_rows = _read_jsonl(store.path_for(WORKSTYLE_FILE))
+    repaired_preference_ids = {
+        str(row.get("preference_id") or "")
+        for row in workstyle_rows
+        if str(row.get("record_type") or "") == "person_workstyle_semantic_mismatch"
+        and str(row.get("status") or "") == "superseded"
+    }
     mismatches = [
         row for row in workstyle_rows
         if str(row.get("record_type") or "") == "person_workstyle_preference"
         and str(row.get("dimension_key") or "") == "tone"
+        and str(row.get("preference_id") or row.get("event_id") or "") not in repaired_preference_ids
         and any(term in "".join(str(row.get(key) or "") for key in ("source_text", "preference_text", "normalized_rule")) for term in ("自主决定", "自己决定", "找谁", "什么时候找"))
     ]
     work = query_hermes_work_items(store, identity=identity, include_closed=False, limit=100)

@@ -120,4 +120,6 @@ def test_repair_is_append_only_and_converts_authorization_semantics(tmp_path):
     assert evolution_rows[0]["status"] == "ready_for_application"
     assert evolution_rows[-1]["status"] == "superseded"
     assert evolution_rows[-1]["invalidation_reason"] == "夜间候选缺少当前事实证据，不能进入次日应用。"
-    assert build_plan(store)["unsupported_evolution_event_ids"] == []
+    repeated_plan = build_plan(store)
+    assert repeated_plan["unsupported_evolution_event_ids"] == []
+    assert repeated_plan["semantic_mismatch_preference_ids"] == []
