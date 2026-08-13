@@ -146,6 +146,7 @@ def test_next_day_context_anchors_relative_time_and_expires_old_ready_items(tmp_
                     "evidence": [{"source": "conversation_replay", "text": "老板21:01反问当前事项。"}],
                 "risk_level": "low",
                 "status": "ready_for_application",
+                "applies_to_role": "boss",
                 "created_at": "2026-08-12T23:10:00+08:00",
             },
             {
@@ -199,18 +200,20 @@ def test_self_evolution_rejects_incomplete_and_deduplicates_similar_lessons(tmp_
             identity=identity,
             operation_id="evolution-format-1",
             candidate_type="self_correction",
-            summary="老板反馈格式问题后，应主动在回复中先说明改进，再询问具体建议，避免只答问题。",
-            evidence=[{"source": "conversation_replay", "text": "老板反馈格式问题。"}],
-            occurred_at="2026-08-12T20:00:00+08:00",
+                summary="老板反馈格式问题后，应主动在回复中先说明改进，再询问具体建议，避免只答问题。",
+                evidence=[{"source": "conversation_replay", "text": "老板反馈格式问题。"}],
+                applies_to_role="boss",
+                occurred_at="2026-08-12T20:00:00+08:00",
         )
         repeated = submit_self_evolution_event(
             store,
             identity=identity,
             operation_id="evolution-format-2",
             candidate_type="self_correction",
-            summary="老板反馈格式问题后，8月12日回复时应主动先说明改进，再询问具体建议，避免仅答问题导致追问。",
-            evidence=[{"source": "conversation_replay", "text": "老板再次反馈格式问题。"}],
-            occurred_at="2026-08-12T21:00:00+08:00",
+                summary="老板反馈格式问题后，8月12日回复时应主动先说明改进，再询问具体建议，避免仅答问题导致追问。",
+                evidence=[{"source": "conversation_replay", "text": "老板再次反馈格式问题。"}],
+                applies_to_role="boss",
+                occurred_at="2026-08-12T21:00:00+08:00",
         )
 
     assert incomplete["ok"] is False
@@ -247,6 +250,7 @@ def test_existing_similar_lessons_are_compacted_without_rewriting_history(tmp_pa
                     "evidence": [{"source": "conversation_replay", "text": "老板第一次反馈格式问题。"}],
                 "risk_level": "low",
                 "status": "ready_for_application",
+                "applies_to_role": "boss",
                 "created_at": "2026-08-12T20:00:00+08:00",
             },
             {
@@ -259,6 +263,7 @@ def test_existing_similar_lessons_are_compacted_without_rewriting_history(tmp_pa
                     "evidence": [{"source": "conversation_replay", "text": "老板第二次反馈格式问题。"}],
                 "risk_level": "low",
                 "status": "ready_for_application",
+                "applies_to_role": "boss",
                 "created_at": "2026-08-12T21:00:00+08:00",
             },
             {
@@ -271,6 +276,7 @@ def test_existing_similar_lessons_are_compacted_without_rewriting_history(tmp_pa
                     "evidence": [{"source": "conversation_replay", "text": "老板反馈格式问题。"}],
                 "risk_level": "low",
                 "status": "ready_for_application",
+                "applies_to_role": "boss",
                 "created_at": "2026-08-12T22:00:00+08:00",
             },
         ],
@@ -308,6 +314,7 @@ def test_long_evolution_context_keeps_a_complete_first_sentence(tmp_path):
                 "evidence": [{"source": "conversation_replay", "text": "老板反问后工作项没有推进。"}],
             "risk_level": "low",
             "status": "ready_for_application",
+            "applies_to_role": "boss",
             "created_at": "2026-08-12T21:00:00+08:00",
         }],
     )
@@ -338,6 +345,8 @@ def test_verified_person_preference_candidate_can_enter_next_day_context(tmp_pat
             summary="老板晚报只保留三条重点。",
             evidence=[{"source": "person_workstyle_events", "writeback_verified": True}],
             writeback_verified=True,
+            applies_to_role="boss",
+            applies_to_scope="daily_report",
         )
 
     assert result["ok"] is True
@@ -535,3 +544,126 @@ def test_employee_self_review_requires_current_evidence_and_quarantines_legacy_r
     assert result["review_count"] == 1
     assert result["historical_unverified_count"] == 1
     assert result["latest_review"]["review_id"] == saved["self_review"]["review_id"]
+
+
+def test_unscoped_person_specific_evolution_is_quarantined_from_every_identity(tmp_path):
+    from plugins.tuoguan_core.models import UserIdentity
+    from plugins.tuoguan_core.self_evolution import build_self_evolution_brief
+
+    store = _seed_store(tmp_path)
+    _append_jsonl(tmp_path, "self_evolution_events.jsonl", [{
+        "record_type": "self_evolution_event",
+        "evolution_event_id": "legacy-unscoped-boss-style",
+        "semantic_fingerprint": "legacy-unscoped-boss-style",
+        "tenant_id": "youyi_tuoguan",
+        "candidate_type": "self_correction",
+        "summary": "老板日报必须先说结论。",
+        "evidence": [{"source": "conversation_replay", "text": "老板要求日报简短。"}],
+        "risk_level": "low",
+        "status": "ready_for_application",
+        "created_at": datetime.now().astimezone().isoformat(timespec="seconds"),
+    }])
+    boss = _boss_identity()
+    teacher = UserIdentity("wecom_callback", "teacher1", "teacher1", "李老师", "teacher", "approved")
+
+    assert build_self_evolution_brief(store, identity=boss)["next_day_context"] == []
+    assert build_self_evolution_brief(store, identity=teacher)["next_day_context"] == []
+
+
+def test_self_evolution_application_respects_scope_and_verifies_workstyle_evidence(tmp_path):
+    from plugins.tuoguan_core.self_evolution import (
+        SELF_EVOLUTION_EVENTS_FILE,
+        query_self_evolution_ledger,
+        record_self_evolution_application,
+        submit_self_evolution_event,
+    )
+    from plugins.tuoguan_core.write_guard import authorized_system_write
+
+    store = _seed_store(tmp_path)
+    identity = _boss_identity()
+    with authorized_system_write(store.data_dir, job_name="self_evolution_scope_test", allowed_files={SELF_EVOLUTION_EVENTS_FILE}):
+        submit_self_evolution_event(
+            store,
+            identity=identity,
+            operation_id="daily-only",
+            candidate_type="self_correction",
+            summary="老板日报只说三条重点。",
+            evidence=[{"source": "conversation_replay", "text": "老板要求日报三条以内。"}],
+            applies_to_user_id=identity.canonical_user_id,
+            applies_to_scope="daily_report",
+        )
+        direct = record_self_evolution_application(
+            store,
+            identity=identity,
+            source_message_id="msg-direct",
+            final_reply="收到。",
+            scope="direct_reply",
+        )
+        submit_self_evolution_event(
+            store,
+            identity=identity,
+            operation_id="direct-style",
+            candidate_type="self_correction",
+            summary="直接回复按老板工作方式先说结论。",
+            evidence=[{"source": "conversation_replay", "text": "老板要求先说结论。"}],
+            target_store="person_workstyle_events.jsonl",
+            applies_to_user_id=identity.canonical_user_id,
+            applies_to_scope="direct_reply",
+        )
+        applied = record_self_evolution_application(
+            store,
+            identity=identity,
+            source_message_id="msg-verified",
+            final_reply="结论：当前没有异常。",
+            scope="direct_reply",
+            workstyle_adaptation={
+                "application_result": {"application": {"compliance": {"ok": True, "failures": []}}},
+                "unverified_commitment": False,
+            },
+        )
+
+    assert direct["applied_count"] == 0
+    assert applied["applied_count"] == 1
+    assert applied["verified_count"] == 1
+    ledger = query_self_evolution_ledger(store, identity=identity, limit=20)
+    assert any(row["status"] == "verified" for row in ledger["events"])
+
+
+def test_verified_evolution_reopens_only_when_new_evidence_proves_recurrence(tmp_path):
+    from plugins.tuoguan_core.self_evolution import (
+        SELF_EVOLUTION_EVENTS_FILE,
+        submit_self_evolution_event,
+        verify_self_evolution_application,
+    )
+    from plugins.tuoguan_core.write_guard import authorized_system_write
+
+    store = _seed_store(tmp_path)
+    identity = _boss_identity()
+    kwargs = dict(
+        identity=identity,
+        candidate_type="self_correction",
+        summary="直接回复前先核对当前人的工作方式。",
+        applies_to_user_id=identity.canonical_user_id,
+        applies_to_scope="direct_reply",
+    )
+    first_evidence = [{"source": "reply_ledger", "text": "第一次漏用偏好", "message_id": "m1"}]
+    with authorized_system_write(store.data_dir, job_name="self_evolution_recurrence_test", allowed_files={SELF_EVOLUTION_EVENTS_FILE}):
+        first = submit_self_evolution_event(store, operation_id="first", evidence=first_evidence, **kwargs)
+        verify_self_evolution_application(
+            store,
+            evolution_event_id=first["self_evolution_event"]["evolution_event_id"],
+            succeeded=True,
+            evidence="下一次真实回复已应用。",
+        )
+        same = submit_self_evolution_event(store, operation_id="same", evidence=first_evidence, **kwargs)
+        recurrent = submit_self_evolution_event(
+            store,
+            operation_id="recurrent",
+            evidence=[{"source": "reply_ledger", "text": "再次漏用偏好", "message_id": "m2"}],
+            **kwargs,
+        )
+
+    assert same["self_evolution_event"]["status"] == "verified"
+    assert recurrent["self_evolution_event"]["status"] == "ready_for_application"
+    assert recurrent["self_evolution_event"]["reopened_after_verification"] is True
+    assert recurrent["self_evolution_event"]["regression_count"] == 1

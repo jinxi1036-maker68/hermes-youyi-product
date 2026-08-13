@@ -240,6 +240,7 @@ def normalize_evolution_candidate(raw: dict[str, Any]) -> dict[str, Any]:
         "next_effect": _limit_text(item.get("next_effect") or proposed_effect, 700),
         "applies_to_user_id": _limit_text(item.get("applies_to_user_id") or item.get("target_user_id"), 120),
         "applies_to_role": _limit_text(item.get("applies_to_role") or item.get("target_role"), 40),
+        "applies_to_scope": _normalize_application_scope(item.get("applies_to_scope") or item.get("target_scope")),
         "review_required_by": _limit_text(item.get("review_required_by"), 80),
         "source_text": _limit_text(item.get("source_text") or summary, 1000),
         "writeback_verified": bool(item.get("writeback_verified")),
@@ -303,6 +304,7 @@ def submit_self_evolution_event(
     next_effect: str = "",
     applies_to_user_id: str = "",
     applies_to_role: str = "",
+    applies_to_scope: str = "",
     review_required_by: str = "",
     source_text: str = "",
     source_message_id: str = "",
@@ -321,6 +323,7 @@ def submit_self_evolution_event(
         "next_effect": next_effect,
         "applies_to_user_id": applies_to_user_id,
         "applies_to_role": applies_to_role,
+        "applies_to_scope": applies_to_scope,
         "review_required_by": review_required_by,
         "source_text": source_text,
         "writeback_verified": bool(writeback_verified),
@@ -356,7 +359,16 @@ def submit_self_evolution_event(
                 merged["source_text"] = candidate["source_text"]
                 merged["proposed_effect"] = candidate["proposed_effect"]
                 merged["next_effect"] = candidate["next_effect"]
-            if str(existing.get("status") or "") not in {"verified", "applied"}:
+            new_evidence = _has_new_evidence(existing.get("evidence"), candidate["evidence"])
+            existing_status = str(existing.get("status") or "")
+            if existing_status in {"verified", "fixed"} and new_evidence:
+                merged["status"] = "ready_for_application" if candidate["risk_level"] == "low" else candidate["status"]
+                merged["reopened_after_verification"] = True
+                merged["regression_count"] = int(existing.get("regression_count") or 0) + 1
+            elif existing_status == "applied" and new_evidence:
+                merged["status"] = "failed"
+                merged["regression_count"] = int(existing.get("regression_count") or 0) + 1
+            elif existing_status not in {"verified", "fixed", "applied"}:
                 merged["status"] = candidate["status"]
             merged["source"] = {
                 "actor_user_id": identity.canonical_user_id,
@@ -389,6 +401,7 @@ def submit_self_evolution_event(
         "next_effect": candidate["next_effect"],
         "applies_to_user_id": candidate["applies_to_user_id"],
         "applies_to_role": candidate["applies_to_role"],
+        "applies_to_scope": candidate["applies_to_scope"],
         "review_required_by": candidate["review_required_by"] or _default_reviewer(candidate["risk_level"]),
         "source_text": candidate["source_text"],
         "writeback_verified": bool(candidate["writeback_verified"]),
@@ -462,6 +475,7 @@ def build_self_evolution_brief(
     identity: UserIdentity,
     limit: int = 12,
     now: datetime | None = None,
+    scope: str = "",
 ) -> dict[str, Any]:
     reference = now or datetime.now().astimezone()
     if identity.role in {"boss", "manager"} or identity.platform == "system":
@@ -474,7 +488,9 @@ def build_self_evolution_brief(
     recent_workstyles = _recent_workstyle_preferences(store, identity=identity, limit=6)
     eligible_events = [
         item for item in events
-        if _is_next_context_candidate(item, now=reference) and _applies_to_identity(item, identity)
+        if _is_next_context_candidate(item, now=reference)
+        and _applies_to_identity(item, identity)
+        and _applies_to_scope(item, scope)
     ]
     applicable_events, suppressed_duplicate_count = _dedupe_application_events(eligible_events)
     applicable_events = applicable_events[-max(1, min(limit, 12)):]
@@ -530,7 +546,13 @@ def conversation_evolution_context_for_user(
     limit: int = 5,
     now: datetime | None = None,
 ) -> str:
-    brief = build_self_evolution_brief(store, identity=identity, limit=limit, now=now)
+    brief = build_self_evolution_brief(
+        store,
+        identity=identity,
+        limit=limit,
+        now=now,
+        scope="direct_reply",
+    )
     lines = ["【小优自我进化上下文】"]
     lines.append("来源：夜间复盘账本和已验证工作方式偏好；这是经验材料，不是 Router，也不替模型决定动作。")
     next_context = brief.get("next_day_context") or []
@@ -568,17 +590,24 @@ def _applies_to_identity(item: dict[str, Any], identity: UserIdentity) -> bool:
         return False
     if target_role and target_role != identity.role:
         return False
-    if not target_user and not target_role:
-        text = "".join(str(item.get(key) or "") for key in ("summary", "proposed_effect", "next_effect"))
-        if any(term in text for term in ("李老师", "CeShi")):
-            return identity.canonical_user_id == "CeShi" or identity.platform_user_id == "CeShi"
-        if any(term in text for term in ("老板", "金总", "老板日报")):
-            return identity.role == "boss"
-        if "店长" in text:
-            return identity.role == "manager"
-        if "老师" in text:
-            return identity.role == "teacher"
+    if not target_user and not target_role and _looks_identity_specific(item):
+        # Legacy rows that mention a person but omit an explicit scope are
+        # quarantined. Guessing identity from prose caused cross-person memory.
+        return False
     return True
+
+
+def _looks_identity_specific(item: dict[str, Any]) -> bool:
+    text = "".join(str(item.get(key) or "") for key in ("summary", "proposed_effect", "next_effect"))
+    return any(term in text for term in ("老板", "金总", "店长", "老师", "CeShi", "JinWenJie"))
+
+
+def _applies_to_scope(item: dict[str, Any], scope: str) -> bool:
+    requested = str(scope or "").strip()
+    target = str(item.get("applies_to_scope") or "").strip()
+    if not requested or not target or target == "all_communication":
+        return True
+    return target == requested
 
 
 def record_self_evolution_application(
@@ -588,6 +617,8 @@ def record_self_evolution_application(
     source_message_id: str,
     final_reply: str,
     tool_write_verified: bool = False,
+    scope: str = "direct_reply",
+    workstyle_adaptation: dict[str, Any] | None = None,
     limit: int = 3,
 ) -> dict[str, Any]:
     """Record that ready experience was actually carried into a real reply."""
@@ -599,10 +630,13 @@ def record_self_evolution_application(
         and str(item.get("status") or "") == "ready_for_application"
         and _is_next_context_candidate(item, now=reference)
         and _applies_to_identity(item, identity)
+        and _applies_to_scope(item, scope)
     ]
     candidates, _ = _dedupe_application_events(candidates)
     candidates = candidates[-max(1, min(int(limit or 3), 3)):]
     applied: list[dict[str, Any]] = []
+    verified: list[dict[str, Any]] = []
+    failed: list[dict[str, Any]] = []
     for candidate in candidates:
         row = deepcopy(candidate)
         row["status"] = "applied"
@@ -613,16 +647,66 @@ def record_self_evolution_application(
             "target_role": identity.role,
             "reply_excerpt": _limit_text(final_reply, 300),
             "tool_write_verified": bool(tool_write_verified),
+            "scope": str(scope or "direct_reply"),
         }
         _append_jsonl(store, SELF_EVOLUTION_EVENTS_FILE, row)
         applied.append(row)
+        verification = _automatic_application_verification(
+            candidate,
+            workstyle_adaptation=workstyle_adaptation or {},
+        )
+        if verification is not None:
+            checked = deepcopy(row)
+            checked["status"] = "verified" if verification[0] else "failed"
+            checked["updated_at"] = now_iso()
+            checked["verification_evidence"] = verification[1]
+            checked["verification_mode"] = "deterministic_post_reply"
+            _append_jsonl(store, SELF_EVOLUTION_EVENTS_FILE, checked)
+            (verified if verification[0] else failed).append(checked)
     return {
         "ok": True,
         "applied_count": len(applied),
         "applied_event_ids": [str(item.get("evolution_event_id") or "") for item in applied],
+        "verified_count": len(verified),
+        "failed_count": len(failed),
+        "verification_pending_count": len(applied) - len(verified) - len(failed),
         "state_changed": bool(applied),
         "writeback_verified": bool(applied),
     }
+
+
+def _automatic_application_verification(
+    candidate: dict[str, Any],
+    *,
+    workstyle_adaptation: dict[str, Any],
+) -> tuple[bool, str] | None:
+    """Verify only outcomes for which the runtime has deterministic evidence."""
+
+    summary = "".join(
+        str(candidate.get(key) or "")
+        for key in ("summary", "proposed_effect", "next_effect", "target_store")
+    )
+    workstyle_terms = (
+        "工作方式", "偏好", "汇报", "日报", "早报", "晚报", "只说重点",
+        "先说结论", "格式", "语气", "提醒时间", "回复长度", WORKSTYLE_EVENTS_FILE,
+    )
+    if not any(term in summary for term in workstyle_terms):
+        return None
+    application_result = workstyle_adaptation.get("application_result")
+    application = (
+        application_result.get("application")
+        if isinstance(application_result, dict) and isinstance(application_result.get("application"), dict)
+        else {}
+    )
+    compliance = application.get("compliance") if isinstance(application.get("compliance"), dict) else None
+    if compliance is None:
+        return None
+    if workstyle_adaptation.get("unverified_commitment") is True:
+        return False, "本轮仍出现没有写后反查的保存承诺。"
+    if compliance.get("ok") is True:
+        return True, "工作方式应用记录已写后反查，且本轮输出约束检查通过。"
+    failures = ",".join(str(item) for item in compliance.get("failures") or [])
+    return False, _limit_text(f"本轮工作方式输出约束检查失败：{failures or 'unknown'}", 700)
 
 
 def verify_self_evolution_application(
@@ -677,6 +761,8 @@ def _semantic_fingerprint(candidate: dict[str, Any]) -> str:
             str(candidate.get("summary") or "").lower(),
             str(candidate.get("target_store") or ""),
             str(candidate.get("applies_to_user_id") or ""),
+            str(candidate.get("applies_to_role") or ""),
+            str(candidate.get("applies_to_scope") or ""),
         )
     )
     return hashlib.sha256(base.encode("utf-8")).hexdigest()[:24]
@@ -711,7 +797,7 @@ def _normalized_lesson_text(summary: str) -> str:
 def _same_application_lesson(existing: dict[str, Any], candidate: dict[str, Any]) -> bool:
     if str(existing.get("candidate_type") or "") != str(candidate.get("candidate_type") or ""):
         return False
-    for key in ("target_store", "applies_to_user_id", "applies_to_role"):
+    for key in ("target_store", "applies_to_user_id", "applies_to_role", "applies_to_scope"):
         if str(existing.get(key) or "") != str(candidate.get(key) or ""):
             return False
     left = _normalized_lesson_text(str(existing.get("summary") or ""))
@@ -719,6 +805,28 @@ def _same_application_lesson(existing: dict[str, Any], candidate: dict[str, Any]
     if min(len(left), len(right)) < 12:
         return False
     return SequenceMatcher(None, left, right).ratio() >= 0.78
+
+
+def _normalize_application_scope(value: Any) -> str:
+    scope = str(value or "").strip().lower()
+    allowed = {
+        "", "all_communication", "direct_reply", "daily_report", "task_followup",
+        "teacher_support", "manager_support", "proactive_question", "autonomous_work",
+    }
+    return scope if scope in allowed else ""
+
+
+def _has_new_evidence(existing: Any, candidate: Any) -> bool:
+    def fingerprints(value: Any) -> set[str]:
+        rows = value if isinstance(value, list) else []
+        return {
+            json.dumps(item, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+            for item in rows
+            if isinstance(item, (dict, list, str, int, float, bool)) or item is None
+        }
+
+    incoming = fingerprints(candidate)
+    return bool(incoming - fingerprints(existing))
 
 
 def _prefer_candidate_summary(candidate: str, existing: str) -> bool:

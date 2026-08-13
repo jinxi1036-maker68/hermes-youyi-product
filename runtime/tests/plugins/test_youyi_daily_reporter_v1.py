@@ -292,6 +292,8 @@ def test_daily_report_applies_next_day_self_evolution_context(tmp_path):
             candidate_type="self_correction",
                 summary="昨天老板嫌晚报太长，今天日报只放重点和异常，不展开过程。",
                 evidence=[{"source": "owner_feedback", "text": "老板要求日报只说重点。"}],
+                applies_to_role="boss",
+                applies_to_scope="daily_report",
                 occurred_at="2026-08-08T23:00:00+08:00",
             )
 
@@ -324,6 +326,8 @@ def test_morning_report_does_not_relabel_yesterday_relative_time_as_today(tmp_pa
                     "evidence": [{"source": "conversation_replay", "text": "老板21:01反问当前事项。"}],
                 "risk_level": "low",
                 "status": "ready_for_application",
+                "applies_to_role": "boss",
+                "applies_to_scope": "daily_report",
                 "created_at": "2026-08-12T23:10:00+08:00",
             }
         ],

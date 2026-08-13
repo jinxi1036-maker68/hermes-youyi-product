@@ -1169,9 +1169,18 @@ def materialize_employee_decision(
         )
         latest_owner_contact_at = _latest_owner_contact_at(materials)
         cadence_mode = str(((materials or {}).get("work_cadence") or {}).get("mode") or "")
+        ready_evolution_count = 0
         for idx, candidate in enumerate(decision.get("evolution_candidates") or []):
             if not isinstance(candidate, dict):
                 continue
+            is_ready_low_risk = (
+                str(candidate.get("risk_level") or "") == "low"
+                and str(candidate.get("status") or "") == "ready_for_application"
+            )
+            if cadence_mode in {"evening_review", "night_read_only_review"} and is_ready_low_risk:
+                if ready_evolution_count >= 3:
+                    continue
+                ready_evolution_count += 1
             res = submit_self_evolution_event(
                 store,
                 identity=identity,
@@ -1186,6 +1195,7 @@ def materialize_employee_decision(
                 next_effect=_limit(candidate.get("next_effect"), 700),
                 applies_to_user_id=_limit(candidate.get("applies_to_user_id"), 120),
                 applies_to_role=_limit(candidate.get("applies_to_role"), 40),
+                applies_to_scope=_limit(candidate.get("applies_to_scope"), 40),
                 review_required_by=_limit(candidate.get("review_required_by"), 80),
                 source_text=_limit(candidate.get("source_text") or decision.get("employee_summary") or "", 1000),
                 source_message_id=f"autonomous_employee_loop:{timestamp.strftime('%Y%m%d%H%M%S')}",
@@ -1411,6 +1421,7 @@ def materialize_employee_decision(
             decision=decision,
             timestamp=timestamp,
             op_prefix=op_prefix,
+            allow_external=cadence_mode == "daytime_goal_progress",
         )
         writes.extend(relationship_writes)
         reminder_writes = _materialize_owner_attention_candidates(
@@ -1640,7 +1651,7 @@ goal_action_submissions 必须引用材料里的真实活动 goal_id，说明 ac
 
 _REVIEW_PROMPT = """你是托管机构数字员工小优，本轮只做晚间经验复盘。
 从诊断、行动和既有进化记录中选择真正值得明天应用的经验。不要为了证明醒来而制造学习；不得自动改变制度、工资、权限、家长外发或正式手册。
-每条 evolution_candidate 必须有非空 evidence，引用本轮输入中的当前事实并写明 source 与原文片段；不得引用 historical_requires_revalidation 材料。没有当前证据就不要生成候选。
+每条 evolution_candidate 必须有非空 evidence，引用本轮输入中的当前事实并写明 source 与原文片段；不得引用 historical_requires_revalidation 材料。没有当前证据就不要生成候选。凡是只适用于某个人或角色的经验，必须明确 applies_to_user_id 或 applies_to_role；凡是只适用于日报、直接回复、任务跟进等场景的经验，必须明确 applies_to_scope。不能靠姓名文字猜适用对象。
 建议主动找老板、店长或老师时，证据还必须包含当前有效 authorization_id；没有正式授权只能标为 candidate，不能 ready_for_application。
 self_review 也必须带非空 evidence；只能总结本轮真实核验过的材料。没有证据时返回空对象，不得把模型感想写成经验。
 只返回一个精简 JSON 对象，字段固定为 evolution_candidates 和 self_review。evolution_candidates 最多3条；self_review 只保留今天核验、学到、缺少、明日重点和质量分。"""
@@ -2068,6 +2079,7 @@ def _materialize_relationship_touch_candidates(
     decision: dict[str, Any],
     timestamp: datetime,
     op_prefix: str,
+    allow_external: bool = True,
 ) -> list[dict[str, Any]]:
     writes: list[dict[str, Any]] = []
     candidates = decision.get("relationship_touch_candidates") or []
@@ -2094,7 +2106,7 @@ def _materialize_relationship_touch_candidates(
         if role in {"manager", "teacher"} and not target_user_id:
             target_user_id = _resolve_staff_user_id(store, role=role, target_name=_limit(candidate.get("target_name"), 80))
         queued_for_target = staff_queued_counts.get((role, target_user_id), 0)
-        external_allowed = _relationship_touch_external_allowed(
+        external_allowed = allow_external and _relationship_touch_external_allowed(
             store,
             outbox,
             day=day,

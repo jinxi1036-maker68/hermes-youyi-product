@@ -876,3 +876,55 @@ def test_contact_learning_requires_a_current_real_authorization_id():
         {"proactive_authorizations": {"authorizations": [{"authorization_id": "auth_manager", "effective": True}]}},
     )
     assert with_auth["evolution_candidates"][0]["status"] == "ready_for_application"
+
+
+def test_evening_relationship_touch_is_candidate_only_even_when_policy_window_is_open(tmp_path):
+    from plugins.tuoguan_core.autonomous_employee_loop import run_autonomous_employee_loop
+
+    store = _seed_store(tmp_path)
+    _write_json(tmp_path, "relationship_touch_policy.json", {
+        "teacher": {
+            "mode": "direct",
+            "allowed_target_user_ids": ["teacher1"],
+            "allowed_start": "08:00",
+            "allowed_end": "23:59",
+            "daily_limit": 2,
+            "allowed_types": ["material_support"],
+        }
+    })
+
+    def provider(_materials: dict) -> dict:
+        return {
+            "employee_summary": "晚间只形成明日核对候选。",
+            "institution_understanding": "缺少老师的一项任务事实。",
+            "goal_progress_view": "等待白天再询问。",
+            "observations": [],
+            "work_item_updates": [],
+            "questions_to_humans": [],
+            "boss_attention_candidates": [],
+            "relationship_touch_candidates": [{
+                "target_role": "teacher",
+                "target_user_id": "teacher1",
+                "target_name": "李老师",
+                "touch_type": "material_support",
+                "message": "李老师，方便时请帮我确认一下当前任务还缺哪项事实？",
+                "reason": "当前任务证据缺一项老师一手事实。",
+                "value": "补齐后才能继续核验任务。",
+                "work_related": True,
+            }],
+            "evolution_candidates": [],
+            "self_review": {},
+            "external_actions": [],
+        }
+
+    result = run_autonomous_employee_loop(
+        store,
+        now=datetime(2026, 8, 13, 20, 30, tzinfo=timezone(timedelta(hours=8))),
+        decision_provider=provider,
+    )
+
+    assert result["ok"] is True
+    assert json.loads((tmp_path / "notification_outbox.json").read_text(encoding="utf-8")) == []
+    candidates = [json.loads(line) for line in (tmp_path / "relationship_touch_candidates.jsonl").read_text(encoding="utf-8").splitlines()]
+    assert candidates[-1]["status"] == "candidate"
+    assert not any(row.get("kind") == "relationship_touch_queued" for row in result["writes"])

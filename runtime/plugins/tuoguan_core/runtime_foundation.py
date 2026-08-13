@@ -1477,6 +1477,8 @@ def ensure_outbound_reply_recorded(
                 source_message_id=message_id,
                 final_reply=str(final_reply or ""),
                 tool_write_verified=_tool_results_have_verified_write(item.get("tool_results") or []),
+                scope="direct_reply",
+                workstyle_adaptation=item.get("workstyle_adaptation") or {},
                 limit=3,
             )
     except Exception:
