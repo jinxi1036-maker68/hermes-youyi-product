@@ -380,7 +380,13 @@ def query_parent_communication_coverage(
     return result
 
 
-def query_active_goal_work_state(store: TuoguanStore, *, identity: UserIdentity, goal_id: str = "") -> dict[str, Any]:
+def query_active_goal_work_state(
+    store: TuoguanStore,
+    *,
+    identity: UserIdentity,
+    goal_id: str = "",
+    now: datetime | None = None,
+) -> dict[str, Any]:
     goals = store.read_json("goal_operator_goals.json", {"goals": []})
     if isinstance(goals, dict):
         rows = goals.get("goals") or goals.get("items") or []
@@ -394,7 +400,8 @@ def query_active_goal_work_state(store: TuoguanStore, *, identity: UserIdentity,
     else:
         rows = [
             row for row in rows
-            if str(row.get("status") or "active").lower() not in {"completed", "cancelled", "closed", "done"}
+            if str(row.get("status") or "active").lower()
+            not in {"completed", "cancelled", "closed", "done", "withdrawn", "superseded", "expired"}
         ]
     evidence = _read_jsonl(store, GOAL_EVIDENCE_FILE)
     term_state = store.read_json("academic_term_state.json", {})
@@ -412,7 +419,10 @@ def query_active_goal_work_state(store: TuoguanStore, *, identity: UserIdentity,
             include_closed=False,
             limit=5,
         )
-        work_items = work_result.get("items") if isinstance(work_result, dict) else []
+        work_items, historical_work, retired_work_count = _current_autonomous_work_items(
+            work_result if isinstance(work_result, dict) else {},
+            (now or datetime.now().astimezone()).astimezone(),
+        )
         current_work = work_items[-1] if isinstance(work_items, list) and work_items else {}
         review = goal.get("review_snapshot") if isinstance(goal.get("review_snapshot"), dict) else {}
         compact_goal = {
@@ -432,6 +442,9 @@ def query_active_goal_work_state(store: TuoguanStore, *, identity: UserIdentity,
                 "next_attention_at": current_work.get("next_attention_at"),
                 "latest_update_text": current_work.get("latest_update_text"),
                 "progress_evidence": (current_work.get("progress_evidence") or [])[-10:],
+                "material_status": "current" if current_work else "no_current_work_item",
+                "historical_open_count": len(historical_work),
+                "retired_open_count": retired_work_count,
             },
         }
         if deferred:
@@ -450,6 +463,11 @@ def query_active_goal_work_state(store: TuoguanStore, *, identity: UserIdentity,
                 "old_roster_is_current_fact": False,
             }
         compact_goals.append(compact_goal)
+    returned_goal_ids = {str(item.get("goal_id") or "") for item in compact_goals if str(item.get("goal_id") or "")}
+    selected_evidence = [
+        row for row in evidence
+        if isinstance(row, dict) and str(row.get("goal_id") or "") in returned_goal_ids
+    ]
     compact_evidence = [
         {
             "evidence_id": row.get("evidence_id"),
@@ -458,14 +476,14 @@ def query_active_goal_work_state(store: TuoguanStore, *, identity: UserIdentity,
             "summary": row.get("summary") or row.get("evidence_text"),
             "created_at": row.get("created_at"),
         }
-        for row in evidence[-20:]
+        for row in selected_evidence[-20:]
         if isinstance(row, dict)
     ]
     return {
         "ok": True,
         "goal_count": len(compact_goals),
         "goals": compact_goals,
-        "evidence_count": len(evidence),
+        "evidence_count": len(selected_evidence),
         "recent_evidence": compact_evidence,
         "term_state": term_state if deferred else {},
         "rendered_text": (

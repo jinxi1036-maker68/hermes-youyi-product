@@ -221,7 +221,7 @@ def run_autonomous_employee_loop(
 
 def build_employee_loop_materials(store: TuoguanStore, *, identity: UserIdentity, timestamp: datetime, wakeup_summary: dict[str, Any] | None = None) -> dict[str, Any]:
     onboarding = _query_onboarding(store)
-    active_goals = query_active_goal_work_state(store, identity=identity)
+    active_goals = query_active_goal_work_state(store, identity=identity, now=timestamp)
     raw_work_items = query_hermes_work_items(store, identity=identity, include_closed=False, limit=20)
     work_items = _prepare_current_work_item_materials(raw_work_items, timestamp)
     work_brief = _current_work_brief(work_items)
@@ -514,6 +514,28 @@ def _trusted_staff_identity_material(store: TuoguanStore) -> dict[str, Any]:
 
 def _assert_decision_uses_supported_staff_identity(decision: dict[str, Any], materials: dict[str, Any]) -> None:
     text = json.dumps(decision, ensure_ascii=False)
+    trusted = materials.get("trusted_staff_identities") if isinstance(materials, dict) else {}
+    trusted_rows = trusted.get("staff") if isinstance(trusted, dict) and isinstance(trusted.get("staff"), list) else []
+    for entry in trusted_rows:
+        if not isinstance(entry, dict) or entry.get("full_name_confirmed"):
+            continue
+        user_id = str(entry.get("user_id") or "").strip()
+        if not user_id or user_id not in text:
+            continue
+        allowed_names = {
+            str(value).strip()
+            for value in (
+                entry.get("business_name"),
+                entry.get("directory_name"),
+                *(entry.get("known_aliases") or []),
+            )
+            if str(value or "").strip()
+        }
+        pattern = rf"([\u4e00-\u9fff·]{{2,10}})[（(]\s*(?:user[_ ]?id\s*[:：]\s*)?{re.escape(user_id)}"
+        for match in re.finditer(pattern, text, flags=re.I):
+            proposed_name = match.group(1)
+            if not any(proposed_name == name or proposed_name.endswith(name) for name in allowed_names):
+                raise ValueError("unsupported_staff_identity_claim:unconfirmed_name_inferred_from_user_id")
     strong_markers = ("全名已确认", "实名已确认", "真实姓名已确认", "full name is confirmed", "legal name is confirmed")
     claimed_names = [
         match.group(1)
@@ -522,7 +544,6 @@ def _assert_decision_uses_supported_staff_identity(decision: dict[str, Any], mat
     ]
     if not claimed_names and not any(marker.lower() in text.lower() for marker in strong_markers):
         return
-    trusted = materials.get("trusted_staff_identities") if isinstance(materials, dict) else {}
     confirmed = [str(name) for name in (trusted.get("confirmed_full_names") or []) if str(name).strip()] if isinstance(trusted, dict) else []
     if not confirmed:
         raise ValueError("unsupported_staff_identity_claim:no_confirmed_full_name_evidence")

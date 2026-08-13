@@ -965,7 +965,7 @@ def _collect_internal_goal_evidence(
         from .digital_employee_state import query_active_goal_work_state, query_employee_work_map
 
         goal_id = str(action.get("goal_id") or "")
-        goal_state = query_active_goal_work_state(store, identity=identity, goal_id=goal_id)
+        goal_state = query_active_goal_work_state(store, identity=identity, goal_id=goal_id, now=timestamp)
         work_map = query_employee_work_map(store, identity=identity, limit=8)
         goal_rows = goal_state.get("goals") if isinstance(goal_state.get("goals"), list) else []
         goal = goal_rows[0] if goal_rows and isinstance(goal_rows[0], dict) else {}

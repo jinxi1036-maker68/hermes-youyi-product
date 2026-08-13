@@ -270,6 +270,47 @@ def test_autonomous_materials_quarantine_stale_work_and_use_trusted_staff_identi
     assert payload["trusted_staff_identities"]["confirmed_full_names"] == []
 
 
+def test_active_goal_state_excludes_withdrawn_goal_and_stale_goal_waiting(tmp_path):
+    from plugins.tuoguan_core.digital_employee_state import query_active_goal_work_state
+    from plugins.tuoguan_core.models import UserIdentity
+
+    store = _seed_store(tmp_path)
+    _write_json(tmp_path, "goal_operator_goals.json", {
+        "goals": [
+            {
+                "goal_id": "sept_renewal",
+                "goal_type": "renewal",
+                "goal_text": "九月份续费率更稳",
+                "status": "confirmed",
+                "owner_user_id": "boss1",
+                "created_at": "2026-07-28T08:00:00+08:00",
+                "updated_at": "2026-07-28T08:00:00+08:00",
+            },
+            {
+                "goal_id": "old-withdrawn",
+                "goal_type": "parent_communication_coverage",
+                "goal_text": "已经撤回的旧目标",
+                "status": "withdrawn",
+                "owner_user_id": "boss1",
+            },
+        ]
+    })
+    identity = UserIdentity("system", "boss1", "boss1", "金总", "boss", "approved")
+
+    result = query_active_goal_work_state(
+        store,
+        identity=identity,
+        now=datetime(2026, 8, 13, 18, 30, tzinfo=timezone(timedelta(hours=8))),
+    )
+
+    assert result["goal_count"] == 1
+    assert result["goals"][0]["goal_id"] == "sept_renewal"
+    work = result["goals"][0]["current_work_state"]
+    assert work["material_status"] == "no_current_work_item"
+    assert work["current_waiting"] is None
+    assert work["historical_open_count"] == 1
+
+
 def test_autonomous_loop_rejects_invented_staff_full_name_before_writes(tmp_path):
     from plugins.tuoguan_core.autonomous_employee_loop import run_autonomous_employee_loop
 
@@ -292,6 +333,28 @@ def test_autonomous_loop_rejects_invented_staff_full_name_before_writes(tmp_path
     assert json.loads((tmp_path / "notification_outbox.json").read_text(encoding="utf-8")) == []
 
 
+def test_autonomous_loop_rejects_unconfirmed_chinese_name_inferred_from_user_id(tmp_path):
+    from plugins.tuoguan_core.autonomous_employee_loop import run_autonomous_employee_loop
+
+    store = _seed_store(tmp_path)
+
+    def inferred_name(materials: dict) -> dict:
+        result = _decision(materials)
+        result["institution_understanding"] = "老师李晓静（user_id: teacher1）在职，但全名未确认。"
+        return result
+
+    result = run_autonomous_employee_loop(
+        store,
+        now=datetime(2026, 8, 13, 18, 30, tzinfo=timezone(timedelta(hours=8))),
+        decision_provider=inferred_name,
+    )
+
+    assert result["ok"] is False
+    assert result["error"] == "employee_loop_model_decision_failed"
+    assert "unconfirmed_name_inferred_from_user_id" in result["message"]
+    assert json.loads((tmp_path / "notification_outbox.json").read_text(encoding="utf-8")) == []
+
+
 def test_autonomous_identity_guard_allows_honest_unconfirmed_full_name(tmp_path):
     from plugins.tuoguan_core.autonomous_employee_loop import run_autonomous_employee_loop
 
@@ -308,6 +371,28 @@ def test_autonomous_identity_guard_allows_honest_unconfirmed_full_name(tmp_path)
         store,
         now=datetime(2026, 8, 13, 12, 30, tzinfo=timezone(timedelta(hours=8))),
         decision_provider=honest_gap,
+        write_state=False,
+    )
+
+    assert result["ok"] is True
+
+
+def test_autonomous_identity_guard_allows_business_name_beside_user_id(tmp_path):
+    from plugins.tuoguan_core.autonomous_employee_loop import run_autonomous_employee_loop
+
+    store = _seed_store(tmp_path)
+
+    def honest_business_name(materials: dict) -> dict:
+        result = _decision(materials)
+        result["institution_understanding"] = "李老师（user_id: teacher1）是业务称呼；全名未确认。"
+        result["boss_attention_candidates"] = []
+        result["questions_to_humans"] = []
+        return result
+
+    result = run_autonomous_employee_loop(
+        store,
+        now=datetime(2026, 8, 13, 18, 30, tzinfo=timezone(timedelta(hours=8))),
+        decision_provider=honest_business_name,
         write_state=False,
     )
 
