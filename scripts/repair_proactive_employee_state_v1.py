@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 from datetime import datetime
+from copy import deepcopy
 import json
 from pathlib import Path
 import sys
@@ -104,12 +105,26 @@ def build_plan(store: TuoguanStore) -> dict[str, Any]:
         str(row.get("goal_id") or "") for row in active_goals
         if str(row.get("goal_id") or "") and str(row.get("goal_id") or "") not in action_goal_ids
     ]
+    folded_evolution: dict[str, dict[str, Any]] = {}
+    for row in _read_jsonl(store.path_for(SELF_EVOLUTION_FILE)):
+        if str(row.get("record_type") or "") != "self_evolution_event":
+            continue
+        key = str(row.get("semantic_fingerprint") or row.get("evolution_event_id") or "")
+        if key:
+            folded_evolution[key] = row
+    unsupported_evolution = [
+        row for row in folded_evolution.values()
+        if str(row.get("status") or "") in {"candidate", "ready_for_application", "applied", "pending_review", "needs_confirmation"}
+        and not (row.get("evidence") or [])
+        and str((row.get("source") or {}).get("actor_user_id") or "") == "autonomous_employee_loop"
+    ]
     return {
         "stale_relationship_touch_ids": [str(row.get("candidate_id") or "") for row in stale_touches],
         "semantic_mismatch_preference_ids": [str(row.get("preference_id") or row.get("event_id") or "") for row in mismatches],
         "stale_work_focus_keys": [str(row.get("focus_key") or "") for row in stale_work],
         "authorization_additions": authorization_additions,
         "goal_action_seed_goal_ids": goal_action_seed_goal_ids,
+        "unsupported_evolution_event_ids": [str(row.get("evolution_event_id") or "") for row in unsupported_evolution],
     }
 
 
@@ -189,6 +204,26 @@ def apply_plan(store: TuoguanStore, plan: dict[str, Any]) -> dict[str, Any]:
                 escalation_path=["manager_for_operating_fact", "boss_if_blocked_or_high_risk"],
                 source_text="真实数字员工闭环上线前，既有确认目标缺少持久行动账本。",
             ))
+        evolution_rows = _read_jsonl(store.path_for(SELF_EVOLUTION_FILE))
+        for event_id in plan.get("unsupported_evolution_event_ids") or []:
+            current = next(
+                (row for row in reversed(evolution_rows) if str(row.get("evolution_event_id") or "") == str(event_id)),
+                None,
+            )
+            if not current or str(current.get("status") or "") == "superseded":
+                continue
+            row = deepcopy(current)
+            row["status"] = "superseded"
+            row["updated_at"] = stamp
+            row["invalidation_reason"] = "夜间候选缺少当前事实证据，不能进入次日应用。"
+            row["repair_operation_id"] = f"repair-proactive:evolution:{event_id}"
+            store.append_jsonl_verified(SELF_EVOLUTION_FILE, row)
+            results.append({
+                "ok": True,
+                "writeback_verified": True,
+                "kind": "unsupported_evolution_superseded",
+                "evolution_event_id": event_id,
+            })
     return {
         "ok": all(item.get("ok") for item in results),
         "result_count": len(results),

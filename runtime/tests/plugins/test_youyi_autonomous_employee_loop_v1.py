@@ -812,3 +812,67 @@ def test_autonomous_evidence_queries_fail_closed_when_tenant_owner_is_missing(tm
     assert loop._query_onboarding(store)["error"] == "owner_identity_missing"
     assert loop._query_operating_evidence(store)["error"] == "owner_identity_missing"
     assert not (tmp_path / "wecom_whitelist.json").exists()
+
+
+def test_night_review_without_current_evidence_does_not_enter_learning_ledgers(tmp_path):
+    from plugins.tuoguan_core.autonomous_employee_loop import run_autonomous_employee_loop
+
+    store = _seed_store(tmp_path)
+
+    def provider(_materials):
+        return {
+            "employee_summary": "夜间复盘。",
+            "institution_understanding": "",
+            "goal_progress_view": "",
+            "observations": [],
+            "work_item_updates": [],
+            "questions_to_humans": [],
+            "boss_attention_candidates": [],
+            "relationship_touch_candidates": [],
+            "relationship_touch_executions": [],
+            "goal_action_submissions": [],
+            "goal_action_decisions": [],
+            "institution_fact_gaps": [],
+            "value_progress_entries": [],
+            "agent_delegation_decisions": [],
+            "evolution_candidates": [{"candidate_type": "tomorrow_focus", "summary": "明天继续追问旧问题。", "evidence": []}],
+            "self_review": {"tomorrow_focus": "继续追问旧问题", "quality_score": 80, "evidence": []},
+            "external_actions": [],
+        }
+
+    result = run_autonomous_employee_loop(
+        store,
+        now=datetime(2026, 8, 13, 20, 0, tzinfo=timezone(timedelta(hours=8))),
+        decision_provider=provider,
+    )
+
+    assert result["ok"] is True
+    assert result["decision"]["evolution_candidates"] == []
+    assert not (tmp_path / "self_evolution_events.jsonl").exists()
+    assert not (tmp_path / "hermes_employee_scorecard.jsonl").exists()
+    assert not any(row.get("kind") == "self_review" for row in result["writes"])
+
+
+def test_contact_learning_requires_a_current_real_authorization_id():
+    from plugins.tuoguan_core.autonomous_employee_loop import normalize_employee_decision_for_materials, validate_employee_decision
+
+    raw = {
+        "evolution_candidates": [{
+            "candidate_type": "tomorrow_focus",
+            "summary": "明天主动问店长核对排班事实。",
+            "status": "ready_for_application",
+            "evidence": [{"source": "proactive_authorization", "text": "允许核对运营事实", "authorization_id": "auth_manager"}],
+        }],
+        "self_review": {},
+    }
+    without_auth = normalize_employee_decision_for_materials(
+        validate_employee_decision(raw),
+        {"proactive_authorizations": {"authorizations": []}},
+    )
+    assert without_auth["evolution_candidates"][0]["status"] == "candidate"
+
+    with_auth = normalize_employee_decision_for_materials(
+        validate_employee_decision(raw),
+        {"proactive_authorizations": {"authorizations": [{"authorization_id": "auth_manager", "effective": True}]}},
+    )
+    assert with_auth["evolution_candidates"][0]["status"] == "ready_for_application"

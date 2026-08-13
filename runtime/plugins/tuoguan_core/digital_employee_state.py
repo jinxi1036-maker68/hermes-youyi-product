@@ -2462,9 +2462,13 @@ def query_hermes_employee_scorecard(store: TuoguanStore, *, identity: UserIdenti
     if identity.role not in {"boss", "manager"}:
         return {"ok": False, "error": "permission_denied", "message": "只有老板或店长可以查看 Hermes 员工自评。"}
     all_rows = _read_jsonl(store, HERMES_EMPLOYEE_SCORECARD_FILE)
+    verified_rows = [
+        row for row in all_rows
+        if row.get("evidence_verified") is True and _employee_review_evidence(row.get("evidence"))
+    ]
     by_date: dict[str, dict[str, Any]] = {}
     undated: list[dict[str, Any]] = []
-    for row in all_rows:
+    for row in verified_rows:
         review_date = str(row.get("review_date") or "").strip()
         if review_date:
             by_date[review_date] = row
@@ -2479,7 +2483,8 @@ def query_hermes_employee_scorecard(store: TuoguanStore, *, identity: UserIdenti
     return {
         "ok": True,
         "review_count": len(rows),
-        "historical_duplicate_count": max(0, len(all_rows) - len(rows)),
+        "historical_duplicate_count": max(0, len(verified_rows) - len(rows)),
+        "historical_unverified_count": max(0, len(all_rows) - len(verified_rows)),
         "latest_review": latest,
         "reviews": rows,
         "rendered_text": rendered,
@@ -2502,21 +2507,34 @@ def submit_employee_self_review(
     learning_growth: str = "",
     tomorrow_focus: str = "",
     blocked_by: list[Any] | None = None,
+    evidence: list[Any] | None = None,
     quality_score: int = 0,
     source_text: str = "",
     source_message_id: str = "",
 ) -> dict[str, Any]:
     normalized_review_date = str(review_date or now_iso()[:10]).strip()
+    verified_evidence = _employee_review_evidence(evidence)
+    if not verified_evidence:
+        return {
+            "ok": False,
+            "error": "self_review_evidence_required",
+            "writeback_verified": False,
+            "message": "员工自评缺少当前事实证据，不能进入正式复盘账本。",
+        }
+    supersedes_review_id = ""
     for existing in reversed(_read_jsonl(store, HERMES_EMPLOYEE_SCORECARD_FILE)[-60:]):
         if str(existing.get("review_date") or "") == normalized_review_date:
-            return {
-                "ok": True,
-                "self_review": existing,
-                "writeback_verified": True,
-                "state_changed": False,
-                "idempotent_replay": True,
-                "rendered_text": "今天的正式员工自评已经保存，本轮未重复追加。",
-            }
+            if existing.get("evidence_verified") is True and _employee_review_evidence(existing.get("evidence")):
+                return {
+                    "ok": True,
+                    "self_review": existing,
+                    "writeback_verified": True,
+                    "state_changed": False,
+                    "idempotent_replay": True,
+                    "rendered_text": "今天的正式员工自评已经保存，本轮未重复追加。",
+                }
+            supersedes_review_id = str(existing.get("review_id") or "")
+            break
     row = {
         "review_id": _new_id("employee_review"),
         "tenant_id": current_tenant_id(),
@@ -2530,16 +2548,42 @@ def submit_employee_self_review(
         "learning_growth": _limit_text(learning_growth, 800),
         "tomorrow_focus": _limit_text(tomorrow_focus, 800),
         "blocked_by": _strip_forbidden(blocked_by or []),
+        "evidence": verified_evidence,
+        "evidence_verified": True,
         "quality_score": max(0, min(int(quality_score or 0), 100)),
         "source_text": _limit_text(source_text),
         "source": _autonomous_source(identity, operation_id, source_message_id),
         "created_at": now_iso(),
         "auto_effects": {"updates_long_term_memory": False, "forces_next_action": False, "changes_router": False},
     }
+    if supersedes_review_id:
+        row["supersedes_review_id"] = supersedes_review_id
     if not any(row.get(key) for key in ("institution_understanding", "goal_progress", "tomorrow_focus", "blocked_by")):
         return {"ok": False, "error": "self_review_requires_content", "message": "员工自评至少要包含推进、卡点或明日重点。"}
     _append_jsonl(store, HERMES_EMPLOYEE_SCORECARD_FILE, row)
     return {"ok": True, "self_review": row, "writeback_verified": True, "state_changed": True, "rendered_text": "已保存 Hermes 员工自评；只用于内部复盘，不自动写长期记忆或限制模型。"}
+
+
+def _employee_review_evidence(value: Any) -> list[dict[str, Any]]:
+    if not isinstance(value, list):
+        return []
+    verified: list[dict[str, Any]] = []
+    for item in value[:8]:
+        if not isinstance(item, dict):
+            continue
+        source = str(item.get("source") or item.get("source_type") or "").strip()
+        excerpt = str(
+            item.get("text")
+            or item.get("excerpt")
+            or item.get("fact")
+            or item.get("summary")
+            or item.get("result")
+            or ""
+        ).strip()
+        serialized = json.dumps(item, ensure_ascii=False)
+        if source and excerpt and "historical_requires_revalidation" not in serialized:
+            verified.append(_strip_forbidden(item))
+    return verified
 
 
 def query_industry_learning_candidates(store: TuoguanStore, *, identity: UserIdentity, status: str = "", limit: int = 30) -> dict[str, Any]:

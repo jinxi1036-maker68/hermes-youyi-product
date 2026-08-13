@@ -801,12 +801,59 @@ def _normalize_evolution_candidates(items: list[dict[str, Any]]) -> list[dict[st
         if not isinstance(item, dict):
             continue
         candidate = normalize_evolution_candidate(item)
-        if not candidate.get("summary"):
+        evidence = candidate.get("evidence") or []
+        if not candidate.get("summary") or not _evolution_evidence_is_usable(evidence):
             continue
+        contact_text = "".join(str(candidate.get(key) or "") for key in ("summary", "proposed_effect", "next_effect"))
+        evidence_text = json.dumps(evidence, ensure_ascii=False)
+        if any(term in contact_text for term in ("找老板", "问老板", "向老板", "找店长", "问店长", "向店长", "找老师", "问老师", "向老师")):
+            if "authorization_id" not in evidence_text and "proactive_auth" not in evidence_text:
+                candidate["status"] = "candidate"
         normalized.append(candidate)
         if len(normalized) >= 6:
             break
     return normalized
+
+
+def _evolution_evidence_is_usable(value: Any) -> bool:
+    if not isinstance(value, list) or not value:
+        return False
+    for item in value[:8]:
+        if not isinstance(item, dict):
+            continue
+        source = _limit(item.get("source") or item.get("source_type"), 120)
+        excerpt = _limit(
+            item.get("text")
+            or item.get("excerpt")
+            or item.get("fact")
+            or item.get("summary")
+            or item.get("result"),
+            700,
+        )
+        serialized = json.dumps(item, ensure_ascii=False)
+        if source and excerpt and "historical_requires_revalidation" not in serialized:
+            return True
+    return False
+
+
+def _verified_review_action_executions(value: Any) -> dict[str, Any]:
+    payload = deepcopy(value) if isinstance(value, dict) else {}
+    rows = payload.get("executions") if isinstance(payload.get("executions"), list) else []
+    filtered: list[dict[str, Any]] = []
+    quarantined = 0
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        if str(row.get("action_type") or "") == "autonomous_self_review":
+            receipt = row.get("receipt") if isinstance(row.get("receipt"), dict) else {}
+            if receipt.get("evidence_verified") is not True or not _evolution_evidence_is_usable(receipt.get("evidence")):
+                quarantined += 1
+                continue
+        filtered.append(deepcopy(row))
+    payload["executions"] = filtered
+    payload["execution_count"] = len(filtered)
+    payload["historical_unverified_count"] = quarantined
+    return payload
 
 
 def _fallback_term_state(store: TuoguanStore, timestamp: datetime) -> dict[str, Any]:
@@ -854,7 +901,36 @@ def normalize_employee_decision_for_materials(decision: dict[str, Any], material
             materials,
             service_relations_deferred=service_relations_deferred,
         )
+    _restrict_evolution_contact_status(normalized, materials)
     return normalized
+
+
+def _restrict_evolution_contact_status(decision: dict[str, Any], materials: dict[str, Any]) -> None:
+    authorization_payload = materials.get("proactive_authorizations") if isinstance(materials, dict) else {}
+    authorizations = (
+        authorization_payload.get("authorizations")
+        if isinstance(authorization_payload, dict) and isinstance(authorization_payload.get("authorizations"), list)
+        else []
+    )
+    valid_ids = {
+        str(item.get("authorization_id") or "")
+        for item in authorizations
+        if isinstance(item, dict) and item.get("effective") is True and str(item.get("authorization_id") or "")
+    }
+    for candidate in decision.get("evolution_candidates") or []:
+        if not isinstance(candidate, dict):
+            continue
+        contact_text = "".join(str(candidate.get(key) or "") for key in ("summary", "proposed_effect", "next_effect"))
+        if not any(term in contact_text for term in ("找老板", "问老板", "向老板", "找店长", "问店长", "向店长", "找老师", "问老师", "向老师")):
+            continue
+        evidence_ids: set[str] = set()
+        for evidence in candidate.get("evidence") or []:
+            if not isinstance(evidence, dict):
+                continue
+            evidence_ids.add(str(evidence.get("authorization_id") or ""))
+            evidence_ids.update(str(value) for value in evidence.get("authorization_ids") or [])
+        if not (valid_ids & {value for value in evidence_ids if value}):
+            candidate["status"] = "candidate"
 
 
 def _filter_owner_attention_candidates(candidates: Any, *, service_relations_deferred: bool) -> list[dict[str, Any]]:
@@ -1236,16 +1312,17 @@ def materialize_employee_decision(
                 learning_growth=_limit(review.get("what_i_learned") or review.get("learning_growth"), 800),
                 tomorrow_focus=_limit(review.get("tomorrow_focus"), 800),
                 blocked_by=_list_any(review.get("blocked_by") or review.get("what_is_missing"), 8),
+                evidence=_list_any(review.get("evidence"), 8),
                 quality_score=_score_value(review.get("quality_score")),
                 source_text=review_text,
                 source_message_id=f"autonomous_employee_loop:{timestamp.strftime('%Y%m%d%H%M%S')}",
             )
             writes.append(_write_result("employee_scorecard", score_res))
-            if score_res.get("state_changed", True):
+            if score_res.get("ok") and score_res.get("state_changed", True):
                 res = submit_action_execution(
                     store, identity=identity, action_type="autonomous_self_review", action_summary="Hermes completed one model-led internal employee self-review.",
                     status="success", operation_id=f"{op_prefix}:self_review", idempotency_key=f"autonomous_employee_loop:{timestamp.strftime('%Y%m%d')}",
-                    receipt={"external_actions_taken": []}, result_text=review_text, source_text=decision.get("employee_summary") or review_text,
+                    receipt={"external_actions_taken": [], "evidence_verified": True, "evidence": _list_any(review.get("evidence"), 8)}, result_text=review_text, source_text=decision.get("employee_summary") or review_text,
                     source_message_id=f"autonomous_employee_loop:{timestamp.strftime('%Y%m%d%H%M%S')}",
                 )
                 writes.append(_write_result("self_review", res))
@@ -1454,7 +1531,7 @@ def _call_model_for_decision(materials: dict[str, Any]) -> dict[str, Any]:
                 "actions": actions,
                 "employee_scorecard": payload.get("employee_scorecard"),
                 "self_evolution_brief": payload.get("self_evolution_brief"),
-                "action_executions": payload.get("action_executions"),
+                "action_executions": _verified_review_action_executions(payload.get("action_executions")),
                 "value_progress_ledger": payload.get("value_progress_ledger"),
             },
             max_tokens=1400,
@@ -1563,6 +1640,9 @@ goal_action_submissions 必须引用材料里的真实活动 goal_id，说明 ac
 
 _REVIEW_PROMPT = """你是托管机构数字员工小优，本轮只做晚间经验复盘。
 从诊断、行动和既有进化记录中选择真正值得明天应用的经验。不要为了证明醒来而制造学习；不得自动改变制度、工资、权限、家长外发或正式手册。
+每条 evolution_candidate 必须有非空 evidence，引用本轮输入中的当前事实并写明 source 与原文片段；不得引用 historical_requires_revalidation 材料。没有当前证据就不要生成候选。
+建议主动找老板、店长或老师时，证据还必须包含当前有效 authorization_id；没有正式授权只能标为 candidate，不能 ready_for_application。
+self_review 也必须带非空 evidence；只能总结本轮真实核验过的材料。没有证据时返回空对象，不得把模型感想写成经验。
 只返回一个精简 JSON 对象，字段固定为 evolution_candidates 和 self_review。evolution_candidates 最多3条；self_review 只保留今天核验、学到、缺少、明日重点和质量分。"""
 
 
@@ -2565,6 +2645,8 @@ def _external_write_effects(writes: list[dict[str, Any]]) -> list[dict[str, Any]
 
 def _render_self_review_text(decision: dict[str, Any]) -> str:
     review = decision.get("self_review") if isinstance(decision.get("self_review"), dict) else {}
+    if not _evolution_evidence_is_usable(review.get("evidence")):
+        return ""
     parts = [decision.get("employee_summary") or "", decision.get("institution_understanding") or "", decision.get("goal_progress_view") or "", json.dumps(review, ensure_ascii=False) if review else ""]
     return _limit("\n".join(part for part in parts if part), 1500)
 

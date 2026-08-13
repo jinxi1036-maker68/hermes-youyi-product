@@ -76,6 +76,21 @@ def test_repair_is_append_only_and_converts_authorization_semantics(tmp_path):
             "created_at": "2026-08-13T12:00:00+08:00",
         }],
     )
+    _write_jsonl(
+        tmp_path,
+        "self_evolution_events.jsonl",
+        [{
+            "record_type": "self_evolution_event",
+            "evolution_event_id": "evolution_without_evidence",
+            "semantic_fingerprint": "fingerprint_without_evidence",
+            "candidate_type": "tomorrow_focus",
+            "summary": "明天去问店长旧名单。",
+            "evidence": [],
+            "status": "ready_for_application",
+            "source": {"actor_user_id": "autonomous_employee_loop"},
+            "created_at": "2026-08-13T19:00:00+08:00",
+        }],
+    )
     store = TuoguanStore(tmp_path)
     plan = build_plan(store)
     assert plan["stale_relationship_touch_ids"] == ["relationship_touch_old"]
@@ -83,6 +98,7 @@ def test_repair_is_append_only_and_converts_authorization_semantics(tmp_path):
     assert plan["stale_work_focus_keys"] == ["goal:goal1"]
     assert len(plan["authorization_additions"]) == 2
     assert plan["goal_action_seed_goal_ids"] == ["goal1"]
+    assert plan["unsupported_evolution_event_ids"] == ["evolution_without_evidence"]
 
     result = apply_plan(store, plan)
     assert result["ok"] is True
@@ -100,3 +116,8 @@ def test_repair_is_append_only_and_converts_authorization_semantics(tmp_path):
     action_rows = (tmp_path / "goal_actions.jsonl").read_text(encoding="utf-8")
     assert "goal1" in action_rows
     assert "query_internal_data" in action_rows
+    evolution_rows = [json.loads(line) for line in (tmp_path / "self_evolution_events.jsonl").read_text(encoding="utf-8").splitlines()]
+    assert evolution_rows[0]["status"] == "ready_for_application"
+    assert evolution_rows[-1]["status"] == "superseded"
+    assert evolution_rows[-1]["invalidation_reason"] == "夜间候选缺少当前事实证据，不能进入次日应用。"
+    assert build_plan(store)["unsupported_evolution_event_ids"] == []

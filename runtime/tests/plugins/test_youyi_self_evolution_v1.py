@@ -421,12 +421,18 @@ def test_night_employee_loop_materializes_evolution_candidate_without_outbox(tmp
             "evolution_candidates": [
                 {
                     "candidate_type": "self_correction",
-                    "summary": "遇到老师姓名或乱码时，先查人员目录和白名单，再向老板提一个最小确认问题。",
+                    "summary": "遇到老师姓名或乱码时，先查人员目录和白名单，再形成一个最小确认候选。",
                     "evidence": [{"source": "conversation_replay", "text": "老板追问还有哪两位。"}],
                     "proposed_effect": "明天企业微信对话前提醒小优先查目录。",
+                    "applies_to_role": "boss",
                 }
             ],
-            "self_review": {"what_i_checked": "对话回放", "what_i_learned": "先自救再求助", "quality_score": 82},
+            "self_review": {
+                "what_i_checked": "对话回放",
+                "what_i_learned": "先自救再求助",
+                "quality_score": 82,
+                "evidence": [{"source": "conversation_replay", "text": "老板追问还有哪两位。"}],
+            },
             "external_actions": [],
         }
 
@@ -480,3 +486,44 @@ def test_self_evolution_query_tool_is_registered_and_permission_scoped(tmp_path)
     denied = teacher.query_self_evolution_ledger(limit=10)
     assert denied["ok"] is False
     assert denied["error"] == "permission_denied"
+
+
+def test_employee_self_review_requires_current_evidence_and_quarantines_legacy_rows(tmp_path):
+    from plugins.tuoguan_core.digital_employee_state import query_hermes_employee_scorecard, submit_employee_self_review
+    from plugins.tuoguan_core.write_guard import authorized_system_write
+
+    store = _seed_store(tmp_path)
+    identity = _boss_identity()
+    (tmp_path / "hermes_employee_scorecard.jsonl").write_text(
+        json.dumps({"review_id": "legacy", "review_date": "2026-08-13", "tomorrow_focus": "追问旧问题", "created_at": "2026-08-13T19:00:00+08:00"}, ensure_ascii=False) + "\n",
+        encoding="utf-8",
+    )
+
+    rejected = submit_employee_self_review(
+        store,
+        identity=identity,
+        operation_id="review:no-evidence",
+        review_date="2026-08-13",
+        tomorrow_focus="追问旧问题",
+        evidence=[],
+    )
+    assert rejected["ok"] is False
+    assert rejected["error"] == "self_review_evidence_required"
+
+    with authorized_system_write(store.data_dir, job_name="employee_review_test", allowed_files={"hermes_employee_scorecard.jsonl"}):
+        saved = submit_employee_self_review(
+            store,
+            identity=identity,
+            operation_id="review:verified",
+            review_date="2026-08-13",
+            tomorrow_focus="明天只使用当前任务事实。",
+            evidence=[{"source": "goal_actions", "text": "当前行动已取得内部数据回执。"}],
+        )
+    assert saved["ok"] is True
+    assert saved["self_review"]["evidence_verified"] is True
+    assert saved["self_review"]["supersedes_review_id"] == "legacy"
+
+    result = query_hermes_employee_scorecard(store, identity=identity)
+    assert result["review_count"] == 1
+    assert result["historical_unverified_count"] == 1
+    assert result["latest_review"]["review_id"] == saved["self_review"]["review_id"]

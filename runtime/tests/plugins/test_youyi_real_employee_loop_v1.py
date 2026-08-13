@@ -902,11 +902,14 @@ def test_outreach_honesty_guard_distinguishes_candidate_queue_and_sent():
     assert sent == "我已经通知李老师了。"
 
 
-def test_public_tools_expose_authorization_execution_and_goal_actions(tmp_path):
+def test_public_tools_expose_authorization_execution_and_goal_actions(tmp_path, monkeypatch):
+    from plugins.tuoguan_core import proactive_work
     from plugins.tuoguan_core.runtime_foundation import MODEL_SELECTED_READ_TOOLS, WRITE_TOOLS
     from plugins.tuoguan_core.tool_service import TuoguanToolService
     from plugins.tuoguan_core.tools import TOOLS
     from plugins.tuoguan_core.store import TuoguanStore
+
+    monkeypatch.setattr(proactive_work, "_now", lambda value=None: (value or datetime(2026, 8, 13, 15, 0, tzinfo=CN_TZ)).astimezone())
 
     _setup(tmp_path)
     names = {name for name, _schema, _handler in TOOLS}
