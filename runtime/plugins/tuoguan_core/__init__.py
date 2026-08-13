@@ -1064,6 +1064,9 @@ def _finish_claimed_notification_outbox_item(
             item.pop("lease_owner", None)
             item.pop("lease_started_at", None)
             item.pop("lease_expires_at", None)
+            from .execution_receipts import delivery_execution_receipt
+
+            item["execution_receipt"] = delivery_execution_receipt(item)
             final["item"] = deepcopy(item)
             return outbox[-2000:]
         return JSON_NO_CHANGE
@@ -1150,6 +1153,7 @@ def _delivery_receipt(item: dict[str, Any]) -> dict[str, Any]:
         "message_id": str(item.get("message_id") or ""),
         "sent_at": str(item.get("sent_at") or ""),
         "outbox_id": str(item.get("id") or ""),
+        "execution_receipt": deepcopy(item.get("execution_receipt") or {}),
     }
 
 

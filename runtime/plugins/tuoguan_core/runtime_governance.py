@@ -83,7 +83,7 @@ MODULE_OWNERSHIP = (
             "__init__.py", "active_work_context.py", "analytics.py", "autonomous_employee_loop.py",
             "autonomous_wakeup_runner.py", "config_changes.py", "daily_push.py", "daily_reporter.py",
             "dashboard_auth.py", "dashboard_builder.py", "dashboard_http.py", "digital_employee_state.py",
-            "employee_identity.py", "escalation.py", "external_learning_runner.py", "goal_operator.py",
+            "employee_identity.py", "escalation.py", "execution_receipts.py", "external_learning_runner.py", "goal_operator.py",
             "gray_observation_review.py", "gray_review_v1.py", "gray_scenario_cards.py",
             "growth_plan_exporter.py", "growth_reports.py", "identity.py", "knowledge.py",
             "learning_loop.py", "models.py", "notification_outbox_runner.py", "operational_facts.py",
@@ -211,4 +211,3 @@ def state_ownership(resource_names: set[str] | list[str] | tuple[str, ...]) -> d
         "owners": {name: STATE_RESOURCE_OWNERS[name] for name in sorted(names & set(STATE_RESOURCE_OWNERS))},
         "compatibility_projections": sorted(names & COMPATIBILITY_PROJECTIONS),
     }
-

@@ -246,6 +246,32 @@ class TuoguanStore:
         )
         return deepcopy(reread) if isinstance(reread, dict) else None
 
+    def append_tasks_verified(self, tasks: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        """Atomically append new task ids without overwriting concurrent task changes."""
+
+        prepared = [deepcopy(task) for task in tasks if isinstance(task, dict)]
+        wanted_ids = [str(task.get("id") or "").strip() for task in prepared]
+        if not prepared or any(not task_id for task_id in wanted_ids):
+            if not prepared:
+                return []
+            raise TuoguanStoreError("Every appended task requires an id")
+        if len(set(wanted_ids)) != len(wanted_ids):
+            raise TuoguanStoreError("Duplicate task ids in append request")
+
+        def append_missing(current: list[dict[str, Any]]) -> None:
+            existing = {str(item.get("id") or "") for item in current if isinstance(item, dict)}
+            for task in prepared:
+                if str(task.get("id") or "") not in existing:
+                    current.append(deepcopy(task))
+                    existing.add(str(task.get("id") or ""))
+
+        persisted = self.update_tasks(append_missing)
+        by_id = {str(item.get("id") or ""): item for item in persisted if isinstance(item, dict)}
+        verified = [deepcopy(by_id[task_id]) for task_id in wanted_ids if task_id in by_id]
+        if len(verified) != len(wanted_ids):
+            raise TuoguanStoreError("Task append writeback verification failed")
+        return verified
+
     def append_jsonl_verified(self, name: str, row: dict[str, Any]) -> bool:
         """Append one JSONL row under a process lock and verify it from disk."""
 

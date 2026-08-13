@@ -178,8 +178,14 @@ def create_trial_lead(
         task_id = f"task_{uuid.uuid4().hex[:12]}"
         task_ids.append(task_id)
         tasks.append({"id": task_id, "title": f"{name}｜{title}", "type": "trial_lead_follow_up", "level": "A", "status": "pending", "student_name": name, "assignee_userid": recorder_user_id, "trial_lead_id": lead_id, "due_at": _stamp(due), "created_at": _stamp(now), "tenant_id": current_tenant_id(), "channel": channel, "source": "试听线索自动生成"})
-    store.write_json("trial_leads.json", leads)
-    store.save_tasks(tasks)
+    def append_lead(current: Any) -> list[dict[str, Any]]:
+        current = current if isinstance(current, list) else []
+        if not any(isinstance(item, dict) and item.get("lead_id") == lead_id for item in current):
+            current.append(deepcopy(lead))
+        return current
+
+    store.update_json("trial_leads.json", [], append_lead)
+    store.append_tasks_verified([task for task in tasks if task.get("trial_lead_id") == lead_id])
     lead_ok = any(isinstance(item, dict) and item.get("lead_id") == lead_id for item in store.read_json("trial_leads.json", []))
     linked = [task for task in store.load_tasks() if task.get("trial_lead_id") == lead_id]
     verified = lead_ok and len(linked) == 3 and all(task.get("level") == "A" and task.get("assignee_userid") == recorder_user_id for task in linked)

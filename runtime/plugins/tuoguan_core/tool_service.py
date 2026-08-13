@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from copy import deepcopy
 from datetime import datetime, timedelta
+import hashlib
 import os
 import re
 import uuid
@@ -12,6 +13,7 @@ from urllib.parse import quote
 
 from .dashboard_auth import DashboardAuthError, sign_dashboard_token, token_expiry_datetime
 from .dashboard_builder import refresh_dashboard_cache
+from .execution_receipts import build_execution_receipt
 from .escalation import build_notification_plan
 from .identity import IdentityService
 from .knowledge import (
@@ -708,10 +710,10 @@ class TuoguanToolService:
     ) -> dict[str, Any]:
         key = str(operation_id or "").strip()
         if not key:
-            return self._error(
+            return build_execution_receipt(self._error(
                 "operation_id_required",
                 "写操作缺少 operation_id，未执行，避免产生重复数据。",
-            )
+            ), operation_id="", operation=operation, idempotency_result="rejected")
         from .runtime_foundation import write_authorization_for
         from .write_guard import authorized_business_write, guard_enabled, record_unauthorized_tool_attempt
 
@@ -783,10 +785,10 @@ class TuoguanToolService:
             "对",
             "可以",
         } and operation in write_operations:
-            return self._error(
+            return build_execution_receipt(self._error(
                 "ambiguous_retry_write_not_executed",
                 "当前消息没有明确说明要写入的对象、动作和内容，不能沿用上文执行真实写入。请把要记录或修改的内容重新说完整。",
-            )
+            ), operation_id=key, operation=operation, idempotency_result="rejected")
         capability_anchors = ("能力", "写入", "功能", "工具")
         capability_check_terms = (
             "检查",
@@ -811,10 +813,10 @@ class TuoguanToolService:
             and any(term in compact_raw for term in capability_check_terms)
         )
         if capability_health_check and operation in write_operations:
-            return self._error(
+            return build_execution_receipt(self._error(
                 "capability_self_check_write_not_executed",
                 "这是能力检查问题，不能通过真实写入来测试。请改用只读查询、工具目录或测试环境检查。",
-            )
+            ), operation_id=key, operation=operation, idempotency_result="rejected")
 
         if guard_enabled(self.store.data_dir) and runtime_auth is None:
             try:
@@ -831,14 +833,15 @@ class TuoguanToolService:
                 session_id_probe = ""
             import logging
             logging.getLogger(__name__).warning(
-                "YOUYI_WRITE_AUTH_MISS operation=%s actor=%s platform_user=%s role=%s raw=%s ledger_probe=%s session_user=%s session_id=%s module=%s",
+                "YOUYI_WRITE_AUTH_MISS operation=%s actor_hash=%s platform_user_hash=%s role=%s message_hash=%s chars=%s ledger_probe=%s session_user_hash=%s session_id=%s module=%s",
                 operation,
-                self.identity.canonical_user_id,
-                self.user_id,
+                hashlib.sha256(self.identity.canonical_user_id.encode("utf-8")).hexdigest()[:12],
+                hashlib.sha256(self.user_id.encode("utf-8")).hexdigest()[:12],
                 self.identity.role,
-                raw_text[:80],
+                hashlib.sha256(raw_text.encode("utf-8")).hexdigest()[:12],
+                len(raw_text),
                 ledger_probe,
-                session_user_probe,
+                hashlib.sha256(str(session_user_probe).encode("utf-8")).hexdigest()[:12],
                 session_id_probe,
                 __name__,
             )
@@ -849,12 +852,14 @@ class TuoguanToolService:
                 user_id=self.identity.canonical_user_id,
                 reason="missing_or_mismatched_active_runtime_context",
             )
-            return self._error(
+            return build_execution_receipt(self._error(
                 "unauthorized_write_blocked",
                 f"当前请求没有通过业务写入校验，未修改任何业务数据。审计编号：{audit_id}",
-            )
+            ), operation_id=key, operation=operation, idempotency_result="rejected")
         receipt_key = f"{self.identity.canonical_user_id}:{operation}:{key}"
         receipt_claim: dict[str, Any] = {"claimed": False, "existing_result": None, "in_progress": False}
+        runtime_auth = runtime_auth or {"ledger_id": "test_or_offline_runtime"}
+        preaudit_id = f"audit_write_authorized_{uuid.uuid4().hex}"
 
         def claim_receipt(receipts: Any) -> Any:
             receipts = receipts if isinstance(receipts, dict) else {}
@@ -877,34 +882,51 @@ class TuoguanToolService:
             receipt_claim["claimed"] = True
             return receipts
 
-        self.store.update_json("tool_operations.json", {}, claim_receipt)
-        if isinstance(receipt_claim.get("existing_result"), dict):
-            result = deepcopy(receipt_claim["existing_result"])
-            result["already_applied"] = True
-            return result
-        if receipt_claim.get("in_progress"):
-            return self._error(
-                "operation_already_in_progress",
-                "同一个 operation_id 正在执行或等待写后反查，本轮未重复执行，避免产生重复写入。",
-            )
-        runtime_auth = runtime_auth or {"ledger_id": "test_or_offline_runtime"}
-        preaudit_id = f"audit_write_authorized_{uuid.uuid4().hex}"
         with authorized_business_write(
             source="trusted_tool",
             operation_id=key,
             ledger_id=runtime_auth["ledger_id"],
             audit_id=preaudit_id,
+            allowed_files={"tool_operations.json"},
         ):
-            result = execute()
+            self.store.update_json("tool_operations.json", {}, claim_receipt)
+        if isinstance(receipt_claim.get("existing_result"), dict):
+            result = deepcopy(receipt_claim["existing_result"])
+            result["already_applied"] = True
+            return build_execution_receipt(
+                result, operation_id=key, operation=operation, idempotency_result="replayed"
+            )
+        if receipt_claim.get("in_progress"):
+            return build_execution_receipt(self._error(
+                "operation_already_in_progress",
+                "同一个 operation_id 正在执行或等待写后反查，本轮未重复执行，避免产生重复写入。",
+            ), operation_id=key, operation=operation, idempotency_result="in_progress")
+        try:
+            with authorized_business_write(
+                source="trusted_tool",
+                operation_id=key,
+                ledger_id=runtime_auth["ledger_id"],
+                audit_id=preaudit_id,
+            ):
+                result = execute()
+        except Exception as exc:
+            result = self._error(
+                "system_error",
+                "本轮操作在执行阶段失败，未确认成功；失败状态已经记录，可按同一操作编号安全复查。",
+            )
+            result["diagnostic_type"] = type(exc).__name__
         explicit_writeback = result.get("writeback_verified")
         if explicit_writeback is None and isinstance(result.get("data"), dict):
             explicit_writeback = result["data"].get("writeback_verified")
-        if result.get("ok") and explicit_writeback is False:
+        if result.get("ok") and explicit_writeback is not True:
             result["ok"] = False
             result["error"] = "writeback_consistency_failed"
             result["message"] = "已理解并执行该操作，但写入反查没有完全通过，暂时不能确认成功。"
         if result.get("ok"):
             result["already_applied"] = False
+        result = build_execution_receipt(
+            result, operation_id=key, operation=operation, idempotency_result="applied"
+        )
         def finish_receipt(receipts: Any) -> dict[str, Any]:
             receipts = receipts if isinstance(receipts, dict) else {}
             receipts[receipt_key] = {
@@ -917,7 +939,14 @@ class TuoguanToolService:
             }
             return receipts
 
-        self.store.update_json("tool_operations.json", {}, finish_receipt)
+        with authorized_business_write(
+            source="trusted_tool",
+            operation_id=key,
+            ledger_id=runtime_auth["ledger_id"],
+            audit_id=preaudit_id,
+            allowed_files={"tool_operations.json"},
+        ):
+            self.store.update_json("tool_operations.json", {}, finish_receipt)
         return result
 
     def _enqueue_notifications(self, notifications: list[dict[str, Any]]) -> None:

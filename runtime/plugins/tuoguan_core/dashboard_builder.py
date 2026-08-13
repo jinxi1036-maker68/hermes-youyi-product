@@ -473,7 +473,7 @@ def ensure_priority_followup_tasks(
         created.append(task)
         changed = True
     if changed:
-        store.save_tasks(tasks)
+        store.append_tasks_verified(created)
     return created
 
 
@@ -651,7 +651,7 @@ def ensure_periodic_operation_tasks(
                 periodic_stage="renewal_7_confirmation",
             )
     if created:
-        store.save_tasks(tasks)
+        store.append_tasks_verified(created)
     return created
 
 

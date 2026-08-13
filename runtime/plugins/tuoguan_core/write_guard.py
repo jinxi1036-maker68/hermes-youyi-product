@@ -27,6 +27,7 @@ PROTECTED_BUSINESS_FILES = {
     "trial_leads.json",
     "task_closure_events.json",
     "notification_outbox.json",
+    "notification_deliveries.json",
     "dashboard_cache.json",
     "point_events.json",
     "summer_points.json",
@@ -79,6 +80,7 @@ PROTECTED_BUSINESS_FILES = {
     "staff_voice_signals.jsonl",
     "self_evolution_events.jsonl",
     "turn_traces.jsonl",
+    "tool_operations.json",
 }
 
 

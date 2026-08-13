@@ -236,12 +236,15 @@ def run_notification_cycle(
         deliveries.append(delivery)
 
     stamp = timestamp.isoformat(timespec="seconds")
+    task_updates: dict[str, dict[str, Any]] = {}
     for task in tasks:
         task_id = str(task.get("id") or "")
         if expected[task_id] and succeeded[task_id] == expected[task_id]:
-            task["last_escalation_action"] = action_by_task[task_id]
-            task["last_escalated_at"] = stamp
-            task["escalation_count"] = int(task.get("escalation_count") or 0) + 1
+            task_updates[task_id] = {
+                "last_escalation_action": action_by_task[task_id],
+                "last_escalated_at": stamp,
+                "escalation_count": int(task.get("escalation_count") or 0) + 1,
+            }
 
     if plan:
         from .write_guard import authorized_system_write
@@ -249,8 +252,15 @@ def run_notification_cycle(
         with authorized_system_write(
             store.data_dir,
             job_name="task_escalation_delivery",
-            allowed_files={"tasks.json"},
+            allowed_files={"tasks.json", "notification_deliveries.json"},
         ):
-            store.save_tasks(tasks)
+            if task_updates:
+                def apply_escalation_updates(current: list[dict[str, Any]]) -> None:
+                    for task in current:
+                        task_id = str(task.get("id") or "")
+                        if task_id in task_updates:
+                            task.update(task_updates[task_id])
+
+                store.update_tasks(apply_escalation_updates)
             store.write_json("notification_deliveries.json", deliveries[-2000:])
     return {"sent": sent, "failed": failed}
