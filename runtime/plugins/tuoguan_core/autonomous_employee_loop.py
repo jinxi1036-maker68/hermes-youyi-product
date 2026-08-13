@@ -149,6 +149,7 @@ def run_autonomous_employee_loop(
         decision = (decision_provider or _call_model_for_decision)(materials)
         decision = validate_employee_decision(decision)
         decision = normalize_employee_decision_for_materials(decision, materials)
+        _assert_decision_uses_public_employee_identity(decision)
         _assert_decision_uses_supported_staff_identity(decision, materials)
         result["decision"] = decision
     except Exception as exc:
@@ -485,6 +486,16 @@ def _assert_decision_uses_supported_staff_identity(decision: dict[str, Any], mat
         raise ValueError("unsupported_staff_identity_claim:claimed_name_not_in_trusted_directory")
 
 
+def _assert_decision_uses_public_employee_identity(decision: dict[str, Any]) -> None:
+    summary = str(decision.get("employee_summary") or "").strip()
+    lowered = summary.lower()
+    provider_terms = ("sapiens", "agnes", "chatgpt", "openai", "claude", "gemini")
+    if any(term in lowered for term in provider_terms):
+        raise ValueError("invalid_public_employee_identity:model_or_provider_identity")
+    if "数字员工" in summary and not any(term in summary for term in ("优益", "托管机构", "托管班")):
+        raise ValueError("invalid_public_employee_identity:institution_role_missing")
+
+
 def _public_identity_material(store: TuoguanStore) -> dict[str, Any]:
     facts = store.read_json("operational_facts.json", {})
     if not isinstance(facts, dict):
@@ -716,6 +727,7 @@ def normalize_employee_decision_for_materials(decision: dict[str, Any], material
     normalized["questions_to_humans"] = _filter_human_questions(
         normalized.get("questions_to_humans") or [],
         service_relations_deferred=service_relations_deferred,
+        materials=materials,
     )
     if not raw_owner_attention_candidates:
         normalized["boss_attention_candidates"] = _bridge_owner_questions_to_attention_candidates(
@@ -747,7 +759,12 @@ def _filter_owner_attention_candidates(candidates: Any, *, service_relations_def
     return filtered[:4]
 
 
-def _filter_human_questions(questions: Any, *, service_relations_deferred: bool) -> list[dict[str, Any]]:
+def _filter_human_questions(
+    questions: Any,
+    *,
+    service_relations_deferred: bool,
+    materials: dict[str, Any] | None = None,
+) -> list[dict[str, Any]]:
     filtered: list[dict[str, Any]] = []
     for item in questions if isinstance(questions, list) else []:
         if not isinstance(item, dict):
@@ -757,8 +774,28 @@ def _filter_human_questions(questions: Any, *, service_relations_deferred: bool)
         question = str(item.get("question") or item.get("summary") or "")
         if service_relations_deferred and _is_deferred_service_relation_attention(ask_role, reason, question):
             continue
+        if _question_reopens_absent_task(question, materials or {}):
+            continue
         filtered.append(item)
     return filtered[:8]
+
+
+def _question_reopens_absent_task(question: str, materials: dict[str, Any]) -> bool:
+    work = materials.get("autonomous_work_items") if isinstance(materials, dict) else {}
+    current_work_count = int((work or {}).get("work_item_count") or 0) if isinstance(work, dict) else 0
+    operating = materials.get("operating_evidence") if isinstance(materials, dict) else {}
+    overview = (operating or {}).get("operations_overview") if isinstance(operating, dict) else {}
+    overview_data = (overview or {}).get("data") if isinstance(overview, dict) else {}
+    summary = (overview_data or {}).get("summary") if isinstance(overview_data, dict) else {}
+    if not isinstance(summary, dict) or "open_task_count" not in summary:
+        return False
+    open_task_count = int(summary.get("open_task_count") or 0)
+    if current_work_count or open_task_count:
+        return False
+    text = str(question or "").lower()
+    has_task = "任务" in text or re.search(r"(?<![a-z])tasks?(?![a-z])", text) is not None
+    reopens_delivery = any(term in text for term in ("提醒", "收到", "通知", "下发", "派发", "重新", "之前"))
+    return bool(has_task and reopens_delivery)
 
 
 def _bridge_owner_questions_to_attention_candidates(
@@ -1336,6 +1373,7 @@ def _request_model_content(cfg: dict[str, Any], messages: list[dict[str, str]], 
 
 _DIAGNOSIS_PROMPT = """你是托管机构数字员工小优，本轮只做事实诊断。
 根据材料判断机构现状、目标进度、真实缺口和需要询问的事实归属人。模型负责判断，材料和工具结果是事实依据。
+employee_summary 必须保持身份为“小优，优益托管机构数字员工”；不得自称 Sapiens、Agnes、Hermes 助手、模型厂商或通用 AI 助手。
 不得声称已经外发、写入或完成动作；不得联系家长；不得把历史名单当作新学期事实；没有变化是有效结论。
 人员身份只认 trusted_staff_identities：称呼、别名、企业微信显示名和 user_id 不能推导真实全名；没有 full_name_confirmed=true 时必须写“全名未确认”，不得自行补全姓名。历史工作项只作审计，不能覆盖当前可信目录或复活旧卡点。
 只返回一个精简 JSON 对象，字段固定为 employee_summary、institution_understanding、goal_progress_view、observations、institution_fact_gaps、questions_to_humans。

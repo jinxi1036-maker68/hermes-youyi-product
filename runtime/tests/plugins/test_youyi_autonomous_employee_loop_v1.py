@@ -583,6 +583,81 @@ def test_model_decision_runs_review_only_at_night(monkeypatch):
     assert result["evolution_candidates"][0]["candidate_type"] == "tomorrow_focus"
 
 
+def test_autonomous_loop_rejects_model_provider_identity(tmp_path):
+    from plugins.tuoguan_core.autonomous_employee_loop import run_autonomous_employee_loop
+
+    store = _seed_store(tmp_path)
+
+    def provider(_materials):
+        return {
+            "employee_summary": "小优，Sapiens AI 数字员工；本轮已查看事实。",
+            "institution_understanding": "优益托管事实可用。",
+            "goal_progress_view": "暂无新增动作。",
+            "observations": [],
+            "work_item_updates": [],
+            "questions_to_humans": [],
+            "boss_attention_candidates": [],
+            "relationship_touch_candidates": [],
+            "institution_fact_gaps": [],
+            "value_progress_entries": [],
+            "agent_delegation_decisions": [],
+            "evolution_candidates": [],
+            "self_review": {},
+            "external_actions": [],
+        }
+
+    result = run_autonomous_employee_loop(
+        store,
+        now=datetime(2026, 8, 13, 13, 30, tzinfo=timezone(timedelta(hours=8))),
+        decision_provider=provider,
+    )
+
+    assert result["ok"] is False
+    assert result["error"] == "employee_loop_model_decision_failed"
+    assert "invalid_public_employee_identity" in result["message"]
+    assert result["writes"] == []
+    assert json.loads((tmp_path / "notification_outbox.json").read_text(encoding="utf-8")) == []
+
+
+def test_autonomous_loop_drops_old_task_delivery_question_when_nothing_is_open(tmp_path):
+    from plugins.tuoguan_core.autonomous_employee_loop import run_autonomous_employee_loop
+
+    store = _seed_store(tmp_path)
+
+    def provider(_materials):
+        return {
+            "employee_summary": "小优已核验优益托管当前事实。",
+            "institution_understanding": "优益托管事实可用。",
+            "goal_progress_view": "当前没有开放任务或可用工作项。",
+            "observations": [],
+            "work_item_updates": [],
+            "questions_to_humans": [{
+                "ask_role": "boss",
+                "question": "李老师是否收到了之前派发的任务提醒？当前开放任务为0，请确认是否需要重新下发。",
+            }],
+            "boss_attention_candidates": [],
+            "relationship_touch_candidates": [],
+            "institution_fact_gaps": [],
+            "value_progress_entries": [],
+            "agent_delegation_decisions": [],
+            "evolution_candidates": [],
+            "self_review": {},
+            "external_actions": [],
+        }
+
+    result = run_autonomous_employee_loop(
+        store,
+        now=datetime(2026, 8, 13, 13, 30, tzinfo=timezone(timedelta(hours=8))),
+        decision_provider=provider,
+    )
+
+    assert result["ok"] is True
+    assert result["decision"]["questions_to_humans"] == []
+    assert result["decision"]["boss_attention_candidates"] == []
+    assert result["writes"] == []
+    assert json.loads((tmp_path / "notification_outbox.json").read_text(encoding="utf-8")) == []
+
+
 def test_model_phase_rejects_repeated_truncated_json(monkeypatch):
     import pytest
     from plugins.tuoguan_core import autonomous_employee_loop as loop
