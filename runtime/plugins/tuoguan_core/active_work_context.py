@@ -235,10 +235,21 @@ def _recent_writeback_contexts(store: TuoguanStore, identity: UserIdentity, now:
             first = row["tool_calls"][-1]
             if isinstance(first, dict):
                 tool_name = str(first.get("tool") or "")
+        tool_results = [value for value in (row.get("tool_results") or []) if isinstance(value, dict)]
+        last_result = tool_results[-1] if tool_results else {}
+        result_data = last_result.get("data") if isinstance(last_result.get("data"), dict) else {}
+        receipt = result_data.get("execution_receipt") if isinstance(result_data.get("execution_receipt"), dict) else {}
+        result_state = "ok" if last_result.get("ok") else str(last_result.get("error") or "observed")
+        object_label = ":".join(
+            value for value in (str(receipt.get("object_type") or ""), str(receipt.get("object_id") or "")) if value
+        )
+        summary = f"工具={tool_name or '未知'}；结果={result_state}"
+        if object_label:
+            summary += f"；对象={object_label}"
         contexts.append({
             "context_type": "recent_tool_result",
             "context_id": str(row.get("ledger_id") or row.get("message_id") or ""),
-            "summary": f"工具={tool_name or '未知'}；用户原话={str(row.get('raw_text') or '')[:120]}；回复={str(row.get('final_reply') or '')[:120]}",
+            "summary": summary,
             "status": "writeback_verified" if row.get("writeback_verified") else "tool_result",
             "updated_at": _item_time(row),
             "evidence_source": "reply_ledger.jsonl",
@@ -251,11 +262,12 @@ def query_active_work_context(
     *,
     identity: UserIdentity,
     limit: int = 5,
+    now: datetime | None = None,
 ) -> dict[str, Any]:
     """Return scoped evidence without assigning intent or a next action."""
 
     maximum = max(1, min(int(limit or 5), 10))
-    now = datetime.now().astimezone()
+    now = (now or datetime.now().astimezone()).astimezone()
     items: list[dict[str, Any]] = []
     items.extend(_recent_outbound_contexts(store, identity, now, maximum))
     latest_daily = _latest_daily_report_context(store, identity, now)
@@ -271,6 +283,8 @@ def query_active_work_context(
             "status": str(task.get("status") or ""),
             "updated_at": str(task.get("updated_at") or task.get("created_at") or ""),
             "evidence_source": "tasks.json",
+            "assignee_userid": str(task.get("assignee_userid") or ""),
+            "created_by_userid": str(task.get("created_by_userid") or task.get("created_by") or ""),
         })
     if identity.role in {"boss", "manager"}:
         attention = query_attention_threads(store, identity=identity, include_closed=False, limit=maximum)
@@ -301,6 +315,7 @@ def query_active_work_context(
             "goal_id": str(row.get("goal_id") or ""),
             "goal_action_id": str(row.get("goal_action_id") or ""),
             "delivery_receipt": deepcopy(row.get("delivery_receipt") or {}),
+            "target_user_id": str(row.get("target_user_id") or ""),
         })
     goal_actions = query_goal_actions(
         store,

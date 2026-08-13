@@ -95,6 +95,7 @@ MODULE_OWNERSHIP = (
             "staff_conversation_activity.py", "staff_directory.py", "store.py", "student_daily_records.py",
             "student_record_guidance.py", "student_resolver.py", "system_self_knowledge.py", "tasks.py",
             "temporal_grounding.py", "tenant_context.py", "tool_service.py", "tools.py", "turn_trace.py",
+            "work_context_snapshot.py",
             "workstyle_profiles.py", "write_guard.py",
         ),
         boundary="shared production behavior governed by the runtime constitution and verified stores",
