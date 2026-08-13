@@ -317,6 +317,53 @@ class TuoguanToolService:
             and self.permissions.can_view_student(identity, str(name))
         }
 
+    def _filter_student_coverage(
+        self,
+        result: dict[str, Any],
+        *,
+        student_name: str,
+        limit: int,
+        label: str,
+    ) -> dict[str, Any]:
+        filtered = deepcopy(result if isinstance(result, dict) else {})
+        safe_limit = max(1, min(int(limit or 30), 100))
+        covered = [item for item in filtered.get("covered_students") or [] if isinstance(item, dict)]
+        missing = [item for item in filtered.get("missing_students") or [] if isinstance(item, dict)]
+        filtered["available_covered_count"] = int(filtered.get("covered_count") or len(covered))
+        filtered["available_missing_count"] = int(filtered.get("missing_count") or len(missing))
+        requested = str(student_name or "").strip()
+        if not requested:
+            filtered["covered_students"] = covered[:safe_limit]
+            filtered["missing_students"] = missing[:safe_limit]
+            filtered["rendered_count"] = len(filtered["covered_students"]) + len(filtered["missing_students"])
+            return filtered
+
+        students = self.store.read_json("students.json", {})
+        if not isinstance(students, dict) or requested not in students:
+            return self._error("student_not_found", f"没有找到学生“{requested}”。")
+        if requested not in self._visible_students():
+            return self._error("permission_denied", f"学生“{requested}”不在当前账号的负责范围内。")
+
+        covered = [item for item in covered if str(item.get("student_name") or "") == requested]
+        missing = [item for item in missing if str(item.get("student_name") or "") == requested]
+        filtered.update({
+            "student_name_filter": requested,
+            "total_students": 1,
+            "covered_count": len(covered),
+            "missing_count": len(missing),
+            "covered_students": covered,
+            "missing_students": missing,
+            "rendered_count": len(covered) + len(missing),
+        })
+        if covered:
+            filtered["rendered_text"] = f"{requested}：近 {filtered.get('days')} 天有{label}。"
+        elif missing:
+            filtered["rendered_text"] = f"{requested}：近 {filtered.get('days')} 天未查到{label}。"
+        else:
+            filtered["coverage_status"] = "not_concluded_from_current_term_data"
+            filtered["rendered_text"] = f"{requested}：{str(result.get('rendered_text') or '当前数据不足，不能下结论。')}"
+        return filtered
+
     def _summer_student_names(self) -> set[str]:
         enrollments = self.store.read_json("summer_enrollments.json", [])
         rows = enrollments.values() if isinstance(enrollments, dict) else enrollments
@@ -888,10 +935,31 @@ class TuoguanToolService:
             message="已读取当前账号的托管业务上下文。",
         )
 
-    def query_students(self, *, student_name: str = "", teacher_name: str = "", query_scope: str = "", grade: str = "") -> dict[str, Any]:
+    def query_students(
+        self,
+        *,
+        student_name: str = "",
+        teacher_name: str = "",
+        query_scope: str = "",
+        grade: str = "",
+        name: str = "",
+        role: str = "",
+        limit: int = 30,
+    ) -> dict[str, Any]:
         denied = self._approved()
         if denied:
             return denied
+        if str(role or "").strip():
+            return self._error(
+                "wrong_tool_for_staff_query",
+                "学生查询不能按员工角色筛选；请改用 tuoguan_query_staff_directory 查询老师、店长或老板。",
+            )
+        requested = str(student_name or "").strip()
+        alias_name = str(name or "").strip()
+        if requested and alias_name and requested != alias_name:
+            return self._error("ambiguous_target", "student_name 与 name 指向不同学生，请只保留一个明确姓名。")
+        requested = requested or alias_name
+        safe_limit = max(1, min(int(limit or 30), 100))
         target_identity = self.identity
         requested_teacher = str(teacher_name or "").strip()
         if not requested_teacher and self.identity.role in {"boss", "manager"}:
@@ -905,7 +973,6 @@ class TuoguanToolService:
             if not self._manager_can_view_teacher(target_identity.canonical_user_id):
                 return self._error("permission_denied", f"老师“{requested_teacher}”不在当前店长管理范围内。")
         visible = self._visible_students_for(target_identity)
-        requested = str(student_name or "").strip()
         if requested:
             students = self.store.read_json("students.json", {})
             exists = isinstance(students, dict) and requested in students
@@ -952,7 +1019,7 @@ class TuoguanToolService:
                 payload.append({"name": name, "profile": visible[name], "recent_records": recent})
             rendered_text = _render_student_records(payload)
         else:
-            payload = [{"name": name, "profile": visible[name], "recent_records": []} for name in names]
+            payload = [{"name": name, "profile": visible[name], "recent_records": []} for name in names[:safe_limit]]
             if scope == "summer":
                 title = "暑假班"
             elif requested_teacher:
@@ -961,8 +1028,8 @@ class TuoguanToolService:
                 title = "当前可见范围内"
             if _normalize_grade(grade):
                 title += f"{grade}"
-            shown = "、".join(names[:30])
-            suffix = "等" if len(names) > 30 else ""
+            shown = "、".join(names[:safe_limit])
+            suffix = "等" if len(names) > safe_limit else ""
             rendered_text = f"{title}共{len(names)}名学生" + (f"：{shown}{suffix}。" if shown else "。")
         data_version = ""
         try:
@@ -972,7 +1039,7 @@ class TuoguanToolService:
         return self._ok(
             "query_students",
             data={
-                "count": len(payload),
+                "count": len(names),
                 "result_count": len(payload),
                 "students": payload,
                 "rendered_text": rendered_text,
@@ -982,7 +1049,7 @@ class TuoguanToolService:
                 "scope_user_id": target_identity.canonical_user_id,
                 "scope_person_name": target_identity.person_name,
             },
-            message=f"查询到 {len(payload)} 名有权限查看的学生。",
+            message=f"查询到 {len(names)} 名有权限查看的学生，返回 {len(payload)} 名。",
         )
 
     def change_summer_points(
@@ -1323,9 +1390,11 @@ class TuoguanToolService:
         task_id: str = "",
         student_name: str = "",
         teacher_name: str = "",
+        assignee_user_id: str = "",
         status: str = "",
         level: str = "",
         scope: str = "",
+        limit: int = 20,
         write_focus: bool = True,
     ) -> dict[str, Any]:
         denied = self._approved()
@@ -1339,7 +1408,8 @@ class TuoguanToolService:
             scope_adjusted = True
         tasks = self._visible_tasks()
         requested_teacher = str(teacher_name or "").strip()
-        if not requested_teacher and self.identity.role in {"boss", "manager"}:
+        requested_assignee = str(assignee_user_id or "").strip()
+        if not requested_teacher and not requested_assignee and self.identity.role in {"boss", "manager"}:
             requested_teacher = self._teacher_name_from_current_raw_text()
         target_teacher_id = ""
         if requested_teacher:
@@ -1352,6 +1422,19 @@ class TuoguanToolService:
                 return self._error("permission_denied", f"老师“{requested_teacher}”不在当前店长管理范围内。")
             target_teacher_id = teacher_identity.canonical_user_id
             effective_scope = "all"
+        if requested_assignee:
+            if target_teacher_id and target_teacher_id != requested_assignee:
+                return self._error("ambiguous_target", "teacher_name 与 assignee_user_id 指向不同执行人，请只保留一个明确对象。")
+            if self.identity.role == "teacher" and requested_assignee != self.identity.canonical_user_id:
+                return self._error("permission_denied", "老师只能按本人账号查询任务。")
+            if self.identity.role == "manager" and not self._manager_can_view_teacher(requested_assignee):
+                return self._error("permission_denied", "该执行人不在当前店长管理范围内。")
+            target_teacher_id = requested_assignee
+            effective_scope = "all"
+            if not requested_teacher:
+                staff = self.store.read_json("staff.json", {})
+                profile = staff.get(requested_assignee, {}) if isinstance(staff, dict) else {}
+                requested_teacher = str(profile.get("name") or requested_assignee) if isinstance(profile, dict) else requested_assignee
         if effective_scope == "mine":
             tasks = [
                 task
@@ -1388,7 +1471,8 @@ class TuoguanToolService:
                 task_id=str(tasks[0].get("id") or ""),
                 student_name=str(tasks[0].get("student_name") or ""),
             )
-        visible_tasks = deepcopy(tasks[:20])
+        safe_limit = max(1, min(int(limit or 20), 100))
+        visible_tasks = deepcopy(tasks[:safe_limit])
         task_summaries = [
             {
                 "task_id": str(task.get("id") or ""),
@@ -2717,7 +2801,14 @@ class TuoguanToolService:
         )
         return self._ok("query_student_service_relations", data=result, message=str(result.get("rendered_text") or ""))
 
-    def query_parent_communication_coverage(self, *, days: int = 31, program_id: str = "regular_tuoguan") -> dict[str, Any]:
+    def query_parent_communication_coverage(
+        self,
+        *,
+        days: int = 31,
+        program_id: str = "regular_tuoguan",
+        student_name: str = "",
+        limit: int = 30,
+    ) -> dict[str, Any]:
         denied = self._approved()
         if denied:
             return denied
@@ -2727,9 +2818,20 @@ class TuoguanToolService:
             days=days,
             program_id=program_id,
         )
+        filtered = self._filter_student_coverage(result, student_name=student_name, limit=limit, label="家校沟通证据")
+        if not filtered.get("ok"):
+            return filtered
+        result = filtered
         return self._ok("query_parent_communication_coverage", data=result, message=str(result.get("rendered_text") or ""))
 
-    def query_weekly_record_coverage(self, *, days: int = 7, program_id: str = "regular_tuoguan") -> dict[str, Any]:
+    def query_weekly_record_coverage(
+        self,
+        *,
+        days: int = 7,
+        program_id: str = "regular_tuoguan",
+        student_name: str = "",
+        limit: int = 30,
+    ) -> dict[str, Any]:
         denied = self._approved()
         if denied:
             return denied
@@ -2739,6 +2841,10 @@ class TuoguanToolService:
             days=days,
             program_id=program_id,
         )
+        filtered = self._filter_student_coverage(result, student_name=student_name, limit=limit, label="表现记录")
+        if not filtered.get("ok"):
+            return filtered
+        result = filtered
         return self._ok("query_weekly_record_coverage", data=result, message=str(result.get("rendered_text") or ""))
 
     def query_active_goal_work_state(self, *, goal_id: str = "") -> dict[str, Any]:
@@ -3595,6 +3701,7 @@ class TuoguanToolService:
         period: str = "today",
         since_hours: int = 24,
         include_latest_excerpt: bool = True,
+        teacher_name: str = "",
         now_at: str = "",
         limit: int = 20,
     ) -> dict[str, Any]:
@@ -3609,6 +3716,7 @@ class TuoguanToolService:
             period=period,
             since_hours=since_hours,
             include_latest_excerpt=include_latest_excerpt,
+            staff_name=teacher_name,
             now_at=now_at,
             limit=limit,
         )

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import inspect
 from typing import Any, Callable
 
 from gateway.session_context import get_session_env
@@ -70,7 +71,28 @@ def _handler(method: str) -> Callable[[dict[str, Any]], str]:
             for key, value in dict(args or {}).items()
             if key not in {"platform", "user_id", "user_name", "chat_id", "session_key"}
         }
-        return tool_result(getattr(service, method)(**payload))
+        method_fn = getattr(service, method)
+        signature = inspect.signature(method_fn)
+        accepts_extra = any(
+            parameter.kind == inspect.Parameter.VAR_KEYWORD
+            for parameter in signature.parameters.values()
+        )
+        unsupported = sorted(
+            key for key in payload
+            if key not in signature.parameters and not accepts_extra
+        )
+        if unsupported:
+            return tool_result({
+                "ok": False,
+                "error": "unsupported_arguments",
+                "message": "工具收到了不支持的参数，请按当前工具说明重新调用。",
+                "data": {
+                    "tool": f"tuoguan_{method}",
+                    "unsupported_arguments": unsupported,
+                    "supported_arguments": sorted(signature.parameters),
+                },
+            })
+        return tool_result(method_fn(**payload))
 
     return run
 
@@ -86,8 +108,10 @@ TUOGUAN_QUERY_STUDENTS_SCHEMA = _schema(
     _identity_props({
         "student_name": {"type": "string", "description": "学生姓名；查询自己班/名下/负责范围学生名单或数量时留空。"},
         "teacher_name": {"type": "string", "description": "老板/店长代查某位老师负责范围时填写老师姓名；老师查自己范围时留空。"},
+        "name": {"type": "string", "description": "student_name 的兼容别名；优先填写 student_name。"},
         "query_scope": {"type": "string", "enum": ["visible", "summer"], "description": "默认 visible；用户明确查暑假班孩子时填 summer。"},
         "grade": {"type": "string", "description": "按年级筛选时填写，如一年级、二年级；不筛选年级时留空。"},
+        "limit": {"type": "integer", "default": 30, "description": "最多返回多少名学生，范围 1-100。"},
     }),
     ["user_id"],
 )
@@ -99,6 +123,7 @@ TUOGUAN_QUERY_TASKS_SCHEMA = _schema(
             "task_id": {"type": "string", "description": "任务 id，可为空。"},
             "student_name": {"type": "string", "description": "学生姓名，可为空。"},
             "teacher_name": {"type": "string", "description": "老板/店长查询某位老师任务时填写老师姓名；老师查自己任务时留空。"},
+            "assignee_user_id": {"type": "string", "description": "按执行人的企业微信 user id 筛选；已知姓名时优先填写 teacher_name。"},
             "status": {"type": "string", "description": "任务状态，可为空。"},
             "level": {"type": "string", "description": "S/A/B/C，可为空。"},
             "scope": {
@@ -106,6 +131,7 @@ TUOGUAN_QUERY_TASKS_SCHEMA = _schema(
                 "enum": ["mine", "all"],
                 "description": "查询范围。我的任务必须传 mine；老师请求 all 时系统仍收口为 mine。",
             },
+            "limit": {"type": "integer", "default": 20, "description": "最多返回多少条任务，范围 1-100。"},
         }
     ),
     ["user_id"],
@@ -458,6 +484,8 @@ TUOGUAN_QUERY_PARENT_COMMUNICATION_COVERAGE_SCHEMA = _schema(
     _identity_props({
         "days": {"type": "integer", "default": 31, "description": "统计最近多少天，默认31天。"},
         "program_id": {"type": "string", "default": "regular_tuoguan"},
+        "student_name": {"type": "string", "description": "可选，只查看一名当前账号有权查看的学生。"},
+        "limit": {"type": "integer", "default": 30, "description": "列表最多展示多少名学生，范围 1-100。"},
     }),
     ["user_id"],
 )
@@ -467,6 +495,8 @@ TUOGUAN_QUERY_WEEKLY_RECORD_COVERAGE_SCHEMA = _schema(
     _identity_props({
         "days": {"type": "integer", "default": 7, "description": "统计最近多少天，默认7天。"},
         "program_id": {"type": "string", "default": "regular_tuoguan"},
+        "student_name": {"type": "string", "description": "可选，只查看一名当前账号有权查看的学生。"},
+        "limit": {"type": "integer", "default": 30, "description": "列表最多展示多少名学生，范围 1-100。"},
     }),
     ["user_id"],
 )
@@ -1158,6 +1188,7 @@ TUOGUAN_QUERY_STAFF_CONVERSATION_ACTIVITY_SCHEMA = _schema(
         "period": {"type": "string", "enum": ["today", "yesterday", "last_24h"], "default": "today", "description": "查询窗口，默认今天。"},
         "since_hours": {"type": "integer", "default": 24, "description": "period 为 last_24h 时使用。"},
         "include_latest_excerpt": {"type": "boolean", "default": True, "description": "是否返回最近一句摘要。"},
+        "teacher_name": {"type": "string", "description": "可选，按老师/店长姓名或企业微信 user id 筛选。"},
         "now_at": {"type": "string", "description": "可选，当前时间 ISO 字符串；默认系统当前时间。"},
         "limit": {"type": "integer", "default": 20},
     }),

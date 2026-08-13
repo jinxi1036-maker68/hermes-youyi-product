@@ -1,0 +1,129 @@
+from __future__ import annotations
+
+from datetime import datetime
+import json
+from pathlib import Path
+
+
+def _write_json(root: Path, name: str, payload) -> None:
+    (root / name).write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
+
+
+def _seed_store(tmp_path: Path):
+    from plugins.tuoguan_core.store import TuoguanStore
+
+    _write_json(tmp_path, "write_guard_config.json", {"enabled": False})
+    _write_json(
+        tmp_path,
+        "wecom_whitelist.json",
+        {
+            "super_users": ["boss1"],
+            "allowed_users": ["teacher1"],
+            "user_roles": {"boss1": "boss", "teacher1": "teacher"},
+        },
+    )
+    _write_json(tmp_path, "teacher_wecom_map.json", {"金总": "boss1", "李老师": "teacher1"})
+    _write_json(tmp_path, "staff.json", {"teacher1": {"name": "李老师", "role": "teacher"}})
+    _write_json(
+        tmp_path,
+        "students.json",
+        {
+            "小明": {"teacher": "teacher1", "status": "active", "program_ids": ["regular_tuoguan"]},
+            "小红": {"teacher": "teacher1", "status": "active", "program_ids": ["regular_tuoguan"]},
+        },
+    )
+    _write_json(
+        tmp_path,
+        "tasks.json",
+        [{"id": "task-1", "title": "跟进小明", "assignee_userid": "teacher1", "status": "pending", "level": "A"}],
+    )
+    _write_json(
+        tmp_path,
+        "records.json",
+        [
+            {
+                "student_name": "小明",
+                "content": "已与家长沟通今天的学习情况",
+                "created_at": datetime.now().astimezone().isoformat(timespec="seconds"),
+            }
+        ],
+    )
+    with (tmp_path / "reply_ledger.jsonl").open("w", encoding="utf-8") as handle:
+        handle.write(json.dumps({
+            "message_id": "msg-1",
+            "user_id": "teacher1",
+            "role": "teacher",
+            "raw_text": "我把小明的情况记录好了",
+            "final_reply": "好的。",
+            "created_at": datetime.now().astimezone().isoformat(timespec="seconds"),
+        }, ensure_ascii=False) + "\n")
+    return TuoguanStore(tmp_path)
+
+
+def test_observed_model_query_arguments_are_supported_without_dispatch_errors(tmp_path: Path):
+    from plugins.tuoguan_core.tool_service import TuoguanToolService
+
+    service = TuoguanToolService(
+        _seed_store(tmp_path),
+        platform="wecom_callback",
+        user_id="boss1",
+        user_name="金总",
+    )
+
+    students = service.query_students(name="小明", limit=1)
+    assert students["ok"] is True
+    assert students["data"]["students"][0]["name"] == "小明"
+    wrong_role = service.query_students(role="teacher")
+    assert wrong_role["error"] == "wrong_tool_for_staff_query"
+
+    tasks = service.query_tasks(assignee_user_id="teacher1", limit=1)
+    assert tasks["ok"] is True
+    assert tasks["data"]["task_ids"] == ["task-1"]
+
+    weekly = service.query_weekly_record_coverage(student_name="小明", limit=1)
+    parent = service.query_parent_communication_coverage(student_name="小明", limit=1)
+    assert weekly["ok"] is True
+    assert weekly["data"]["student_name_filter"] == "小明"
+    assert parent["ok"] is True
+    assert parent["data"]["covered_count"] == 1
+
+    activity = service.query_staff_conversation_activity(teacher_name="李老师", limit=1)
+    assert activity["ok"] is True
+    assert activity["data"]["staff_contact_count"] == 1
+    assert activity["data"]["conversations"][0]["user_id"] == "teacher1"
+
+
+def test_unknown_tool_arguments_fail_cleanly_before_service_dispatch(monkeypatch):
+    from plugins.tuoguan_core import tools
+
+    class FakeService:
+        def query_students(self, *, student_name: str = ""):
+            return {"ok": True, "student_name": student_name}
+
+    monkeypatch.setattr(tools, "_service", lambda _args: FakeService())
+    result = json.loads(tools._handler("query_students")({"user_id": "boss1", "unknown": "value"}))
+
+    assert result["ok"] is False
+    assert result["error"] == "unsupported_arguments"
+    assert result["data"]["unsupported_arguments"] == ["unknown"]
+
+
+def test_core_contract_requires_direct_visible_tool_calls():
+    from plugins.tuoguan_core import _xiaoyou_core_skill_context
+    from plugins.tuoguan_core.models import UserIdentity
+
+    identity = UserIdentity("wecom_callback", "boss1", "boss1", "金总", "boss", "approved")
+    context = _xiaoyou_core_skill_context(identity=identity)
+
+    assert "必须直接调用该工具" in context
+    assert "禁止再套用 tool_call" in context
+    assert "operation_id 使用当前消息 id" in context
+
+
+def test_v020_autonomous_dropin_restores_model_led_loop():
+    root = Path(__file__).resolve().parents[3]
+    content = (root / "systemd" / "hermes-youyi-autonomous-employee-020.conf").read_text(encoding="utf-8")
+
+    assert "HERMES_AUTONOMOUS_EMPLOYEE_LOOP=1" in content
+    assert "HERMES_AUTONOMOUS_WAKEUP_MATERIALIZE_LEDGER=1" in content
+    assert "HERMES_MULTI_AGENT_SHADOW=1" in content

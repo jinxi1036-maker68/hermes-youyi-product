@@ -451,6 +451,8 @@ def _xiaoyou_core_skill_context(*, identity: Any) -> str:
         f"本轮服务对象仅为 user_id={user_id}、role={role}；只可注入此人的角色、个人工作方式、当前任务和必要机构事实，"
         "不得混入老板或其他员工的个人档案。先查当前上下文、可信业务工具、人员目录、历史证据及必要只读公开资料，再说查不到。"
         "没有真实工具调用不能说查过，没有写后反查不能说已保存，没有发送回执不能说已发送。"
+        "凡是本轮工具列表中已经可见的 tuoguan_ 工具，必须直接调用该工具，禁止再套用 tool_call；"
+        "调用前按工具说明补齐必填参数，写工具的 operation_id 使用当前消息 id。"
         "专项问题按需参考 youyi-digital-employee、youyi-tuoguan-business、active-information-acquisition、goal-management、"
         "memory-evidence-learning、institution-onboarding、student-service-relations；它们不是固定 Router。"
     )

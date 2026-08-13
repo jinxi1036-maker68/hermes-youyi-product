@@ -24,6 +24,7 @@ def query_staff_conversation_activity(
     period: str = "today",
     since_hours: int = 24,
     include_latest_excerpt: bool = True,
+    staff_name: str = "",
     now_at: str = "",
     limit: int = 20,
 ) -> dict[str, Any]:
@@ -86,7 +87,21 @@ def query_staff_conversation_activity(
         grouped.values(),
         key=lambda item: (str(item.get("last_at") or ""), str(item.get("name") or "")),
         reverse=True,
-    )[:safe_limit]
+    )
+    requested_staff = str(staff_name or "").strip().casefold()
+    if requested_staff:
+        conversations = [
+            item for item in conversations
+            if requested_staff in {
+                str(item.get("name") or "").strip().casefold(),
+                str(item.get("user_id") or "").strip().casefold(),
+            }
+            or requested_staff in {
+                str(alias or "").strip().casefold()
+                for alias in (staff_index.get(str(item.get("user_id") or ""), {}).get("aliases") or [])
+            }
+        ]
+    conversations = conversations[:safe_limit]
     role_counts: dict[str, int] = {"teacher": 0, "manager": 0}
     total_message_count = 0
     for item in conversations:
@@ -101,6 +116,7 @@ def query_staff_conversation_activity(
         "tenant_id": current_tenant_id(),
         "read_only": True,
         "period": window["period"],
+        "staff_name_filter": str(staff_name or "").strip(),
         "start_at": window["start"].isoformat(timespec="seconds"),
         "end_at": window["end"].isoformat(timespec="seconds"),
         "staff_contact_count": len(conversations),
