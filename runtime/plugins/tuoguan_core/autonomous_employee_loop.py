@@ -9,7 +9,7 @@ teacher tasks, change salary, delete data, or store a fixed route/tool step.
 from __future__ import annotations
 
 from copy import deepcopy
-from datetime import datetime
+from datetime import datetime, timedelta
 import json
 import os
 from pathlib import Path
@@ -34,10 +34,10 @@ from .digital_employee_state import (
     RELATIONSHIP_TOUCH_CANDIDATES_FILE,
     VALUE_PROGRESS_LEDGER_FILE,
     WAKEUP_REQUESTS_FILE,
+    hermes_work_item_is_semantically_retired,
     query_action_executions,
     query_attention_threads,
     query_active_goal_work_state,
-    query_autonomous_work_brief,
     query_business_events,
     query_hermes_employee_scorecard,
     query_hermes_work_items,
@@ -68,6 +68,7 @@ from .self_evolution import (
     normalize_evolution_candidate,
     submit_self_evolution_event,
 )
+from .staff_directory import query_staff_directory
 from .social_market_research import query_social_market_research
 from .store import JSON_NO_CHANGE, TuoguanStore
 from .tool_service import TuoguanToolService
@@ -81,6 +82,7 @@ _FORBIDDEN_EFFECT_KEYS = {
 }
 _FORBIDDEN_ROUTE_KEYS = {"model_intent", "next_tool", "workflow_step", "expected_reply"}
 _ALLOWED_WORK_STATUSES = {"active", "waiting", "blocked", "closed", "superseded"}
+_WORK_ITEM_MATERIAL_FRESHNESS_HOURS = 36
 _NON_MATERIAL_OBSERVATION_TYPES = {
     "no_new_input",
     "daytime_patrol",
@@ -147,6 +149,7 @@ def run_autonomous_employee_loop(
         decision = (decision_provider or _call_model_for_decision)(materials)
         decision = validate_employee_decision(decision)
         decision = normalize_employee_decision_for_materials(decision, materials)
+        _assert_decision_uses_supported_staff_identity(decision, materials)
         result["decision"] = decision
     except Exception as exc:
         result.update({
@@ -179,8 +182,9 @@ def run_autonomous_employee_loop(
 def build_employee_loop_materials(store: TuoguanStore, *, identity: UserIdentity, timestamp: datetime, wakeup_summary: dict[str, Any] | None = None) -> dict[str, Any]:
     onboarding = _query_onboarding(store)
     active_goals = query_active_goal_work_state(store, identity=identity)
-    work_items = query_hermes_work_items(store, identity=identity, include_closed=False, limit=20)
-    work_brief = query_autonomous_work_brief(store, identity=identity, limit=20)
+    raw_work_items = query_hermes_work_items(store, identity=identity, include_closed=False, limit=20)
+    work_items = _prepare_current_work_item_materials(raw_work_items, timestamp)
+    work_brief = _current_work_brief(work_items)
     wakeups = query_wakeup_requests(store, identity=identity, limit=20)
     events = query_business_events(store, identity=identity, limit=20)
     executions = query_action_executions(store, identity=identity, limit=20)
@@ -212,10 +216,12 @@ def build_employee_loop_materials(store: TuoguanStore, *, identity: UserIdentity
     new_term_readiness = (wakeup_summary or {}).get("new_term_readiness") or {}
     cadence = _work_cadence(timestamp)
     public_identity = _public_identity_material(store)
+    trusted_staff_identities = _trusted_staff_identity_material(store)
     materials = {
         "timestamp": timestamp.isoformat(timespec="seconds"),
         "identity": public_identity.get("identity") or "Xiaoyou, Youyi digital employee; Hermes is the internal product name",
         "public_identity": public_identity,
+        "trusted_staff_identities": _compact_for_model(trusted_staff_identities, max_chars=5000),
         "mission": "understand the institution, protect reality and permissions, help the owner improve renewal, service quality, risk control, execution, and revenue",
         "principles": [
             "Use the public-facing employee name 小优 when speaking to the owner, managers, or teachers. Hermes is the internal product/architecture name.",
@@ -241,6 +247,8 @@ def build_employee_loop_materials(store: TuoguanStore, *, identity: UserIdentity
             "If multi_agent_brief contains pending completed sub-agent results, decide on at most one result per wakeup: adopted, partially_adopted, rejected, needs_more_evidence, or deferred. The result is advisory material only and never executes business action by itself.",
             "Hermes should build trust like a real colleague. Relationship touches may be care, encouragement, thanks, light chat, relief, material support, manager assistance, owner business insight, progress update, or presence report.",
             "Teacher and manager relationship touches may be sent only when policy allows, the target is whitelisted, the message asks for a concrete work fact, and the daily frequency limit is not exceeded. Private emotional support remains candidate-only.",
+            "Current trusted staff identity facts override stale work-item wording. A business name, title, alias, WeCom display name, or user_id is not a confirmed legal/full name unless trusted_staff_identities explicitly says full_name_confirmed=true.",
+            "Work items marked historical or stale are audit context only. Revalidate them from current trusted facts before creating a gap, question, reminder, or update.",
         ],
         "work_cadence": cadence,
         "owner_attention_policy": {
@@ -287,6 +295,8 @@ def build_employee_loop_materials(store: TuoguanStore, *, identity: UserIdentity
         "active_goal_count": int(active_goals.get("goal_count") or 0),
         "work_item_count": int(work_items.get("work_item_count") or 0),
         "waiting_count": int(work_brief.get("waiting_count") or 0),
+        "historical_open_work_item_count": int(work_items.get("historical_open_count") or 0),
+        "retired_open_work_item_count": int(work_items.get("retired_open_count") or 0),
         "pending_wakeup_count": int(wakeups.get("pending_count") or 0),
         "business_event_count": int(events.get("event_count") or 0),
         "result_unknown_action_count": int(executions.get("result_unknown_count") or 0),
@@ -310,6 +320,169 @@ def build_employee_loop_materials(store: TuoguanStore, *, identity: UserIdentity
         "service_relation_policy": str(term_state.get("service_relation_policy") or ""),
     }
     return materials
+
+
+def _prepare_current_work_item_materials(raw: dict[str, Any], timestamp: datetime) -> dict[str, Any]:
+    payload = deepcopy(raw) if isinstance(raw, dict) else {}
+    rows = payload.get("items") if isinstance(payload.get("items"), list) else []
+    cutoff = timestamp - timedelta(hours=_WORK_ITEM_MATERIAL_FRESHNESS_HOURS)
+    current: list[dict[str, Any]] = []
+    historical: list[dict[str, Any]] = []
+    retired_count = 0
+    for item in rows:
+        if not isinstance(item, dict):
+            continue
+        if hermes_work_item_is_semantically_retired(item):
+            retired_count += 1
+            continue
+        row = deepcopy(item)
+        row.pop("updates", None)
+        row.pop("updates_total_count", None)
+        row_time = _work_item_material_time(row, timestamp)
+        if row_time is not None and row_time < cutoff:
+            historical.append({
+                "work_item_id": str(row.get("work_item_id") or ""),
+                "focus_key": str(row.get("focus_key") or ""),
+                "status": str(row.get("status") or "active"),
+                "updated_at": str(row.get("updated_at") or row.get("created_at") or ""),
+                "material_status": "historical_requires_revalidation",
+            })
+            continue
+        row["material_status"] = "current"
+        current.append(row)
+    payload["items"] = current
+    payload["work_item_count"] = len(current)
+    payload["waiting_count"] = sum(1 for row in current if str(row.get("status") or "") == "waiting")
+    payload["historical_open_count"] = len(historical)
+    payload["historical_open_items"] = historical
+    payload["retired_open_count"] = retired_count
+    payload["material_rule"] = (
+        "Only current items may drive a diagnosis or question. Historical open items require fresh evidence; "
+        "semantically retired items are excluded even if an old status remained open."
+    )
+    payload["rendered_text"] = (
+        f"当前可用工作事项 {len(current)} 条；历史待重验 {len(historical)} 条；"
+        f"语义已退出但状态未收口 {retired_count} 条。"
+    )
+    return payload
+
+
+def _work_item_material_time(item: dict[str, Any], now: datetime) -> datetime | None:
+    for key in ("updated_at", "created_at"):
+        value = str(item.get(key) or "").strip()
+        if not value:
+            continue
+        try:
+            parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+        except (TypeError, ValueError):
+            continue
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=now.tzinfo)
+        return parsed
+    return None
+
+
+def _current_work_brief(work_items: dict[str, Any]) -> dict[str, Any]:
+    rows = work_items.get("items") if isinstance(work_items.get("items"), list) else []
+    waiting = [row for row in rows if str(row.get("status") or "") == "waiting"]
+    blocked = [row for row in rows if str(row.get("status") or "") == "blocked"]
+    active = [row for row in rows if str(row.get("status") or "") == "active"]
+    questions: list[str] = []
+    if waiting:
+        questions.append("哪些当前等待事项已有新事实，哪些仍应继续等待？")
+    if blocked:
+        questions.append("哪些当前阻塞事项需要事实归属人补充信息或授权？")
+    if not questions:
+        questions.append("当前没有可用的新卡点；继续前按需核验最新事实，不复活历史问题。")
+    return {
+        "ok": True,
+        "read_only": True,
+        "visible_work_item_count": len(rows),
+        "active_count": len(active),
+        "waiting_count": len(waiting),
+        "blocked_count": len(blocked),
+        "historical_open_count": int(work_items.get("historical_open_count") or 0),
+        "retired_open_count": int(work_items.get("retired_open_count") or 0),
+        "recovery_questions": questions,
+        "items": rows,
+        "rendered_text": str(work_items.get("rendered_text") or ""),
+    }
+
+
+def _trusted_staff_identity_material(store: TuoguanStore) -> dict[str, Any]:
+    directory = query_staff_directory(store, include_inactive=True, limit=100)
+    staff_payload = store.read_json("staff.json", {})
+    staff_payload = staff_payload if isinstance(staff_payload, dict) else {}
+    facts_payload = store.read_json("operational_facts.json", {})
+    facts = facts_payload.get("facts") if isinstance(facts_payload, dict) else []
+    explicit_full_names: dict[str, str] = {}
+    for user_id, profile in staff_payload.items():
+        if not isinstance(profile, dict):
+            continue
+        full_name = str(profile.get("legal_name") or profile.get("full_name") or "").strip()
+        if full_name:
+            explicit_full_names[str(user_id)] = full_name
+    for fact in facts if isinstance(facts, list) else []:
+        if not isinstance(fact, dict) or str(fact.get("status") or "") != "active":
+            continue
+        value = fact.get("value") if isinstance(fact.get("value"), dict) else {}
+        full_name = str(value.get("legal_name") or value.get("full_name") or value.get("confirmed_full_name") or "").strip()
+        subject = str(value.get("user_id") or fact.get("subject") or "").strip()
+        if subject and full_name:
+            explicit_full_names[subject] = full_name
+    rows: list[dict[str, Any]] = []
+    confirmed_names: list[str] = []
+    for entry in (directory.get("staff") if isinstance(directory.get("staff"), list) else []):
+        if not isinstance(entry, dict):
+            continue
+        user_id = str(entry.get("user_id") or "")
+        full_name = explicit_full_names.get(user_id, "")
+        if full_name and full_name not in confirmed_names:
+            confirmed_names.append(full_name)
+        rows.append({
+            "user_id": user_id,
+            "business_name": str(entry.get("business_name") or ""),
+            "role": str(entry.get("role") or ""),
+            "directory_name": str(entry.get("directory_name") or ""),
+            "known_aliases": list(entry.get("known_aliases") or [])[:8],
+            "membership_status": str(entry.get("membership_status") or ""),
+            "full_name_confirmed": bool(full_name),
+            "confirmed_full_name": full_name,
+            "evidence_sources": [
+                str(evidence.get("source") or "")
+                for evidence in entry.get("source_evidence") or []
+                if isinstance(evidence, dict) and str(evidence.get("source") or "")
+            ],
+        })
+    return {
+        "ok": bool(directory.get("ok")),
+        "staff": rows,
+        "confirmed_full_names": confirmed_names,
+        "identity_rule": (
+            "Business names, titles, aliases, WeCom display names and user_ids identify directory entries but do not "
+            "prove a legal/full name. Only confirmed_full_name with full_name_confirmed=true may support that claim."
+        ),
+    }
+
+
+def _assert_decision_uses_supported_staff_identity(decision: dict[str, Any], materials: dict[str, Any]) -> None:
+    text = json.dumps(decision, ensure_ascii=False)
+    strong_markers = ("全名已确认", "实名已确认", "真实姓名已确认", "full name is confirmed", "legal name is confirmed")
+    claimed_names = [
+        match.group(1)
+        for match in re.finditer(r"(?:全名|实名|真实姓名)(?:为|是)[:：\s“\"]*([\u4e00-\u9fff·]{2,8})", text)
+        if not match.group(1).startswith(("待确认", "未确认", "未知", "不确定", "当前", "事实"))
+    ]
+    if not claimed_names and not any(marker.lower() in text.lower() for marker in strong_markers):
+        return
+    trusted = materials.get("trusted_staff_identities") if isinstance(materials, dict) else {}
+    confirmed = [str(name) for name in (trusted.get("confirmed_full_names") or []) if str(name).strip()] if isinstance(trusted, dict) else []
+    if not confirmed:
+        raise ValueError("unsupported_staff_identity_claim:no_confirmed_full_name_evidence")
+    if claimed_names and any(name not in confirmed for name in claimed_names):
+        raise ValueError("unsupported_staff_identity_claim:claimed_name_not_in_trusted_directory")
+    if not claimed_names and not any(name in text for name in confirmed):
+        raise ValueError("unsupported_staff_identity_claim:claimed_name_not_in_trusted_directory")
 
 
 def _public_identity_material(store: TuoguanStore) -> dict[str, Any]:
@@ -388,6 +561,9 @@ def validate_employee_decision(raw: dict[str, Any]) -> dict[str, Any]:
             item["owner_escalation_reason"] = _limit(item.get("owner_escalation_reason"), 500)
         if "value_progress_note" in item:
             item["value_progress_note"] = _truthful_internal_text(item.get("value_progress_note"), 500)
+        if hermes_work_item_is_semantically_retired(item):
+            item["status"] = "superseded"
+            item.setdefault("stop_reason", "The work item was described as merged or no longer independently active.")
     for item in decision["institution_fact_gaps"]:
         item["gap_key"] = _limit(item.get("gap_key"), 120)
         item["gap_text"] = _limit(item.get("gap_text") or item.get("text") or item.get("reason"), 1000)
@@ -1026,7 +1202,7 @@ def _call_model_for_decision(materials: dict[str, Any]) -> dict[str, Any]:
         for key in (
             "timestamp", "identity", "mission", "principles", "materials_summary", "work_cadence",
             "onboarding", "goals", "work", "institution_understanding_state", "proactive_work_radar",
-            "recent_owner_messages", "operating_evidence", "term_state", "deferred_items",
+            "trusted_staff_identities", "recent_owner_messages", "operating_evidence", "term_state", "deferred_items",
         )
     }
     diagnosis = _request_model_phase(
@@ -1160,6 +1336,7 @@ def _request_model_content(cfg: dict[str, Any], messages: list[dict[str, str]], 
 _DIAGNOSIS_PROMPT = """你是托管机构数字员工小优，本轮只做事实诊断。
 根据材料判断机构现状、目标进度、真实缺口和需要询问的事实归属人。模型负责判断，材料和工具结果是事实依据。
 不得声称已经外发、写入或完成动作；不得联系家长；不得把历史名单当作新学期事实；没有变化是有效结论。
+人员身份只认 trusted_staff_identities：称呼、别名、企业微信显示名和 user_id 不能推导真实全名；没有 full_name_confirmed=true 时必须写“全名未确认”，不得自行补全姓名。历史工作项只作审计，不能覆盖当前可信目录或复活旧卡点。
 只返回一个精简 JSON 对象，字段固定为 employee_summary、institution_understanding、goal_progress_view、observations、institution_fact_gaps、questions_to_humans。
 observations 最多2条，institution_fact_gaps 最多2条，questions_to_humans 最多2条。不要复制学生名单或长段历史。"""
 
@@ -1309,6 +1486,7 @@ def _model_payload(materials: dict[str, Any]) -> dict[str, Any]:
     return {
         "timestamp": materials.get("timestamp"),
         "identity": materials.get("identity"),
+        "trusted_staff_identities": materials.get("trusted_staff_identities"),
         "mission": materials.get("mission"),
         "principles": materials.get("principles"),
         "materials_summary": materials.get("materials_summary"),

@@ -378,6 +378,76 @@ def test_daily_report_does_not_render_empty_json_detail(tmp_path):
     assert "今天先看 。" not in report["content"]
 
 
+def test_daily_report_excludes_old_active_item_from_today_focus(tmp_path):
+    from plugins.tuoguan_core.daily_reporter import build_daily_boss_report
+
+    store = _seed_store(tmp_path)
+    _append_jsonl(
+        tmp_path,
+        "hermes_work_items.jsonl",
+        [
+            {
+                "record_type": "work_item",
+                "work_item_id": "work-old-active",
+                "tenant_id": "youyi_tuoguan",
+                "focus_key": "historical:old_active",
+                "title": "五天前的待确认事项",
+                "focus_summary": "五天前曾经需要确认，当前没有新证据。",
+                "status": "active",
+                "created_at": "2026-08-07T08:00:00+08:00",
+                "updated_at": "2026-08-07T08:00:00+08:00",
+            }
+        ],
+    )
+
+    report = build_daily_boss_report(
+        "morning",
+        store=store,
+        now=datetime(2026, 8, 13, 8, 30, tzinfo=timezone(timedelta(hours=8))),
+    )
+
+    assert report["ok"] is True
+    assert "五天前的待确认事项" not in report["content"]
+    assert "五天前曾经需要确认" not in report["content"]
+    assert report["source_counts"]["work_item_count"] == 0
+
+
+def test_daily_report_never_leaks_internal_phase_key(tmp_path):
+    from plugins.tuoguan_core.daily_reporter import build_daily_boss_report
+
+    store = _seed_store(tmp_path)
+    _append_jsonl(
+        tmp_path,
+        "hermes_work_items.jsonl",
+        [
+            {
+                "record_type": "work_item",
+                "work_item_id": "work-current-phase",
+                "tenant_id": "youyi_tuoguan",
+                "focus_key": "goal:current_phase",
+                "title": "核验当前服务记录",
+                "focus_summary": "核验本周服务记录是否齐全。",
+                "status": "active",
+                "current_phase": {"phase_key": "historical_analysis", "internal_count": 2},
+                "created_at": "2026-08-13T07:30:00+08:00",
+                "updated_at": "2026-08-13T07:30:00+08:00",
+            }
+        ],
+    )
+
+    report = build_daily_boss_report(
+        "morning",
+        store=store,
+        now=datetime(2026, 8, 13, 8, 30, tzinfo=timezone(timedelta(hours=8))),
+    )
+
+    assert report["ok"] is True
+    assert "phase_key" not in report["content"]
+    assert "historical_analysis" not in report["content"]
+    assert '{"' not in report["content"]
+    assert "核验本周服务记录" in report["content"]
+
+
 def test_daily_report_does_not_apply_high_risk_evolution_detail(tmp_path):
     from plugins.tuoguan_core.daily_reporter import build_daily_boss_report
     from plugins.tuoguan_core.models import UserIdentity

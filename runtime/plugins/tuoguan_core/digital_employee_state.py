@@ -2668,7 +2668,7 @@ def query_value_progress_ledger(store: TuoguanStore, *, identity: UserIdentity, 
     return {"ok": True, "entry_count": len(rows), "entries": rows, "rendered_text": f"查到 {len(rows)} 条价值推进账本。它只记录参与推动和证据，不夸大归因。", "render_verified": True}
 
 
-def _value_progress_is_current_material(row: dict[str, Any]) -> bool:
+def _value_progress_is_current_material(row: dict[str, Any], *, now: datetime | None = None) -> bool:
     status = str(
         row.get("decision_material_status")
         or row.get("recall_status")
@@ -2680,8 +2680,11 @@ def _value_progress_is_current_material(row: dict[str, Any]) -> bool:
     text = json.dumps(row, ensure_ascii=False)
     old_roster_terms = ("122", "服务类型", "主责老师", "旧学生", "旧名单", "历史快照")
     if any(term in text for term in old_roster_terms) and any(term in text for term in ("等待", "确认", "缺少")):
-        created = str(row.get("created_at") or "")
-        if created and created[:10] < "2026-08-01":
+        created = _parse_time(row.get("updated_at") or row.get("created_at"))
+        reference = now or datetime.now().astimezone()
+        if created is not None and created.tzinfo is None:
+            created = created.replace(tzinfo=reference.tzinfo)
+        if created is not None and created < reference - timedelta(hours=36):
             return False
     if "等待中" in text and "创造价值" in text:
         return False
@@ -3800,6 +3803,45 @@ def _identity_can_view_autonomous_item(identity: UserIdentity, row: dict[str, An
     return False
 
 
+_RETIRED_WORK_ITEM_TERM_GROUPS = (
+    (("合并到", "已并入", "merged into"), ("不再独立", "停止独立", "no longer independently")),
+    (("无需继续", "不用继续", "不再推进", "停止推进"), ("工作项", "事项", "任务")),
+)
+
+
+def hermes_work_item_is_semantically_retired(item: dict[str, Any]) -> bool:
+    """Detect lifecycle closure evidence that conflicts with an open status.
+
+    Historical ledgers are append-only, so an old model may have described an
+    item as merged or stopped without changing its status. Consumers use this
+    signal to stop treating that row as current; a repair job may then append a
+    proper `superseded` update without deleting history.
+    """
+
+    if not isinstance(item, dict):
+        return False
+    status = str(item.get("status") or "").strip().lower()
+    if status in {"closed", "superseded", "cancelled", "completed", "done"}:
+        return True
+    chunks: list[str] = []
+    for key in (
+        "title", "focus_summary", "latest_update_text", "update_text",
+        "stop_reason", "source_text", "current_phase", "current_waiting",
+        "next_actions", "completed_actions",
+    ):
+        value = item.get(key)
+        if isinstance(value, str):
+            chunks.append(value)
+        elif isinstance(value, (dict, list)):
+            chunks.append(json.dumps(value, ensure_ascii=False))
+    normalized = "\n".join(chunks).lower()
+    return any(
+        any(term.lower() in normalized for term in first_group)
+        and any(term.lower() in normalized for term in second_group)
+        for first_group, second_group in _RETIRED_WORK_ITEM_TERM_GROUPS
+    )
+
+
 def _fold_hermes_work_items(store: TuoguanStore) -> dict[str, dict[str, Any]]:
     result: dict[str, dict[str, Any]] = {}
     updates: dict[str, list[dict[str, Any]]] = {}
@@ -4012,6 +4054,17 @@ def submit_hermes_work_item(
     normalized_status = str(status or "active").strip()
     if normalized_status not in _WORK_ITEM_STATUSES:
         return {"ok": False, "error": "invalid_work_item_status", "message": "工作事项状态必须是 active、waiting、blocked、closed 或 superseded。"}
+    if normalized_status in _WORK_ITEM_OPEN_STATUSES and hermes_work_item_is_semantically_retired({
+        "status": normalized_status,
+        "title": title,
+        "focus_summary": focus_summary,
+        "current_phase": current_phase or {},
+        "current_waiting": current_waiting or {},
+        "next_actions": next_actions or [],
+        "completed_actions": completed_actions or [],
+        "source_text": source_text,
+    }):
+        normalized_status = "superseded"
     normalized_focus = str(focus_key or "").strip()
     if not normalized_focus or not str(title or "").strip() or not str(focus_summary or "").strip():
         return {"ok": False, "error": "work_item_requires_focus", "message": "工作事项必须包含 focus_key、title 和 focus_summary。"}
@@ -4144,6 +4197,21 @@ def update_hermes_work_item(
         normalized_status = "active"
     if normalized_status not in _WORK_ITEM_STATUSES:
         return {"ok": False, "error": "invalid_work_item_status", "message": "工作事项状态必须是 active、waiting、blocked、closed 或 superseded。"}
+    prospective = deepcopy(item)
+    prospective.update({
+        "status": normalized_status,
+        "focus_summary": focus_summary or item.get("focus_summary") or "",
+        "current_phase": current_phase if current_phase is not None else item.get("current_phase") or {},
+        "current_waiting": current_waiting if current_waiting is not None else item.get("current_waiting") or {},
+        "next_actions": next_actions if next_actions is not None else item.get("next_actions") or [],
+        "completed_actions": completed_actions if completed_actions is not None else item.get("completed_actions") or [],
+        "update_text": update_text,
+        "source_text": source_text,
+        "stop_reason": stop_reason,
+    })
+    if normalized_status in _WORK_ITEM_OPEN_STATUSES and hermes_work_item_is_semantically_retired(prospective):
+        normalized_status = "superseded"
+        stop_reason = stop_reason or "工作事项已合并或不再独立推进，系统已收口为 superseded。"
     row: dict[str, Any] = {
         "record_type": "work_item_update",
         "update_id": _new_id("hermes_work_update"),

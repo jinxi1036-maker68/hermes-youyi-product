@@ -16,6 +16,7 @@ import os
 from typing import Any
 
 from .digital_employee_state import (
+    hermes_work_item_is_semantically_retired,
     query_attention_threads,
     query_autonomous_work_brief,
     query_hermes_work_items,
@@ -33,7 +34,6 @@ DAILY_REPORT_RUNS_FILE = "daily_report_runs.jsonl"
 NOTIFICATION_OUTBOX_FILE = "notification_outbox.json"
 VALID_REPORT_KINDS = {"morning", "evening"}
 REPORT_FRESHNESS_HOURS = 36
-STALE_REPORT_TERMS = ("昨晚", "明天10点", "李老师沟通结果", "一直发", "一直提醒")
 REPORT_DELIVERY_WINDOWS = {
     "morning": (7 * 60 + 30, 10 * 60 + 30),
     "evening": (19 * 60 + 30, 23 * 60),
@@ -505,17 +505,18 @@ def _fresh_report_work_items(rows: list[dict[str, Any]], timestamp: datetime) ->
     for row in rows:
         row_time = _material_timestamp(row, timestamp)
         is_old = bool(row_time is not None and row_time < cutoff)
-        text = _report_material_text(row)
         status = str(row.get("status") or "").strip().lower()
-        is_waiting_material = status in {"waiting", "blocked", "pending"}
-        if is_old and any(term in text for term in STALE_REPORT_TERMS):
+        if status not in {"active", "waiting", "blocked", "pending"}:
             continue
-        if is_old and is_waiting_material:
+        if hermes_work_item_is_semantically_retired(row):
+            continue
+        # Daily reports are about current work, not the entire open ledger. An
+        # old `active` flag is insufficient evidence that an item is still a
+        # useful today-focus.
+        if is_old:
             continue
         fresh.append(row)
     return fresh
-
-
 def _material_timestamp(row: dict[str, Any], now: datetime) -> datetime | None:
     for key in (
         "updated_at",
@@ -537,30 +538,6 @@ def _material_timestamp(row: dict[str, Any], now: datetime) -> datetime | None:
             parsed = parsed.replace(tzinfo=now.tzinfo)
         return parsed
     return None
-
-
-def _report_material_text(row: dict[str, Any]) -> str:
-    chunks: list[str] = []
-    keys = (
-        "title",
-        "focus_key",
-        "focus_summary",
-        "question_text",
-        "source_text",
-        "current_waiting",
-        "blocked_by",
-        "next_actions",
-        "pending_judgements",
-    )
-    for key in keys:
-        value = row.get(key)
-        if isinstance(value, str):
-            chunks.append(value)
-        elif isinstance(value, (dict, list)):
-            chunks.append(json.dumps(value, ensure_ascii=False))
-        elif value is not None:
-            chunks.append(str(value))
-    return "\n".join(chunks)
 
 
 def _proactivity_health(store: TuoguanStore, timestamp: datetime) -> list[str]:
@@ -707,7 +684,7 @@ def _work_item_lines(items: list[dict[str, Any]], *, purpose: str) -> list[str]:
     for item in items[:4]:
         title = _pick_text(item, "title", "focus_summary", "focus_key")
         status = _public_status_label(_pick_text(item, "status") or "active")
-        phase = _text_from_any(item.get("current_phase"))
+        phase = _public_phase_text(item.get("current_phase"))
         next_action = _first_text(item.get("next_actions"))
         waiting = _text_from_any(item.get("current_waiting"))
         detail = next_action or waiting or phase or _pick_text(item, "focus_summary")
@@ -718,6 +695,20 @@ def _work_item_lines(items: list[dict[str, Any]], *, purpose: str) -> list[str]:
         else:
             lines.append(f"{title}：{status}；当前记录为 {detail or '暂无新的可确认变化'}。")
     return lines
+
+
+def _public_phase_text(value: Any) -> str:
+    if isinstance(value, str):
+        return "" if _looks_like_internal_structured_text(value) else _text_from_any(value)
+    if not isinstance(value, dict):
+        return ""
+    # `phase_key` is an internal state key, not boss-facing prose. Only fields
+    # explicitly written as human-readable labels may enter a report.
+    for key in ("phase_label", "label", "summary", "name", "description"):
+        text = _text_from_any(value.get(key))
+        if text and not _looks_like_internal_structured_text(text):
+            return text
+    return ""
 
 
 def _waiting_lines(waiting_items: list[dict[str, Any]], open_attention: list[dict[str, Any]]) -> list[str]:
@@ -957,7 +948,16 @@ def _strip_report_prefix(text: str) -> str:
 
 def _looks_like_internal_structured_text(text: str) -> bool:
     compact = "".join(str(text or "").split())
-    return any(term in compact for term in ("[{'", "[{", "'goal_id'", "\"goal_id\"", "'current_phase'", "\"current_phase\""))
+    if compact.startswith(("{", "[")) or "{\"" in compact or "{'" in compact:
+        return True
+    return any(
+        term in compact
+        for term in (
+            "'goal_id'", "\"goal_id\"", "'current_phase'", "\"current_phase\"",
+            "'phase_key'", "\"phase_key\"", "'focus_key'", "\"focus_key\"",
+            "'work_item_id'", "\"work_item_id\"",
+        )
+    )
 
 
 def _outbox_row(
@@ -1086,8 +1086,7 @@ def _text_from_any(value: Any) -> str:
         for key in ("text", "summary", "name", "title", "reason", "status", "phase", "value", "description"):
             if str(value.get(key) or "").strip():
                 return _limit_text(str(value[key]).strip(), 180)
-        rendered = _public_text(json.dumps(value, ensure_ascii=False, sort_keys=True))
-        return "" if rendered in {"{}", "[]"} else _limit_text(rendered, 180)
+        return ""
     if isinstance(value, list):
         if not value:
             return ""

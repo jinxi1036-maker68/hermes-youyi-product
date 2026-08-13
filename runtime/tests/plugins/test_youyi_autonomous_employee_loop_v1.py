@@ -246,6 +246,111 @@ def test_autonomous_materials_include_proactive_work_radar(tmp_path):
     assert "事实诊断" in _DIAGNOSIS_PROMPT
 
 
+def test_autonomous_materials_quarantine_stale_work_and_use_trusted_staff_identity(tmp_path):
+    from plugins.tuoguan_core.autonomous_employee_loop import build_employee_loop_materials, _model_payload
+    from plugins.tuoguan_core.models import UserIdentity
+
+    store = _seed_store(tmp_path)
+    identity = UserIdentity("system", "boss1", "boss1", "金总", "boss", "approved")
+    materials = build_employee_loop_materials(
+        store,
+        identity=identity,
+        timestamp=datetime(2026, 8, 13, 12, 30, tzinfo=timezone(timedelta(hours=8))),
+    )
+    payload = _model_payload(materials)
+
+    assert materials["autonomous_work_items"]["items"] == []
+    assert materials["autonomous_work_items"]["historical_open_count"] == 1
+    assert materials["materials_summary"]["historical_open_work_item_count"] == 1
+    staff = materials["trusted_staff_identities"]["staff"]
+    teacher = next(row for row in staff if row["user_id"] == "teacher1")
+    assert teacher["business_name"] == "李老师"
+    assert teacher["full_name_confirmed"] is False
+    assert materials["trusted_staff_identities"]["confirmed_full_names"] == []
+    assert payload["trusted_staff_identities"]["confirmed_full_names"] == []
+
+
+def test_autonomous_loop_rejects_invented_staff_full_name_before_writes(tmp_path):
+    from plugins.tuoguan_core.autonomous_employee_loop import run_autonomous_employee_loop
+
+    store = _seed_store(tmp_path)
+
+    def invented_name(materials: dict) -> dict:
+        result = _decision(materials)
+        result["institution_understanding"] = "李老师全名已确认为李晓静。"
+        return result
+
+    result = run_autonomous_employee_loop(
+        store,
+        now=datetime(2026, 8, 13, 12, 30, tzinfo=timezone(timedelta(hours=8))),
+        decision_provider=invented_name,
+    )
+
+    assert result["ok"] is False
+    assert result["error"] == "employee_loop_model_decision_failed"
+    assert "unsupported_staff_identity_claim" in result["message"]
+    assert json.loads((tmp_path / "notification_outbox.json").read_text(encoding="utf-8")) == []
+
+
+def test_autonomous_identity_guard_allows_honest_unconfirmed_full_name(tmp_path):
+    from plugins.tuoguan_core.autonomous_employee_loop import run_autonomous_employee_loop
+
+    store = _seed_store(tmp_path)
+
+    def honest_gap(materials: dict) -> dict:
+        result = _decision(materials)
+        result["institution_understanding"] = "李老师全名是待确认事实，当前只确认了业务称呼和 user_id。"
+        result["boss_attention_candidates"] = []
+        result["questions_to_humans"] = []
+        return result
+
+    result = run_autonomous_employee_loop(
+        store,
+        now=datetime(2026, 8, 13, 12, 30, tzinfo=timezone(timedelta(hours=8))),
+        decision_provider=honest_gap,
+        write_state=False,
+    )
+
+    assert result["ok"] is True
+
+
+def test_merged_work_item_update_is_normalized_to_superseded():
+    from plugins.tuoguan_core.autonomous_employee_loop import validate_employee_decision
+
+    decision = validate_employee_decision({
+        "work_item_updates": [
+            {
+                "focus_key": "history:merged",
+                "title": "历史分析",
+                "status": "active",
+                "update_text": "该事项已合并到主工作项，不再独立推进。",
+            }
+        ]
+    })
+
+    assert decision["work_item_updates"][0]["status"] == "superseded"
+
+
+def test_legacy_value_progress_freshness_uses_relative_time_not_fixed_date():
+    from plugins.tuoguan_core.digital_employee_state import _value_progress_is_current_material
+
+    row = {
+        "subject": "服务关系核验",
+        "discovered": "缺少主责老师确认",
+        "created_at": "2027-01-08T08:00:00+08:00",
+    }
+    tz = timezone(timedelta(hours=8))
+
+    assert _value_progress_is_current_material(
+        row,
+        now=datetime(2027, 1, 9, 8, 0, tzinfo=tz),
+    ) is True
+    assert _value_progress_is_current_material(
+        row,
+        now=datetime(2027, 1, 10, 0, 1, tzinfo=tz),
+    ) is False
+
+
 def test_proactive_work_radar_tool_is_registered():
     from plugins.tuoguan_core.tools import TOOLS
 
