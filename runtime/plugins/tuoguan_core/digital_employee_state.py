@@ -50,6 +50,7 @@ ATTENTION_THREADS_FILE = "attention_threads.jsonl"
 RELATIONSHIP_TOUCH_CANDIDATES_FILE = "relationship_touch_candidates.jsonl"
 RELATIONSHIP_TOUCH_POLICY_FILE = "relationship_touch_policy.json"
 STAFF_VOICE_SIGNALS_FILE = "staff_voice_signals.jsonl"
+AUTONOMOUS_WORK_ITEM_FRESHNESS_HOURS = 36
 
 _CLOSED_STUDENT_STATUSES = {"inactive", "cancelled", "left", "deleted", "graduated"}
 _CLOSED_TASK_STATUSES = {"completed", "cancelled", "closed", "done", "closed_by_admin", "completed_by_admin"}
@@ -3810,7 +3811,7 @@ def _identity_can_view_autonomous_item(identity: UserIdentity, row: dict[str, An
 
 
 _RETIRED_WORK_ITEM_TERM_GROUPS = (
-    (("合并到", "已并入", "merged into"), ("不再独立", "停止独立", "no longer independently")),
+    (("合并到", "并入", "merged into"), ("不再独立", "不再单独", "停止独立", "no longer independently")),
     (("无需继续", "不用继续", "不再推进", "停止推进"), ("工作项", "事项", "任务")),
 )
 
@@ -5422,6 +5423,7 @@ def generate_autonomous_recovery_report(
     *,
     identity: UserIdentity,
     focus_key: str = "",
+    now_at: str = "",
     limit: int = 30,
 ) -> dict[str, Any]:
     """Build a read-only recovery brief for Hermes autonomous work.
@@ -5431,13 +5433,26 @@ def generate_autonomous_recovery_report(
     tasks, or change any business record.
     """
 
+    now_value = _parse_time(now_at) or datetime.now().astimezone()
+    if now_value.tzinfo is None:
+        now_value = now_value.astimezone()
     max_items = max(1, min(int(limit or 30), 100))
     work = query_hermes_work_items(store, identity=identity, focus_key=focus_key, include_closed=False, limit=max_items)
     wakeups = query_wakeup_requests(store, identity=identity, status="pending", limit=max_items)
     executions = query_action_executions(store, identity=identity, limit=max_items)
     events = query_business_events(store, identity=identity, limit=max_items)
 
-    items = work.get("items", []) if isinstance(work.get("items"), list) else []
+    items, historical_items, retired_count = _current_autonomous_work_items(work, now_value)
+    work["items"] = items
+    work["work_item_count"] = len(items)
+    work["waiting_count"] = sum(1 for item in items if str(item.get("status") or "") == "waiting")
+    work["historical_open_count"] = len(historical_items)
+    work["historical_open_items"] = historical_items
+    work["retired_open_count"] = retired_count
+    work["material_rule"] = (
+        "Current autonomous material excludes semantically retired work and open work not updated within 36 hours; "
+        "historical rows remain available for explicit revalidation."
+    )
     waiting_items = [item for item in items if str(item.get("status") or "") == "waiting"]
     active_items = [item for item in items if str(item.get("status") or "") == "active"]
     blocked_items = [item for item in items if str(item.get("status") or "") == "blocked"]
@@ -5467,6 +5482,8 @@ def generate_autonomous_recovery_report(
         "active_count": len(active_items),
         "waiting_count": len(waiting_items),
         "blocked_count": len(blocked_items),
+        "historical_open_count": len(historical_items),
+        "retired_open_count": retired_count,
         "pending_wakeup_count": int(wakeups.get("pending_count") or 0),
         "result_unknown_action_count": len(unknown_actions),
         "recent_business_event_count": int(events.get("event_count") or 0),
@@ -5479,6 +5496,7 @@ def generate_autonomous_recovery_report(
         "## 摘要",
         "",
         f"- 可见工作事项：{counts['visible_work_item_count']} 条；活跃 {counts['active_count']} 条；等待 {counts['waiting_count']} 条；阻塞 {counts['blocked_count']} 条。",
+        f"- 历史待重验：{counts['historical_open_count']} 条；语义已结束：{counts['retired_open_count']} 条。",
         f"- 待处理唤醒：{counts['pending_wakeup_count']} 条；结果未知动作：{counts['result_unknown_action_count']} 条；近期业务事件：{counts['recent_business_event_count']} 条。",
         "",
         "## 恢复前应先判断",
@@ -5563,8 +5581,9 @@ def generate_due_wakeup_candidates(
         for row in (wakeups.get("requests", []) if isinstance(wakeups.get("requests"), list) else [])
         if str(row.get("related_work_item_id") or "")
     }
+    current_items, historical_items, retired_count = _current_autonomous_work_items(work, now_value)
     candidates: list[dict[str, Any]] = []
-    for item in (work.get("items", []) if isinstance(work.get("items"), list) else []):
+    for item in current_items:
         status = str(item.get("status") or "")
         if status not in {"waiting", "blocked", "active"}:
             continue
@@ -5637,7 +5656,9 @@ def generate_due_wakeup_candidates(
         "candidate_count": len(candidates),
         "candidates": candidates[:max_items],
         "source_counts": {
-            "visible_work_item_count": int(work.get("work_item_count") or 0),
+            "visible_work_item_count": len(current_items),
+            "historical_open_count": len(historical_items),
+            "retired_open_count": retired_count,
             "pending_wakeup_count": int(wakeups.get("pending_count") or 0),
             "result_unknown_action_count": int(executions.get("result_unknown_count") or 0),
         },
@@ -5656,6 +5677,37 @@ def generate_due_wakeup_candidates(
         "rendered_text": "\n".join(lines).rstrip() + "\n",
         "render_verified": True,
     }
+
+
+def _current_autonomous_work_items(
+    work: dict[str, Any],
+    now_value: datetime,
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]], int]:
+    cutoff = now_value - timedelta(hours=AUTONOMOUS_WORK_ITEM_FRESHNESS_HOURS)
+    current: list[dict[str, Any]] = []
+    historical: list[dict[str, Any]] = []
+    retired_count = 0
+    for item in (work.get("items", []) if isinstance(work.get("items"), list) else []):
+        if not isinstance(item, dict):
+            continue
+        if hermes_work_item_is_semantically_retired(item):
+            retired_count += 1
+            continue
+        item_time = _parse_time(item.get("updated_at") or item.get("created_at"))
+        if item_time is not None:
+            if item_time.tzinfo is None:
+                item_time = item_time.replace(tzinfo=now_value.tzinfo)
+            if item_time < cutoff:
+                historical.append({
+                    "work_item_id": str(item.get("work_item_id") or ""),
+                    "focus_key": str(item.get("focus_key") or ""),
+                    "status": str(item.get("status") or "active"),
+                    "updated_at": str(item.get("updated_at") or item.get("created_at") or ""),
+                    "material_status": "historical_requires_revalidation",
+                })
+                continue
+        current.append(item)
+    return current, historical, retired_count
 
 
 _AUTONOMOUS_LOG_TOOL_NAMES = {

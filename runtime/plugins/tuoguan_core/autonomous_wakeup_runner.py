@@ -46,7 +46,12 @@ def run_autonomous_wakeup_once(
         approval_state="approved",
     )
     due = generate_due_wakeup_candidates(actual_store, identity=identity, now_at=timestamp.isoformat(timespec="seconds"), limit=50)
-    recovery = generate_autonomous_recovery_report(actual_store, identity=identity, limit=50)
+    recovery = generate_autonomous_recovery_report(
+        actual_store,
+        identity=identity,
+        now_at=timestamp.isoformat(timespec="seconds"),
+        limit=50,
+    )
     materialize_ledger = str(os.getenv("HERMES_AUTONOMOUS_WAKEUP_MATERIALIZE_LEDGER") or "").strip() == "1"
     patrol = run_wakeup_v2_dry_run(actual_store, now=timestamp, write_report=False, materialize_wakeup_ledger=materialize_ledger)
     log_review = generate_autonomous_log_review(actual_store, identity=identity, limit=80, include_gray_observations=True)

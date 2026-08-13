@@ -112,6 +112,40 @@ def test_autonomous_wakeup_propagates_employee_loop_failure(tmp_path, monkeypatc
     assert result["source_counts"]["employee_loop_write_count"] == 0
 
 
+def test_autonomous_wakeup_does_not_resurface_stale_or_retired_work(tmp_path):
+    from plugins.tuoguan_core.autonomous_wakeup_runner import run_autonomous_wakeup_once
+
+    store = _seed_store(tmp_path)
+    ledger = tmp_path / "hermes_work_items.jsonl"
+    with ledger.open("a", encoding="utf-8") as handle:
+        handle.write(json.dumps({
+            "record_type": "work_item",
+            "work_item_id": "work-retired",
+            "tenant_id": "youyi_tuoguan",
+            "status": "active",
+            "focus_key": "task:merged",
+            "title": "已合并旧事项",
+            "focus_summary": "该事项已经并入新任务，不再单独推进。",
+            "next_attention_at": "2026-07-28T08:00:00+00:00",
+            "created_at": "2026-07-28T08:30:00+00:00",
+            "updated_at": "2026-07-28T08:30:00+00:00",
+            "source": {"actor_user_id": "boss1", "actor_role": "boss"},
+        }, ensure_ascii=False) + "\n")
+
+    result = run_autonomous_wakeup_once(
+        store,
+        now=datetime(2026, 7, 30, 9, 0, tzinfo=timezone.utc),
+        write_report=False,
+    )
+
+    assert result["source_counts"]["visible_work_item_count"] == 0
+    assert result["source_counts"]["due_wakeup_candidate_count"] == 0
+    assert result["sections"]["recovery"]["counts"]["historical_open_count"] == 1
+    assert result["sections"]["recovery"]["counts"]["retired_open_count"] == 1
+    assert result["sections"]["due_wakeup_candidates"]["source_counts"]["historical_open_count"] == 1
+    assert result["sections"]["due_wakeup_candidates"]["source_counts"]["retired_open_count"] == 1
+
+
 def test_autonomous_wakeup_main_returns_failure_exit(monkeypatch):
     import plugins.tuoguan_core.autonomous_wakeup_runner as runner
 
