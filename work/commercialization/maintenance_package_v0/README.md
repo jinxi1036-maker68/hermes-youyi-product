@@ -6,6 +6,7 @@
 
 - `production_maintenance_runbook.md`：日常巡检、日志核对、timer 核对和异常分级。
 - `minimal_upgrade_rollback_flow.md`：最小同步、备份、重启、验证和回滚流程。
+- `release_and_recovery_gate_v1.md`：版本化发布、SQLite 兼容、恢复演练和第二租户门禁。
 
 ## 维护原则
 

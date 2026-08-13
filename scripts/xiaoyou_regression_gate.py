@@ -41,6 +41,11 @@ PY_COMPILE_TARGETS = [
     "scripts/xiaoyou_architecture_audit.py",
     "scripts/xiaoyou_production_load_check.py",
     "scripts/xiaoyou_deploy_guard.py",
+    "scripts/xiaoyou_release_package.py",
+    "scripts/xiaoyou_release_installer.py",
+    "scripts/xiaoyou_sqlite_runtime_check.py",
+    "scripts/xiaoyou_backup_restore_drill.py",
+    "scripts/xiaoyou_non_youyi_tenant_gate.py",
     "scripts/repair_semantically_retired_work_items.py",
     "scripts/repair_stale_xiaoyou_state.py",
     "scripts/repair_proactive_employee_state_v1.py",
@@ -184,6 +189,20 @@ def _demo_tenant_acceptance() -> dict[str, Any]:
         return accepted
 
 
+def _non_youyi_tenant_gate() -> dict[str, Any]:
+    return _run([sys.executable, str(ROOT / "scripts" / "xiaoyou_non_youyi_tenant_gate.py")], env=_python_env())
+
+
+def _sqlite_runtime_gate() -> dict[str, Any]:
+    return _run([
+        sys.executable,
+        str(ROOT / "scripts" / "xiaoyou_sqlite_runtime_check.py"),
+        "--minimum",
+        "3.51.3",
+        "--strict",
+    ], env=_python_env())
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="Run the fixed Xiaoyou regression gate.")
     parser.add_argument("--allow-missing-pytest", action="store_true", help="Report missing pytest as blocked instead of failing the gate.")
@@ -201,6 +220,8 @@ def main() -> int:
         ("git_diff_check", _git_diff_check),
         ("sensitive_scan", _sensitive_scan),
         ("demo_tenant_acceptance", _demo_tenant_acceptance),
+        ("non_youyi_tenant_gate", _non_youyi_tenant_gate),
+        ("sqlite_runtime_gate", _sqlite_runtime_gate),
     ):
         result = func()
         results["checks"][name] = result

@@ -30,10 +30,10 @@ ssh hermes-aliyun "journalctl -u hermes-youyi-019.service -n 120 --no-pager"
 
 ## 3. 备份
 
-在生产目录创建备份目录：
+在版本中立生产目录创建备份目录：
 
 ```text
-/opt/hermes-youyi-upgrade-0.19.0/backups/deploy-<commit>-minimal-<timestamp>/
+/opt/hermes-youyi-current/backups/deploy-<commit>-minimal-<timestamp>/
 ```
 
 备份规则：
@@ -44,7 +44,7 @@ ssh hermes-aliyun "journalctl -u hermes-youyi-019.service -n 120 --no-pager"
 
 ## 4. 最小同步
 
-只同步本次修复必需文件到：
+正式发布优先使用版本化发布包和受控链接。兼容期最小同步只允许同步本次修复必需文件到：
 
 - runtime 源码目录。
 - 实际加载的 `.venv/lib/python3.11/site-packages/plugins/tuoguan_core`。
@@ -60,8 +60,8 @@ ssh hermes-aliyun "journalctl -u hermes-youyi-019.service -n 120 --no-pager"
 ## 5. 重启前验证
 
 ```text
-ssh hermes-aliyun "cd /opt/hermes-youyi-upgrade-0.19.0 && .venv/bin/python -m py_compile <synced_files>"
-ssh hermes-aliyun "cd /opt/hermes-youyi-upgrade-0.19.0 && .venv/bin/python - <<'PY'\nimport plugins.tuoguan_core\nprint('import ok')\nPY"
+ssh hermes-aliyun "cd /opt/hermes-youyi-current && .venv/bin/python -m py_compile <synced_files>"
+ssh hermes-aliyun "cd /opt/hermes-youyi-current && .venv/bin/python - <<'PY'\nimport plugins.tuoguan_core\nprint('import ok')\nPY"
 ```
 
 ## 6. 受控重启

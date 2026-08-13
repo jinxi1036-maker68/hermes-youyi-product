@@ -28,6 +28,7 @@ runtime.secrets.env
 
 # Runtime data, ledgers, reports and generated outputs
 outputs/
+dist/
 logs/
 reports/
 backups/

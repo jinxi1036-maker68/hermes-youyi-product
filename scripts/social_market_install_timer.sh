@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-PROJECT_ROOT="${PROJECT_ROOT:-/opt/hermes-youyi-upgrade-0.19.0}"
+PROJECT_ROOT="${PROJECT_ROOT:-/opt/hermes-youyi-current}"
 DATA_DIR="${DATA_DIR:-/opt/hermes-youyi/data/tuoguan-data}"
 SOCIAL_ROOT="${SOCIAL_ROOT:-/opt/hermes-youyi/social-research}"
 RUN_USER="${RUN_USER:-hermes-youyi}"

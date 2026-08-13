@@ -7,11 +7,11 @@ Wants=network-online.target
 Type=oneshot
 User=hermes-youyi
 Group=hermes-youyi
-WorkingDirectory=/opt/hermes-youyi-upgrade-0.19.0/runtime
+WorkingDirectory=/opt/hermes-youyi-current/runtime
 EnvironmentFile=/opt/hermes-youyi/config/runtime.secrets.env
-EnvironmentFile=/opt/hermes-youyi-upgrade-0.19.0/config/runtime.gateway.019.env
+EnvironmentFile=/opt/hermes-youyi-current/config/runtime.gateway.020.env
 Environment=HERMES_TUOGUAN_DATA_DIR=/opt/hermes-youyi/data/tuoguan-data
-ExecStart=/opt/hermes-youyi-upgrade-0.19.0/.venv/bin/python -m plugins.tuoguan_core.daily_reporter evening --drain-outbox
+ExecStart=/opt/hermes-youyi-current/.venv/bin/python -m plugins.tuoguan_core.daily_reporter evening --drain-outbox
 NoNewPrivileges=true
 PrivateTmp=true
 ProtectSystem=full

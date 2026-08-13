@@ -125,6 +125,12 @@ print(json.dumps(out, ensure_ascii=False))
 """
     result = _run([str(python), "-c", code])
     result["available"] = result["returncode"] == 0
+    if result["available"]:
+        try:
+            result["import_paths"] = json.loads(result["output_tail"].splitlines()[-1])
+        except (json.JSONDecodeError, IndexError):
+            result["available"] = False
+            result["error"] = "import_probe_output_invalid"
     return result
 
 
@@ -235,11 +241,47 @@ def _wecom_hash_matrix(base: Path) -> dict[str, Any]:
     return matrix
 
 
+def _canonical_link_topology(base: Path) -> dict[str, Any]:
+    groups = {
+        "tuoguan_core": [_runtime_dir(base), *_package_dirs(base)],
+        "wecom": [_wecom_runtime_dir(base), *_wecom_package_dirs(base)],
+    }
+    output: dict[str, Any] = {"groups": {}}
+    all_canonical = True
+    for name, paths in groups.items():
+        rows: list[dict[str, Any]] = []
+        resolved: set[str] = set()
+        for path in paths:
+            row = _path_topology(path)
+            exists = bool(row["exists"])
+            resolved_path = str(row["resolved_path"])
+            if resolved_path:
+                resolved.add(resolved_path)
+            rows.append(row)
+        canonical = bool(rows) and all(row["exists"] and row["is_symlink"] for row in rows) and len(resolved) == 1
+        all_canonical = all_canonical and canonical
+        output["groups"][name] = {"canonical": canonical, "resolved_path_count": len(resolved), "paths": rows}
+    output["all_canonical"] = all_canonical
+    output["compatibility_mode"] = not all_canonical
+    return output
+
+
+def _path_topology(path: Path) -> dict[str, Any]:
+    exists = path.exists()
+    return {
+        "path": str(path),
+        "exists": exists,
+        "is_symlink": path.is_symlink(),
+        "resolved_path": str(path.resolve()) if exists else "",
+    }
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="Read-only Xiaoyou production load-path check.")
     parser.add_argument("--base", type=Path, default=DEFAULT_BASE)
     parser.add_argument("--config", type=Path, action="append", help="Config file to scan. Can be provided more than once.")
     parser.add_argument("--strict", action="store_true")
+    parser.add_argument("--require-canonical-links", action="store_true")
     args = parser.parse_args()
     config_paths = args.config if args.config else DEFAULT_CONFIG_PATHS
 
@@ -252,6 +294,7 @@ def main() -> int:
         "import_probe": _import_probe(args.base),
         "version_probe": _version_probe(args.base),
         "model_config": _model_config_scan(config_paths),
+        "canonical_link_topology": _canonical_link_topology(args.base),
     }
     hash_failures = [
         name
@@ -266,6 +309,8 @@ def main() -> int:
     ]
     report["wecom_hash_mismatch_files"] = wecom_hash_failures
     if hash_failures or wecom_hash_failures or not report["import_probe"].get("available") or not report["model_config"].get("agnes_25_seen"):
+        report["ok"] = False
+    if args.require_canonical_links and not report["canonical_link_topology"].get("all_canonical"):
         report["ok"] = False
     print(json.dumps(report, ensure_ascii=False, indent=2))
     return 1 if args.strict and not report["ok"] else 0

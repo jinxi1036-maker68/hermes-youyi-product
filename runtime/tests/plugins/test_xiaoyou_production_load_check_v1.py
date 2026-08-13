@@ -34,3 +34,31 @@ def test_wecom_matrix_requires_hermes_core_plugin_copy(tmp_path, monkeypatch):
     assert load_check._wecom_hash_matrix(tmp_path)["files"]["callback_adapter.py"]["hash_consistent"] is True
     _write(core, "stale\n")
     assert load_check._wecom_hash_matrix(tmp_path)["files"]["callback_adapter.py"]["hash_consistent"] is False
+
+
+def test_canonical_link_topology_distinguishes_compatibility_copies(tmp_path, monkeypatch):
+    core_targets = [
+        tmp_path / "runtime/plugins/tuoguan_core",
+        tmp_path / "home-proddata/plugins/tuoguan_core",
+    ]
+    monkeypatch.setattr(load_check, "_package_dirs", lambda _base: core_targets[1:])
+    monkeypatch.setattr(load_check, "_wecom_package_dirs", lambda _base: [])
+    monkeypatch.setattr(load_check, "_path_topology", lambda path: {
+        "path": str(path),
+        "exists": True,
+        "is_symlink": True,
+        "resolved_path": "canonical-wecom" if "platforms" in str(path) else "canonical-core",
+    })
+
+    linked = load_check._canonical_link_topology(tmp_path)
+
+    assert linked["groups"]["tuoguan_core"]["canonical"] is True
+    assert linked["groups"]["wecom"]["canonical"] is True
+    assert linked["all_canonical"] is True
+    monkeypatch.setattr(load_check, "_path_topology", lambda path: {
+        "path": str(path),
+        "exists": True,
+        "is_symlink": "home-proddata" in str(path),
+        "resolved_path": str(path),
+    })
+    assert load_check._canonical_link_topology(tmp_path)["all_canonical"] is False

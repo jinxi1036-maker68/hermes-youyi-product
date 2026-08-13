@@ -8,8 +8,8 @@
 /opt/hermes-platform/
   app/
     releases/
-      0.19.0/
       0.20.0/
+      xiaoyou-<commit>/
     current -> releases/0.20.0
   tenants/
     demo_tuoguan/
@@ -38,6 +38,7 @@
 规则：
 
 - 产品代码由版本发布流程管理。
+- 小优插件由单一 `xiaoyou-<commit>` 发布物管理，加载位置只能链接到同一份已校验代码。
 - 新机构不能修改 `app/current` 内的通用代码。
 - 机构差异只能放到 `tenants/{tenant_id}`。
 - 升级产品代码时，不能覆盖租户数据。
@@ -118,4 +119,3 @@ HERMES_TENANT_SKILLS_DIR=/opt/hermes-platform/tenants/{tenant_id}/skills
 ```
 
 当前优益生产暂不迁移到该结构；这是后续标准交付目标。
-

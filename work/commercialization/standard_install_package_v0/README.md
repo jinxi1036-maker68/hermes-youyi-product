@@ -46,10 +46,10 @@ python scripts/tenant_acceptance_check.py --tenant-root work/commercialization/d
 
 ## 与当前优益生产的关系
 
-当前优益生产继续使用现有路径和服务：
+当前优益生产使用版本中立入口和独立业务数据目录：
 
-- `/opt/hermes-youyi-upgrade-0.19.0`
+- `/opt/hermes-youyi-current`
 - `/opt/hermes-youyi/data/tuoguan-data`
 - `hermes-youyi-019.service`
 
-本目录只描述未来交付目标，不要求现在迁移优益。
+服务名保留 `019` 仅为生产兼容标识，实际底座版本必须通过加载检查确认，不能从服务名推断。
