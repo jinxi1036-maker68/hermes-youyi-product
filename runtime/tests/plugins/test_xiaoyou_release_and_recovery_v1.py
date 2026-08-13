@@ -25,6 +25,10 @@ def test_release_package_is_versioned_and_tamper_evident(tmp_path):
     assert verification["ok"] is True
     assert verification["manifest"]["contains_business_data"] is False
     assert verification["manifest"]["contains_credentials"] is False
+    cache = release_root / "payload/scripts/__pycache__/generated.cpython-311.pyc"
+    cache.parent.mkdir(parents=True, exist_ok=True)
+    cache.write_bytes(b"runtime cache")
+    assert verify_release_directory(release_root)["ok"] is True
     target = release_root / "payload/runtime/plugins/tuoguan_core/__init__.py"
     target.write_text(target.read_text(encoding="utf-8") + "\n# tampered\n", encoding="utf-8")
     failed = verify_release_directory(release_root)

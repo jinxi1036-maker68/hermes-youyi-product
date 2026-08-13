@@ -106,6 +106,8 @@ def verify_release_directory(release_root: Path) -> dict[str, Any]:
         path.relative_to(payload).as_posix()
         for path in payload.rglob("*")
         if path.is_file()
+        and "__pycache__" not in path.relative_to(payload).parts
+        and path.suffix.lower() not in {".pyc", ".pyo"}
     } if payload.is_dir() else set()
     unlisted = sorted(actual_paths - listed_paths)
     missing_from_manifest = sorted(listed_paths - actual_paths)
