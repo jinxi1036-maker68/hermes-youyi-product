@@ -1,0 +1,253 @@
+"""Twelve explicit domain facades over the legacy tool implementation set."""
+
+from __future__ import annotations
+
+from copy import deepcopy
+import json
+from typing import Any, Callable
+
+
+DOMAIN_OPERATIONS: dict[str, tuple[str, ...]] = {
+    "people": (
+        "context", "query_staff_directory", "resolve_student_responsibility",
+        "query_profile_candidates", "submit_profile_candidate", "submit_profile_candidate_correction",
+    ),
+    "students": (
+        "query_students", "register_student", "register_summer_student", "create_trial_lead",
+        "query_student_service_relations", "submit_service_relation_fact_candidate",
+    ),
+    "records": (
+        "record_summer_lesson", "record_student", "change_summer_points", "query_summer_points",
+        "query_summer_points_ranking", "report_safety_event", "parent_script_context",
+        "query_parent_communication_coverage", "query_weekly_record_coverage",
+        "submit_performance_evidence_candidate", "query_performance_evidence_candidates",
+        "submit_performance_evidence_response",
+    ),
+    "tasks": (
+        "query_tasks", "next_task", "current_task_guidance", "create_task", "cancel_task", "update_task",
+    ),
+    "goals": (
+        "goal_workspace", "query_active_goal_work_state", "submit_goal_evidence",
+        "query_goal_actions", "submit_goal_action",
+    ),
+    "proactive_work": (
+        "query_hermes_work_items", "submit_hermes_work_item", "update_hermes_work_item",
+        "query_wakeup_requests", "submit_wakeup_request", "update_wakeup_request",
+        "submit_due_wakeup_candidate", "query_business_events", "submit_business_event",
+        "query_action_executions", "submit_action_execution", "query_autonomous_work_brief",
+        "query_proactive_work_radar", "query_active_work_context", "query_attention_threads",
+        "update_attention_thread", "query_relationship_touch_candidates",
+        "submit_relationship_touch_candidate", "query_proactive_authorizations",
+        "submit_proactive_authorization", "execute_relationship_touch", "update_relationship_touch",
+    ),
+    "institution": (
+        "query_institution_onboarding_gaps", "query_operational_facts", "submit_operational_fact",
+        "confirm_operational_fact", "submit_information_request_record", "query_information_requests",
+        "submit_information_request_update", "query_employee_work_map", "query_fact_gap_candidates",
+        "submit_fact_gap_candidate",
+    ),
+    "workstyle": (
+        "query_person_workstyle_profile", "submit_person_workstyle_preference",
+        "query_workstyle_adaptation_health",
+    ),
+    "staff_voice": (
+        "submit_staff_voice_signal", "query_staff_voice_radar", "query_staff_conversation_activity",
+    ),
+    "learning": (
+        "query_self_evolution_ledger", "query_industry_learning_candidates",
+        "query_external_research_runs", "query_market_research_candidates", "query_competitor_profiles",
+        "query_external_learning_brief", "query_social_market_research",
+        "submit_industry_learning_candidate", "submit_learning_candidate", "list_learning_candidates",
+        "review_learning_candidate",
+    ),
+    "reports": (
+        "query_operations_report", "verify_dashboard_visibility", "dashboard_link",
+        "query_value_ledger", "submit_value_ledger_entry",
+    ),
+    "health": (
+        "query_xiaoyou_health", "generate_autonomous_recovery_report", "generate_due_wakeup_candidates",
+        "query_gray_observations", "submit_gray_observation", "query_gray_rollout_decisions",
+        "generate_gray_review", "query_gray_scenario_cards", "generate_gray_trial_start_pack",
+        "generate_autonomous_acceptance_pack", "generate_autonomous_log_review",
+        "generate_gray_observation_candidates", "submit_gray_rollout_decision",
+        "query_gray_optimization_decisions", "submit_gray_optimization_decision",
+    ),
+}
+
+DOMAIN_ROLES = {
+    "people": ("boss", "manager", "teacher"),
+    "students": ("boss", "manager", "teacher"),
+    "records": ("boss", "manager", "teacher"),
+    "tasks": ("boss", "manager", "teacher"),
+    "goals": ("boss", "manager", "teacher"),
+    "proactive_work": ("boss", "manager", "teacher"),
+    "institution": ("boss", "manager", "teacher"),
+    "workstyle": ("boss", "manager", "teacher"),
+    "staff_voice": ("boss", "manager", "teacher"),
+    "learning": ("boss", "manager"),
+    "reports": ("boss", "manager", "teacher"),
+    "health": ("boss", "manager"),
+}
+
+_WRITE_PREFIXES = (
+    "register_", "create_", "record_", "change_", "report_", "submit_", "update_",
+    "cancel_", "confirm_", "execute_", "review_learning_",
+)
+
+
+def operation_manifest() -> dict[str, Any]:
+    operations: dict[str, dict[str, Any]] = {}
+    for domain, names in DOMAIN_OPERATIONS.items():
+        for operation in names:
+            write = operation.startswith(_WRITE_PREFIXES)
+            operations[operation] = {
+                "domain": domain,
+                "roles": list(DOMAIN_ROLES[domain]),
+                "risk": "write_guarded" if write else "read_only",
+                "access": "write" if write else "read",
+                "required_evidence": "execution_receipt" if write else "trusted_tool_result",
+                "allowed_commitment": "verified_writeback_only" if write else "result_facts_only",
+            }
+    return {"domains": 12, "operations": operations}
+
+
+def _argument_contract(schema: dict[str, Any]) -> tuple[list[str], list[str]]:
+    parameters = schema.get("parameters") if isinstance(schema, dict) else {}
+    properties = parameters.get("properties") if isinstance(parameters, dict) else {}
+    names = [
+        str(name) for name in properties
+        if str(name) not in {"platform", "user_id", "user_name", "chat_id", "session_key"}
+    ]
+    required = [
+        str(name) for name in (parameters.get("required") or [])
+        if str(name) not in {"platform", "user_id", "user_name", "chat_id", "session_key", "operation_id"}
+    ]
+    optional = [name for name in names if name not in required and name != "operation_id"]
+    if "operation_id" in names:
+        optional.append("operation_id(auto)")
+    return required, optional
+
+
+def _domain_schema(domain: str, legacy: dict[str, tuple[dict[str, Any], Callable[..., Any]]]) -> dict[str, Any]:
+    contracts: list[str] = []
+    for operation in DOMAIN_OPERATIONS[domain]:
+        schema, _handler = legacy[operation]
+        required, optional = _argument_contract(schema)
+        text = operation
+        if required:
+            text += " required=" + ",".join(required)
+        if optional:
+            text += " optional=" + ",".join(optional)
+        contracts.append(text)
+    return {
+        "description": (
+            f"小优{domain}领域能力。模型必须显式选择 operation；系统不根据聊天文本替模型路由。"
+            "arguments 只填该 operation 的业务参数，身份始终来自可信企业微信会话。"
+            "操作契约：" + "；".join(contracts)
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "operation": {
+                    "type": "string",
+                    "enum": list(DOMAIN_OPERATIONS[domain]),
+                    "description": "明确选择本次业务操作。",
+                },
+                "arguments": {
+                    "type": "object",
+                    "description": "该 operation 的具名业务参数；未知参数会被结构化拒绝。",
+                    "additionalProperties": True,
+                },
+            },
+            "required": ["operation"],
+            "additionalProperties": False,
+        },
+    }
+
+
+def build_facade_tools(
+    legacy_tools: tuple[tuple[str, dict[str, Any], Callable[..., Any]], ...],
+    *,
+    tool_result: Callable[[Any], str],
+) -> tuple[tuple[str, dict[str, Any], Callable[..., Any]], ...]:
+    legacy = {
+        name.removeprefix("tuoguan_"): (schema, handler)
+        for name, schema, handler in legacy_tools
+    }
+    expected = {operation for values in DOMAIN_OPERATIONS.values() for operation in values}
+    missing = sorted(set(legacy) - expected)
+    unknown = sorted(expected - set(legacy))
+    duplicates = len(expected) != sum(len(values) for values in DOMAIN_OPERATIONS.values())
+    if missing or unknown or duplicates:
+        raise RuntimeError(
+            f"capability_manifest_mismatch missing={missing} unknown={unknown} duplicates={duplicates}"
+        )
+
+    def handler_for(domain: str) -> Callable[..., Any]:
+        def run(args: dict[str, Any], **kwargs: Any) -> str:
+            payload = dict(args or {})
+            operation = str(payload.get("operation") or "").strip()
+            if operation not in DOMAIN_OPERATIONS[domain]:
+                return tool_result({
+                    "ok": False,
+                    "error": "unknown_facade_operation",
+                    "message": "该领域没有这个 operation，本轮没有执行。",
+                    "data": {"domain": domain, "allowed_operations": list(DOMAIN_OPERATIONS[domain])},
+                })
+            arguments = payload.get("arguments") or {}
+            if not isinstance(arguments, dict):
+                return tool_result({
+                    "ok": False, "error": "invalid_facade_arguments",
+                    "message": "arguments 必须是对象，本轮没有执行。",
+                })
+            identity_args = {
+                key: payload[key] for key in ("platform", "user_id", "user_name", "chat_id", "session_key")
+                if key in payload
+            }
+            _schema, legacy_handler = legacy[operation]
+            raw_result = legacy_handler({**identity_args, **deepcopy(arguments)}, **kwargs)
+            try:
+                parsed = json.loads(raw_result) if isinstance(raw_result, str) else deepcopy(raw_result)
+            except (TypeError, ValueError):
+                parsed = {"ok": False, "error": "unparseable_legacy_tool_result"}
+            if not isinstance(parsed, dict):
+                parsed = {"ok": False, "error": "invalid_legacy_tool_result"}
+            parsed["facade_domain"] = domain
+            parsed["facade_operation"] = operation
+            parsed["legacy_tool"] = f"tuoguan_{operation}"
+            data = parsed.get("data") if isinstance(parsed.get("data"), dict) else {}
+            parsed["data"] = {
+                **data,
+                "facade_domain": domain,
+                "facade_operation": operation,
+                "legacy_tool": f"tuoguan_{operation}",
+            }
+            return tool_result(parsed)
+
+        return run
+
+    return tuple(
+        (f"tuoguan_{domain}", _domain_schema(domain, legacy), handler_for(domain))
+        for domain in DOMAIN_OPERATIONS
+    )
+
+
+def facade_schema_size(facade_tools: tuple[tuple[str, dict[str, Any], Callable[..., Any]], ...]) -> dict[str, int]:
+    serialized = json.dumps(
+        [{"name": name, "schema": schema} for name, schema, _handler in facade_tools],
+        ensure_ascii=False,
+        separators=(",", ":"),
+    )
+    return {"characters": len(serialized), "estimated_tokens": (len(serialized) + 3) // 4}
+
+
+def render_facade_instruction() -> str:
+    domains = "、".join(f"tuoguan_{name}" for name in DOMAIN_OPERATIONS)
+    return (
+        "【小优精简能力面】当前只暴露12个领域入口：" + domains + "。"
+        "员工手册或历史材料中的 tuoguan_query_tasks、tuoguan_cancel_task 等旧名称，"
+        "现在表示领域入口里的 operation，不是另一个可调用工具。"
+        "例如取消任务使用 tuoguan_tasks(operation=cancel_task, arguments={...})。"
+        "必须由模型显式选择领域和 operation；系统不根据自然语言偷偷决定业务动作。"
+    )
+

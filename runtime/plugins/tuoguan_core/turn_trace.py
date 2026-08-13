@@ -96,6 +96,10 @@ def record_tool_event(session_id: str, *, tool_name: str, result: Any) -> None:
             return
         trace.setdefault("tool_events", []).append({
             "tool": str(tool_name or ""),
+            "operation": str(
+                (data.get("facade_operation") if isinstance(data, dict) else "")
+                or (parsed.get("facade_operation") if isinstance(parsed, dict) else "")
+            ) or None,
             "ok": ok,
             "error": error or None,
             "writeback_verified": bool(data.get("writeback_verified") or receipt.get("writeback_verified")),
@@ -142,4 +146,3 @@ def finalize_turn_trace(
     result = deepcopy(trace)
     result["writeback_verified"] = bool(verified)
     return result
-

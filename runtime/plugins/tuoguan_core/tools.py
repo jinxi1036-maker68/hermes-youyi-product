@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import inspect
+import os
 from typing import Any, Callable
 
 from gateway.session_context import get_session_env
@@ -1513,3 +1514,19 @@ TOOLS = (
     ("tuoguan_list_learning_candidates", TUOGUAN_LIST_LEARNING_CANDIDATES_SCHEMA, _handler("list_learning_candidates")),
     ("tuoguan_review_learning_candidate", TUOGUAN_REVIEW_LEARNING_CANDIDATE_SCHEMA, _handler("review_learning_candidate")),
 )
+
+
+LEGACY_TOOLS = TOOLS
+
+
+def model_tools(surface: str = ""):
+    """Return the production model tool surface with a legacy rollback switch."""
+
+    selected = str(surface or os.getenv("HERMES_TUOGUAN_TOOL_SURFACE", "facade")).strip().lower()
+    if selected == "legacy":
+        return LEGACY_TOOLS
+    if selected != "facade":
+        raise ValueError("HERMES_TUOGUAN_TOOL_SURFACE must be facade or legacy")
+    from .capability_facades import build_facade_tools
+
+    return build_facade_tools(LEGACY_TOOLS, tool_result=tool_result)

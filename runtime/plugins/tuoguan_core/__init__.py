@@ -1465,6 +1465,12 @@ def _on_pre_llm_call(**kwargs: Any) -> dict[str, str] | None:
         context_sources.append("trusted_gateway_identity")
         if injected:
             context_sources.append("runtime_foundation")
+        try:
+            from .capability_facades import render_facade_instruction
+
+            append_context(render_facade_instruction(), "capability_facade_manifest")
+        except Exception:
+            logger.exception("tuoguan_core failed to append capability facade contract")
     try:
         if "identity" in locals():
             _record_owner_inbound_fact(
@@ -1845,9 +1851,10 @@ def _on_post_gateway_response(**kwargs: Any) -> None:
 def register(ctx) -> None:
     """Register the tutoring business router for Enterprise WeChat callback DMs."""
     global _REGISTERED_TOOL_COUNT
-    from .tools import TOOLS, TOOLSET
+    from .tools import TOOLSET, model_tools
 
-    _REGISTERED_TOOL_COUNT = len(TOOLS)
+    selected_tools = model_tools()
+    _REGISTERED_TOOL_COUNT = len(selected_tools)
 
     _log_runtime_module_manifest()
     # Model-led restore: old business routers and runtime prompt/response hooks are
@@ -1863,7 +1870,7 @@ def register(ctx) -> None:
     else:
         ctx.register_hook("transform_llm_output", _on_transform_llm_output)
         ctx.register_hook("post_llm_call", _on_post_llm_call_v020)
-    for name, schema, handler in TOOLS:
+    for name, schema, handler in selected_tools:
         ctx.register_tool(
             name=name,
             toolset=TOOLSET,

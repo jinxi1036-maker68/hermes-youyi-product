@@ -1029,7 +1029,6 @@ def observe_tool_result(*, session_id: str, tool_name: str, args: Any, result: A
         item = _TURN_BY_SESSION.get(str(session_id or ""))
         if not item:
             return
-        _reconcile_model_tool_selection(item, tool_name, args)
         # The trusted tool has already resolved this turn. Model retries may
         # still be attempted by the agent loop, but they must not contaminate
         # the outward ledger or replace the terminal result.
@@ -1041,18 +1040,31 @@ def observe_tool_result(*, session_id: str, tool_name: str, args: Any, result: A
             parsed = json.loads(result) if isinstance(result, str) else deepcopy(result)
         except (TypeError, ValueError):
             parsed = {"ok": False, "error": "unparseable_tool_result", "data": {}}
-        item["tool_calls"].append({"tool": tool_name, "args": deepcopy(args or {})})
-        item["tool_results"].append(parsed)
-        item["used_tool_registry_entry"] = tool_name
         data = parsed.get("data", {}) if isinstance(parsed, dict) else {}
+        effective_tool_name = str(
+            (data.get("legacy_tool") if isinstance(data, dict) else "")
+            or (parsed.get("legacy_tool") if isinstance(parsed, dict) else "")
+            or tool_name
+        )
+        _reconcile_model_tool_selection(item, effective_tool_name, args)
+        call = {"tool": effective_tool_name, "args": deepcopy(args or {})}
+        if effective_tool_name != tool_name:
+            call["facade_tool"] = tool_name
+            call["facade_operation"] = str(
+                (data.get("facade_operation") if isinstance(data, dict) else "")
+                or (parsed.get("facade_operation") if isinstance(parsed, dict) else "")
+            )
+        item["tool_calls"].append(call)
+        item["tool_results"].append(parsed)
+        item["used_tool_registry_entry"] = effective_tool_name
         if isinstance(data, dict):
             item["effective_scope"] = data.get("effective_scope", item.get("effective_scope"))
             item["result_count"] = data.get("result_count", data.get("count", item.get("result_count")))
             item["data_version"] = data.get("data_version", item.get("data_version"))
-            if tool_name == "tuoguan_query_students":
+            if effective_tool_name == "tuoguan_query_students":
                 item["terminal_tool_result"] = True
             non_terminal_redirect = isinstance(parsed, dict) and str(parsed.get("error") or "") in {"goal_workspace_required"}
-            if not non_terminal_redirect and (tool_name in WRITE_TOOLS or tool_name in {
+            if not non_terminal_redirect and (effective_tool_name in WRITE_TOOLS or effective_tool_name in {
                 "tuoguan_next_task", "tuoguan_current_task_guidance",
                 "tuoguan_goal_workspace", "tuoguan_query_tasks", "tuoguan_query_operations_report",
                 "tuoguan_dashboard_link", "tuoguan_query_summer_points", "tuoguan_query_summer_points_ranking",
@@ -1061,7 +1073,7 @@ def observe_tool_result(*, session_id: str, tool_name: str, args: Any, result: A
                 # actions belong inside a trusted tool, never in a model-driven
                 # sequence of independent writes.
                 item["terminal_tool_result"] = True
-                if tool_name == "tuoguan_update_task":
+                if effective_tool_name == "tuoguan_update_task":
                     item["idempotency_verified"] = bool(data.get("idempotency_verified"))
 
 

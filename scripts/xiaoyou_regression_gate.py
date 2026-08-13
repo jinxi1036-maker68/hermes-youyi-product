@@ -20,6 +20,7 @@ PY_COMPILE_TARGETS = [
     "runtime/plugins/tuoguan_core/tools.py",
     "runtime/plugins/tuoguan_core/runtime_foundation.py",
     "runtime/plugins/tuoguan_core/runtime_governance.py",
+    "runtime/plugins/tuoguan_core/capability_facades.py",
     "runtime/plugins/tuoguan_core/execution_receipts.py",
     "runtime/plugins/tuoguan_core/turn_trace.py",
     "runtime/plugins/tuoguan_core/active_work_context.py",
