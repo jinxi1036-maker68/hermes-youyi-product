@@ -851,11 +851,10 @@ def _anchor_relative_time_text(text: str, *, item: dict[str, Any], now: datetime
 
 def _evolution_context_line(item: dict[str, Any], *, now: datetime | None = None) -> str:
     ctype = str(item.get("candidate_type") or "")
-    summary = _limit_text(item.get("summary"), 100)
+    reference = now or datetime.now().astimezone()
+    summary = _concise_context_summary(str(item.get("summary") or ""), item=item, now=reference, limit=100)
     if not summary:
         return ""
-    reference = now or datetime.now().astimezone()
-    summary = _limit_text(_anchor_relative_time_text(summary, item=item, now=reference), 120)
     if ctype == "self_correction":
         return f"避免重复错误：{summary}"
     if ctype == "tomorrow_focus":
@@ -865,6 +864,17 @@ def _evolution_context_line(item: dict[str, Any], *, now: datetime | None = None
     if ctype == "multi_agent_adoption":
         return f"已采纳顾问建议：{summary}"
     return summary
+
+
+def _concise_context_summary(text: str, *, item: dict[str, Any], now: datetime, limit: int) -> str:
+    anchored = _anchor_relative_time_text(_limit_text(text, 700), item=item, now=now)
+    if len(anchored) <= limit:
+        return anchored
+    for match in re.finditer(r"[。！？!?；;]", anchored):
+        end = match.end()
+        if 12 <= end <= limit:
+            return anchored[:end].strip()
+    return _limit_text(anchored, limit)
 
 
 def _health_signals(rows: list[dict[str, Any]]) -> dict[str, Any]:

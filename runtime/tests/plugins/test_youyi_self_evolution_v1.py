@@ -280,6 +280,41 @@ def test_existing_similar_lessons_are_compacted_without_rewriting_history(tmp_pa
     assert (tmp_path / "self_evolution_events.jsonl").read_text(encoding="utf-8").count("\n") == 3
 
 
+def test_long_evolution_context_keeps_a_complete_first_sentence(tmp_path):
+    from plugins.tuoguan_core.self_evolution import build_self_evolution_brief
+
+    store = _seed_store(tmp_path)
+    _append_jsonl(
+        tmp_path,
+        "self_evolution_events.jsonl",
+        [{
+            "record_type": "self_evolution_event",
+            "evolution_event_id": "long-summary",
+            "semantic_fingerprint": "long-summary",
+            "tenant_id": "youyi_tuoguan",
+            "candidate_type": "self_correction",
+                "summary": (
+                    "老板反问但未提供信息时，应主动追问具体缺口，而非等待。"
+                    "8月12日老板再次追问，但主工作项仍停滞，下一次需要主动明确提问并核验结果，"
+                    "同时检查最近主动消息、当前任务、事实归属人和写后反查证据，不能继续依赖旧工作项里的等待描述。"
+                ),
+            "risk_level": "low",
+            "status": "ready_for_application",
+            "created_at": "2026-08-12T21:00:00+08:00",
+        }],
+    )
+    brief = build_self_evolution_brief(
+        store,
+        identity=_boss_identity(),
+        now=datetime(2026, 8, 13, 8, 30, tzinfo=timezone(timedelta(hours=8))),
+    )
+
+    assert brief["next_day_context"] == [
+        "避免重复错误：老板反问但未提供信息时，应主动追问具体缺口，而非等待。"
+    ]
+    assert "…" not in brief["next_day_context"][0]
+
+
 def test_verified_person_preference_candidate_can_enter_next_day_context(tmp_path):
     from plugins.tuoguan_core.self_evolution import SELF_EVOLUTION_EVENTS_FILE, build_self_evolution_brief, submit_self_evolution_event
     from plugins.tuoguan_core.write_guard import authorized_system_write
