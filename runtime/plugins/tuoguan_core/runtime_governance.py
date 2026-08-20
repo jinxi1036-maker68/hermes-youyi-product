@@ -92,6 +92,7 @@ MODULE_OWNERSHIP = (
             "permission_guard.py", "permissions.py", "proactive_work.py", "programs.py", "queries.py",
             "record_evaluation.py", "record_reply_composer.py", "records.py", "reports.py", "research.py",
             "responsibility_resolver.py", "runtime.py", "runtime_foundation.py", "runtime_governance.py",
+            "runtime_performance.py",
             "self_evolution.py", "social_market_research.py", "staff_config.py",
             "staff_conversation_activity.py", "staff_directory.py", "store.py", "student_daily_records.py",
             "student_record_guidance.py", "student_resolver.py", "system_self_knowledge.py", "tasks.py",

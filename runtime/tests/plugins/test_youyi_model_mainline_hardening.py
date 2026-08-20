@@ -46,11 +46,10 @@ def test_tuoguan_core_does_not_register_pre_model_business_decision_hooks():
     except Exception:
         VALID_HOOKS = {"post_gateway_response"}
     if "post_gateway_response" in VALID_HOOKS:
-        assert names == ["pre_llm_call", "post_tool_call", "post_gateway_response"]
+        assert names == ["pre_llm_call", "pre_tool_call", "post_tool_call", "post_gateway_response"]
     else:
-        assert names == ["pre_llm_call", "post_tool_call", "transform_llm_output", "post_llm_call"]
+        assert names == ["pre_llm_call", "pre_tool_call", "post_tool_call", "transform_llm_output", "post_llm_call"]
     assert "pre_gateway_dispatch" not in names
-    assert "pre_tool_call" not in names
     assert {tool["name"] for tool in tools}
 
 

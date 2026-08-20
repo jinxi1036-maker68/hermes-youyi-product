@@ -110,6 +110,45 @@ class WecomCallbackAdapter(BasePlatformAdapter):
         self._user_app_map: Dict[str, str] = {}
         self._access_tokens: Dict[str, Dict[str, Any]] = {}
 
+    def set_message_handler(self, handler) -> None:
+        """Guarantee a visible, safe reply when a non-streaming model turn fails."""
+
+        async def reliable_handler(event: MessageEvent):
+            try:
+                response = await handler(event)
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                logger.exception("[WecomCallback] Model handler failed before producing a reply")
+                response = None
+            get_command = getattr(event, "get_command", None)
+            command = get_command() if callable(get_command) else (
+                str(event.text or "").strip().split(maxsplit=1)[0]
+                if str(event.text or "").strip().startswith("/")
+                else None
+            )
+            if (
+                response is None
+                and event.message_type == MessageType.TEXT
+                and str(event.text or "").strip()
+                and not command
+            ):
+                logger.error(
+                    "[WecomCallback] Empty model response converted to a visible failure receipt "
+                    "message_id=%s",
+                    event.message_id,
+                )
+                return (
+                    "这次处理超时或中断了，我没有拿到可靠结果，也不会假装已经完成。"
+                    "你回复“继续”即可，我会从当前事项接着处理。"
+                )
+            return response
+
+        # BasePlatformAdapter.set_message_handler is a direct assignment in
+        # Hermes v0.20. Keep the same contract so the plugin also loads in the
+        # repository's lightweight compatibility test runtime.
+        self._message_handler = reliable_handler
+
     # ------------------------------------------------------------------
     # App normalisation
     # ------------------------------------------------------------------

@@ -45,6 +45,11 @@ from .turn_trace import (
     record_guard_event as _record_trace_guard_event,
     record_tool_event as _record_trace_tool_event,
 )
+from .runtime_performance import (
+    clear_turn_tool_budget as _clear_turn_tool_budget,
+    guard_turn_tool_call as _guard_turn_tool_call,
+    reset_turn_tool_budget as _reset_turn_tool_budget,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -465,6 +470,9 @@ def _xiaoyou_core_skill_context(*, identity: Any) -> str:
         "只可注入此人的角色、个人工作方式、当前任务和必要机构事实，"
         "不得混入老板或其他员工的个人档案。先查当前上下文、可信业务工具、人员目录、历史证据及必要只读公开资料，再说查不到。"
         "没有真实工具调用不能说查过，没有写后反查不能说已保存，没有发送回执不能说已发送。"
+        "简单问候、致谢、确认在场等不涉及业务事实或执行动作的消息，直接自然简短回复，不要调用工具。"
+        "需要业务事实时，以完成当前问题所需的最少证据为准：先调用一个最相关的领域入口，"
+        "只有结果明确暴露出必要缺口时再补查；同一参数不得重复查询，不要为了展示能力遍历工具。"
         "凡是本轮工具列表中已经可见的 tuoguan_ 工具，必须直接调用该工具，禁止再套用 tool_call；"
         "调用前按工具说明补齐必填参数，写工具的 operation_id 使用当前消息 id。"
         "专项问题按需参考 youyi-digital-employee、youyi-tuoguan-business、active-information-acquisition、goal-management、"
@@ -1400,6 +1408,7 @@ def _on_pre_llm_call(**kwargs: Any) -> dict[str, str] | None:
         activity_key = (str(_router().store.data_dir.resolve()), identity.canonical_user_id)
         _ACTIVE_WECom_USERS[activity_key] = datetime.now().astimezone()
         turn_key = session_id or chat_id or identity.canonical_user_id
+        _reset_turn_tool_budget(turn_key)
         _begin_turn_trace(
             session_id=turn_key,
             message_id=message_id,
@@ -1717,12 +1726,24 @@ def _on_post_tool_call(**kwargs: Any) -> None:
 
 
 def _on_pre_tool_call(**kwargs: Any) -> dict[str, str] | None:
-    # Model-led production: do not run an extra pre-tool business router here.
-    # Tool handlers still enforce identity, role permissions and write guards.
-    _begin_trace_tool_event(
-        str(kwargs.get("session_id") or ""),
-        tool_name=str(kwargs.get("tool_name") or ""),
+    # This is a resource boundary, not a business router: the model still
+    # chooses the tool and operation, while the runtime blocks exact repeats
+    # and pathological tool loops that make a chat turn stall.
+    session_id = str(kwargs.get("session_id") or "")
+    tool_name = str(kwargs.get("tool_name") or "")
+    directive = _guard_turn_tool_call(
+        session_id,
+        tool_name=tool_name,
+        args=kwargs.get("args"),
     )
+    if directive is not None:
+        _record_trace_guard_event(
+            session_id,
+            guard=str(directive.get("reason") or "tool_resource_boundary"),
+            result="blocked",
+        )
+        return directive
+    _begin_trace_tool_event(session_id, tool_name=tool_name)
     return None
 
 
@@ -1755,6 +1776,7 @@ def _on_post_llm_call_v020(**kwargs: Any) -> None:
     if platform != "wecom_callback" or not session_id:
         return
     turn = _ACTIVE_MODEL_TURNS.pop(session_id, None)
+    _clear_turn_tool_budget(session_id)
     if not turn:
         return
     final_reply = str(kwargs.get("assistant_response") or "")
@@ -1870,6 +1892,7 @@ def register(ctx) -> None:
     # Model-led restore: old business routers and runtime prompt/response hooks are
     # not registered on the main message path. Keep tools plus passive audit only.
     ctx.register_hook("pre_llm_call", _on_pre_llm_call)
+    ctx.register_hook("pre_tool_call", _on_pre_tool_call)
     ctx.register_hook("post_tool_call", _on_post_tool_call)
     try:
         from hermes_cli.plugins import VALID_HOOKS

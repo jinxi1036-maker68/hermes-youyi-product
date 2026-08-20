@@ -14,9 +14,21 @@ import yaml
 
 TUNING = {
     "context_length": 262144,
-    "max_tokens": 8192,
-    "request_timeout_seconds": 120,
-    "stale_timeout_seconds": 180,
+    "max_tokens": 4096,
+    "request_timeout_seconds": 45,
+    "stale_timeout_seconds": 60,
+}
+
+AGENT_TUNING = {
+    "api_max_retries": 2,
+    "max_turns": 16,
+    "gateway_timeout": 240,
+    "gateway_timeout_warning": 60,
+}
+
+COMPRESSION_TUNING = {
+    "threshold": 0.18,
+    "hygiene_hard_message_limit": 80,
 }
 
 
@@ -48,18 +60,47 @@ def tune(config_file: Path, backup_dir: Path, *, apply: bool) -> dict[str, objec
             changed[f"agnes.{key}"] = {"before": before, "after": value}
             provider[key] = value
 
+    model = data.get("model")
+    if not isinstance(model, dict):
+        return {"ok": False, "error": "primary_model_not_mapping"}
+    if str(model.get("model") or model.get("default") or model.get("name") or "") != "agnes-2.5-flash":
+        return {"ok": False, "error": "primary_model_not_agnes"}
+    for key, value in TUNING.items():
+        before = model.get(key)
+        if before != value:
+            changed[f"model.{key}"] = {"before": before, "after": value}
+            model[key] = value
+
+    agent = data.setdefault("agent", {})
+    if not isinstance(agent, dict):
+        return {"ok": False, "error": "agent_not_mapping"}
+    for key, value in AGENT_TUNING.items():
+        before = agent.get(key)
+        if before != value:
+            changed[f"agent.{key}"] = {"before": before, "after": value}
+            agent[key] = value
+
+    fallbacks = data.get("fallback_providers") or []
+    if not isinstance(fallbacks, list):
+        return {"ok": False, "error": "fallback_providers_not_list"}
+    for index, fallback in enumerate(fallbacks):
+        if not isinstance(fallback, dict):
+            continue
+        for key in ("max_tokens", "request_timeout_seconds", "stale_timeout_seconds"):
+            value = TUNING[key]
+            before = fallback.get(key)
+            if before != value:
+                changed[f"fallback.{index}.{key}"] = {"before": before, "after": value}
+                fallback[key] = value
+
     compression = data.setdefault("compression", {})
     if not isinstance(compression, dict):
         return {"ok": False, "error": "compression_not_mapping"}
-    if compression.get("threshold") != 0.18:
-        changed["compression.threshold"] = {"before": compression.get("threshold"), "after": 0.18}
-        compression["threshold"] = 0.18
-    if compression.get("hygiene_hard_message_limit") != 180:
-        changed["compression.hygiene_hard_message_limit"] = {
-            "before": compression.get("hygiene_hard_message_limit"),
-            "after": 180,
-        }
-        compression["hygiene_hard_message_limit"] = 180
+    for key, value in COMPRESSION_TUNING.items():
+        before = compression.get(key)
+        if before != value:
+            changed[f"compression.{key}"] = {"before": before, "after": value}
+            compression[key] = value
 
     result: dict[str, object] = {
         "ok": True,
@@ -91,8 +132,15 @@ def tune(config_file: Path, backup_dir: Path, *, apply: bool) -> dict[str, objec
         if isinstance(item, dict) and str(item.get("model") or "") == "agnes-2.5-flash"
     )
     verified = all(verified_provider.get(key) == value for key, value in TUNING.items())
-    verified = verified and verified_data["compression"].get("threshold") == 0.18
-    verified = verified and verified_data["compression"].get("hygiene_hard_message_limit") == 180
+    verified = verified and all(verified_data["model"].get(key) == value for key, value in TUNING.items())
+    verified = verified and all(verified_data["agent"].get(key) == value for key, value in AGENT_TUNING.items())
+    verified = verified and all(verified_data["compression"].get(key) == value for key, value in COMPRESSION_TUNING.items())
+    verified = verified and all(
+        fallback.get(key) == TUNING[key]
+        for fallback in (verified_data.get("fallback_providers") or [])
+        if isinstance(fallback, dict)
+        for key in ("max_tokens", "request_timeout_seconds", "stale_timeout_seconds")
+    )
     result.update({
         "backup_file": str(backup),
         "updated_sha256": _hash(config_file.read_bytes()),
