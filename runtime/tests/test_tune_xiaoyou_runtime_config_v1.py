@@ -53,3 +53,29 @@ def test_runtime_tuning_applies_to_primary_provider_fallback_and_agent(tmp_path:
     assert updated["fallback_providers"][0]["api_key"] == "fallback-secret"
     assert updated["fallback_providers"][0]["request_timeout_seconds"] == 45
     assert len(list((tmp_path / "backup").glob("config.before-latency-tuning.*.yaml"))) == 1
+
+
+def test_runtime_tuning_preserves_string_fallback_provider(tmp_path: Path):
+    from scripts.tune_xiaoyou_runtime_config import tune
+
+    config = tmp_path / "config.yaml"
+    config.write_text(
+        yaml.safe_dump(
+            {
+                "compression": {"enabled": True},
+                "agent": {},
+                "model": {"model": "agnes-2.5-flash"},
+                "custom_providers": [{"model": "agnes-2.5-flash"}],
+                "fallback_providers": "openrouter/auto",
+            },
+            sort_keys=False,
+        ),
+        encoding="utf-8",
+    )
+
+    result = tune(config, tmp_path / "backup", apply=True)
+    updated = yaml.safe_load(config.read_text(encoding="utf-8"))
+
+    assert result["ok"] is True
+    assert result["writeback_verified"] is True
+    assert updated["fallback_providers"] == "openrouter/auto"

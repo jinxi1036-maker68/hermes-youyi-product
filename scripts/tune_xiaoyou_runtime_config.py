@@ -80,9 +80,15 @@ def tune(config_file: Path, backup_dir: Path, *, apply: bool) -> dict[str, objec
             changed[f"agent.{key}"] = {"before": before, "after": value}
             agent[key] = value
 
-    fallbacks = data.get("fallback_providers") or []
-    if not isinstance(fallbacks, list):
-        return {"ok": False, "error": "fallback_providers_not_list"}
+    fallback_value = data.get("fallback_providers")
+    if fallback_value is None or isinstance(fallback_value, str):
+        # Hermes also accepts a provider-name string here. It has no per-model
+        # timeout fields to tune, so preserve it exactly as configured.
+        fallbacks: list[object] = []
+    elif isinstance(fallback_value, list):
+        fallbacks = fallback_value
+    else:
+        return {"ok": False, "error": "fallback_providers_invalid_type"}
     for index, fallback in enumerate(fallbacks):
         if not isinstance(fallback, dict):
             continue
@@ -135,12 +141,16 @@ def tune(config_file: Path, backup_dir: Path, *, apply: bool) -> dict[str, objec
     verified = verified and all(verified_data["model"].get(key) == value for key, value in TUNING.items())
     verified = verified and all(verified_data["agent"].get(key) == value for key, value in AGENT_TUNING.items())
     verified = verified and all(verified_data["compression"].get(key) == value for key, value in COMPRESSION_TUNING.items())
-    verified = verified and all(
-        fallback.get(key) == TUNING[key]
-        for fallback in (verified_data.get("fallback_providers") or [])
-        if isinstance(fallback, dict)
-        for key in ("max_tokens", "request_timeout_seconds", "stale_timeout_seconds")
-    )
+    verified_fallbacks = verified_data.get("fallback_providers")
+    if isinstance(verified_fallbacks, list):
+        verified = verified and all(
+            fallback.get(key) == TUNING[key]
+            for fallback in verified_fallbacks
+            if isinstance(fallback, dict)
+            for key in ("max_tokens", "request_timeout_seconds", "stale_timeout_seconds")
+        )
+    else:
+        verified = verified and verified_fallbacks == fallback_value
     result.update({
         "backup_file": str(backup),
         "updated_sha256": _hash(config_file.read_bytes()),
