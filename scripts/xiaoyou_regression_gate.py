@@ -67,6 +67,7 @@ PYTEST_TARGETS = [
     "runtime/tests/test_tenant_acceptance_check_v0.py",
     "runtime/tests/test_sanitize_shared_memory_v1.py",
     "runtime/tests/test_tune_xiaoyou_runtime_config_v1.py",
+    "runtime/tests/test_rotate_wecom_sessions_for_latency_v1.py",
     "runtime/tests/test_repair_proactive_employee_state_v1.py",
 ]
 
