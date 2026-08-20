@@ -39,6 +39,7 @@ INSTITUTION_UNDERSTANDING_FILE = "institution_understanding_state.json"
 HERMES_EMPLOYEE_SCORECARD_FILE = "hermes_employee_scorecard.jsonl"
 INDUSTRY_LEARNING_CANDIDATES_FILE = "industry_learning_candidates.jsonl"
 EXTERNAL_RESEARCH_RUNS_FILE = "external_research_runs.jsonl"
+EXTERNAL_RESEARCH_CORRECTIONS_FILE = "external_research_corrections.jsonl"
 MARKET_RESEARCH_CANDIDATES_FILE = "market_research_candidates.jsonl"
 COMPETITOR_PROFILES_FILE = "competitor_profiles.jsonl"
 WEEKLY_MARKET_REPORT_RUNS_FILE = "weekly_market_report_runs.jsonl"
@@ -87,6 +88,7 @@ _STAFF_VOICE_CATEGORIES = {
 }
 _STAFF_VOICE_RISK_LEVELS = {"low", "medium", "high", "urgent"}
 _STAFF_VOICE_STATUSES = {"open", "reviewed", "resolved", "dismissed", "superseded"}
+_QUARANTINED_EXTERNAL_RESEARCH_STATUSES = {"quarantined", "invalid", "superseded"}
 
 
 DEFAULT_RELATIONSHIP_TOUCH_POLICY: dict[str, Any] = {
@@ -2590,8 +2592,19 @@ def query_industry_learning_candidates(store: TuoguanStore, *, identity: UserIde
     if identity.role not in {"boss", "manager"}:
         return {"ok": False, "error": "permission_denied", "message": "只有老板或店长可以查看行业学习候选。"}
     status_filter = str(status or "").strip()
+    corrections = _external_research_correction_index(store)
     rows = []
     for row in _read_jsonl(store, INDUSTRY_LEARNING_CANDIDATES_FILE):
+        correction = corrections.get(_external_source_run_id(row))
+        corrected_status = str((correction or {}).get("status") or "")
+        if corrected_status in _QUARANTINED_EXTERNAL_RESEARCH_STATUSES:
+            if status_filter != corrected_status:
+                continue
+            item = deepcopy(row)
+            item["status"] = corrected_status
+            item["source_correction"] = deepcopy(correction)
+            rows.append(item)
+            continue
         if status_filter and str(row.get("status") or "") != status_filter:
             continue
         rows.append(deepcopy(row))
@@ -2605,9 +2618,13 @@ def query_external_research_runs(store: TuoguanStore, *, identity: UserIdentity,
     if identity.role not in {"boss", "manager"}:
         return {"ok": False, "error": "permission_denied", "message": "只有老板或店长可以查看外部学习运行记录。"}
     mode_filter = str(mode or "").strip()
+    corrections = _external_research_correction_index(store)
     rows = []
     for row in _read_jsonl(store, EXTERNAL_RESEARCH_RUNS_FILE):
         if mode_filter and str(row.get("mode") or "") != mode_filter:
+            continue
+        correction = corrections.get(str(row.get("run_id") or ""))
+        if str((correction or {}).get("status") or "") in _QUARANTINED_EXTERNAL_RESEARCH_STATUSES:
             continue
         rows.append(deepcopy(row))
     rows.sort(key=lambda item: str(item.get("created_at") or ""))
@@ -2666,6 +2683,12 @@ def query_external_learning_brief(store: TuoguanStore, *, identity: UserIdentity
     report_runs = _read_jsonl(store, WEEKLY_MARKET_REPORT_RUNS_FILE)
     report_runs.sort(key=lambda item: str(item.get("created_at") or ""))
     recent_reports = report_runs[-max(1, min(int(limit or 5), 30)):]
+    corrections = _external_research_correction_index(store)
+    quarantined_count = sum(
+        1
+        for row in corrections.values()
+        if str(row.get("status") or "") in _QUARANTINED_EXTERNAL_RESEARCH_STATUSES
+    )
     return {
         "ok": True,
         "external_research_runs": runs,
@@ -2673,15 +2696,36 @@ def query_external_learning_brief(store: TuoguanStore, *, identity: UserIdentity
         "market_research_candidates": market,
         "competitor_profiles": competitors,
         "recent_report_runs": recent_reports,
+        "quarantined_run_count": quarantined_count,
         "rendered_text": (
             f"外部学习摘要：运行 {runs.get('run_count', 0)} 次，"
             f"行业候选 {industry.get('candidate_count', 0)} 条，"
             f"市场候选 {market.get('candidate_count', 0)} 条，"
             f"竞品线索 {competitors.get('profile_count', 0)} 条。"
-            "这些都是建议材料，是否采纳由 Hermes 结合老板审核和业务事实判断。"
+            + (f" 已隔离 {quarantined_count} 条无效历史运行。" if quarantined_count else "")
+            + "这些都是建议材料，是否采纳由 Hermes 结合老板审核和业务事实判断。"
         ),
         "render_verified": True,
     }
+
+
+def _external_source_run_id(row: dict[str, Any]) -> str:
+    source = row.get("source") if isinstance(row.get("source"), dict) else {}
+    return str(
+        row.get("source_run_id")
+        or row.get("source_message_id")
+        or source.get("source_message_id")
+        or ""
+    )
+
+
+def _external_research_correction_index(store: TuoguanStore) -> dict[str, dict[str, Any]]:
+    index: dict[str, dict[str, Any]] = {}
+    for row in _read_jsonl(store, EXTERNAL_RESEARCH_CORRECTIONS_FILE):
+        run_id = str(row.get("run_id") or "")
+        if run_id:
+            index[run_id] = deepcopy(row)
+    return index
 
 
 def submit_industry_learning_candidate(

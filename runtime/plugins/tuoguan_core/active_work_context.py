@@ -156,6 +156,8 @@ def _recent_outbound_contexts(store: TuoguanStore, identity: UserIdentity, now: 
     for row in outbox:
         if not isinstance(row, dict):
             continue
+        if str(row.get("content_validity") or "") in {"quarantined", "invalid", "superseded"}:
+            continue
         if str(row.get("status") or "") not in {"sent", "sending", "pending", "retry_pending", "result_unknown"}:
             continue
         notification_type = str(row.get("notification_type") or "")

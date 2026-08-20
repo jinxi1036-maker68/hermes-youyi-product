@@ -111,6 +111,7 @@ def test_sqlite_runtime_drill_checks_transaction_rollback_and_restore(tmp_path):
     assert result["transaction_ok"] is True
     assert result["rollback_ok"] is True
     assert result["backup_restore_ok"] is True
+    assert result["fts5_ok"] is True
     assert result["integrity_check"] == "ok"
     assert result["production_databases_touched"] is False
 

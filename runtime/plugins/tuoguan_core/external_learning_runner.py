@@ -14,7 +14,6 @@ import uuid
 from typing import Any
 
 from .digital_employee_state import submit_industry_learning_candidate
-from .employee_identity import owner_user_id as _owner_user_id
 from .employee_identity import system_identity as _system_identity
 from .research import collect_public_research
 from .store import TuoguanStore
@@ -27,7 +26,14 @@ MARKET_RESEARCH_CANDIDATES_FILE = "market_research_candidates.jsonl"
 COMPETITOR_PROFILES_FILE = "competitor_profiles.jsonl"
 WEEKLY_MARKET_REPORT_RUNS_FILE = "weekly_market_report_runs.jsonl"
 INDUSTRY_LEARNING_CANDIDATES_FILE = "industry_learning_candidates.jsonl"
-NOTIFICATION_OUTBOX_FILE = "notification_outbox.json"
+
+# Public search can return superficially successful but unrelated results.  The
+# runner therefore only keeps sources that carry an education/childcare signal;
+# a scheduled job is evidence collection, never a reason to message the owner.
+_EDUCATION_SIGNALS = (
+    "托管", "教培", "教育", "课后", "学生", "家长", "老师", "学校",
+    "招生", "续费", "作业", "辅导", "培训", "课程", "少儿", "儿童",
+)
 
 VALID_MODES = {"weekly_industry", "monthly_market", "manual_topic"}
 
@@ -62,7 +68,6 @@ def run_external_learning(
     queries = _queries_for_mode(normalized_mode, topic=topic, query=query, store=actual_store)
     run_id = f"external_research:{normalized_mode}:{timestamp.strftime('%Y%m%d%H%M%S')}"
     tenant_id = current_tenant_id()
-    owner_id = _owner_user_id(actual_store)
     identity = _system_identity()
 
     research_results: list[dict[str, Any]] = []
@@ -81,9 +86,24 @@ def run_external_learning(
             limit=5,
             persist=not dry_run,
         )
+        evidence = result.get("evidence") if isinstance(result.get("evidence"), list) else []
+        accepted, rejected = _filter_relevant_evidence(
+            search_query,
+            evidence,
+            mode=normalized_mode,
+        )
+        result = {
+            **result,
+            "evidence": accepted,
+            "evidence_count": len(accepted),
+            "raw_evidence_count": len(evidence),
+            "rejected_evidence_count": len(rejected),
+        }
         research_results.append(result)
         errors.extend(str(item) for item in result.get("errors", []) if item)
-        evidence = result.get("evidence") if isinstance(result.get("evidence"), list) else []
+        if rejected:
+            errors.append(f"irrelevant_source_rejected:{len(rejected)}")
+        evidence = accepted
         if normalized_mode == "monthly_market":
             market_candidates.append(_market_candidate(search_query, evidence, timestamp, result))
             competitor_profiles.extend(_competitor_profiles(search_query, evidence, timestamp))
@@ -99,24 +119,22 @@ def run_external_learning(
         errors=errors,
         topic=topic,
     )
-    outbox_item = _report_outbox_item(
-        mode=normalized_mode,
-        timestamp=timestamp,
-        owner_id=owner_id,
-        content=str(report.get("content") or ""),
-        summary=str(report.get("summary") or ""),
-    ) if owner_id else {}
+    accepted_evidence_count = sum(int(item.get("evidence_count") or 0) for item in research_results)
+    raw_evidence_count = sum(int(item.get("raw_evidence_count") or 0) for item in research_results)
+    rejected_evidence_count = sum(int(item.get("rejected_evidence_count") or 0) for item in research_results)
 
     run_row = {
         "run_id": run_id,
         "tenant_id": tenant_id,
         "mode": normalized_mode,
         "queries": queries,
-        "evidence_count": sum(int(item.get("evidence_count") or 0) for item in research_results),
+        "evidence_count": accepted_evidence_count,
+        "raw_evidence_count": raw_evidence_count,
+        "rejected_evidence_count": rejected_evidence_count,
         "candidate_count": len(industry_candidates) + len(market_candidates),
-        "report_notification_id": str(outbox_item.get("id") or ""),
-        "status": "dry_run" if dry_run else "completed",
-        "errors": errors[:20],
+        "report_notification_id": "",
+        "status": "dry_run" if dry_run else ("completed" if accepted_evidence_count else "completed_no_relevant_sources"),
+        "errors": list(dict.fromkeys(errors))[:20],
         "created_at": timestamp.isoformat(timespec="seconds"),
         "auto_effects": _safe_auto_effects(),
     }
@@ -127,7 +145,7 @@ def run_external_learning(
             "dry_run": True,
             "run": run_row,
             "report": report,
-            "outbox_item": outbox_item,
+            "outbox_item": {},
             "research_results": research_results,
             "market_candidates": market_candidates,
             "industry_candidates": industry_candidates,
@@ -139,7 +157,6 @@ def run_external_learning(
         COMPETITOR_PROFILES_FILE,
         WEEKLY_MARKET_REPORT_RUNS_FILE,
         INDUSTRY_LEARNING_CANDIDATES_FILE,
-        NOTIFICATION_OUTBOX_FILE,
     }
     with authorized_system_write(actual_store.data_dir, job_name="external_learning_runner", allowed_files=allowed_files) as auth:
         _append_jsonl(actual_store, EXTERNAL_RESEARCH_RUNS_FILE, {**run_row, "operation_id": auth.operation_id, "ledger_id": auth.ledger_id, "audit_id": auth.audit_id})
@@ -160,25 +177,6 @@ def run_external_learning(
                 source_message_id=run_id,
                 operation_id=auth.operation_id,
             )
-        if outbox_item:
-            def merge_outbox(value: Any) -> list[dict[str, Any]]:
-                outbox = value if isinstance(value, list) else []
-                existing = next(
-                    (
-                        item for item in outbox
-                        if isinstance(item, dict) and str(item.get("id") or "") == outbox_item["id"]
-                    ),
-                    None,
-                )
-                if existing and str(existing.get("status") or "") in {"pending", "retry_pending", "sent"}:
-                    return outbox[-2000:]
-                if existing:
-                    existing.update(outbox_item)
-                else:
-                    outbox.append(outbox_item)
-                return outbox[-2000:]
-
-            actual_store.update_json(NOTIFICATION_OUTBOX_FILE, [], merge_outbox)
         _append_jsonl(
             actual_store,
             WEEKLY_MARKET_REPORT_RUNS_FILE,
@@ -186,9 +184,10 @@ def run_external_learning(
                 "run_id": f"market_report:{normalized_mode}:{timestamp.strftime('%Y%m%d')}",
                 "tenant_id": tenant_id,
                 "mode": normalized_mode,
-                "notification_id": str(outbox_item.get("id") or ""),
-                "queued": bool(outbox_item),
-                "target_user_id": owner_id,
+                "notification_id": "",
+                "queued": False,
+                "delivery_mode": "candidate_only",
+                "target_user_id": "",
                 "created_at": timestamp.isoformat(timespec="seconds"),
                 "operation_id": auth.operation_id,
                 "ledger_id": auth.ledger_id,
@@ -207,8 +206,9 @@ def run_external_learning(
         "dry_run": False,
         "run": run_row,
         "report": report,
-        "notification_id": str(outbox_item.get("id") or ""),
-        "queued": bool(outbox_item),
+        "notification_id": "",
+        "queued": False,
+        "delivery_mode": "candidate_only",
         "writeback_verified": True,
     }
 
@@ -242,6 +242,41 @@ def _location_hint(store: TuoguanStore) -> str:
             parts.append(value)
     text = " ".join(dict.fromkeys(parts))
     return text[:80]
+
+
+def _filter_relevant_evidence(query: str, evidence: list[Any], *, mode: str) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    """Keep only public sources that are actually about the requested domain."""
+
+    query_text = str(query or "")
+    location_terms = tuple(term for term in ("项城", "向阳") if term in query_text)
+    accepted: list[dict[str, Any]] = []
+    rejected: list[dict[str, Any]] = []
+    for raw in evidence:
+        if not isinstance(raw, dict):
+            continue
+        text = " ".join(
+            str(raw.get(key) or "")
+            for key in ("title", "description", "url", "text", "excerpt")
+        )
+        domain_matches = [term for term in _EDUCATION_SIGNALS if term in text]
+        location_matches = [term for term in location_terms if term in text]
+        reasons: list[str] = []
+        if not domain_matches:
+            reasons.append("education_domain_mismatch")
+        if mode == "monthly_market" and location_terms and not location_matches:
+            reasons.append("local_scope_mismatch")
+        if reasons:
+            rejected.append({
+                "title": str(raw.get("title") or "")[:180],
+                "url": str(raw.get("url") or "")[:500],
+                "reason_codes": reasons,
+            })
+            continue
+        item = dict(raw)
+        item["source_validation"] = "relevant_public_candidate"
+        item["relevance_terms"] = domain_matches[:6] + location_matches[:2]
+        accepted.append(item)
+    return accepted, rejected
 
 
 def _industry_candidate(query: str, evidence: list[Any], timestamp: datetime, result: dict[str, Any]) -> dict[str, Any]:
@@ -361,28 +396,6 @@ def _build_report(
         "content": _limit_message("\n".join(lines), 1900),
         "source_count": len(evidence),
         "candidate_count": len(industry_candidates) + len(market_candidates),
-        "auto_effects": _safe_auto_effects(),
-    }
-
-
-def _report_outbox_item(*, mode: str, timestamp: datetime, owner_id: str, content: str, summary: str) -> dict[str, Any]:
-    day = timestamp.strftime("%Y%m%d")
-    return {
-        "id": f"external_learning_report:{day}:{mode}",
-        "status": "pending",
-        "delivery_mode": "direct_wecom",
-        "notification_type": "external_learning_report",
-        "task_id": f"external_learning_report:{mode}:{day}",
-        "role": "boss",
-        "action": f"external_learning_{mode}",
-        "target_user_id": owner_id,
-        "recipient_user_id": owner_id,
-        "to_user_id": owner_id,
-        "touser": owner_id,
-        "content": content,
-        "summary": summary,
-        "created_at": timestamp.isoformat(timespec="seconds"),
-        "attempt_count": 0,
         "auto_effects": _safe_auto_effects(),
     }
 

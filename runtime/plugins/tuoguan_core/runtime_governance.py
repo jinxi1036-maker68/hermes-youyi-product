@@ -148,6 +148,7 @@ STATE_RESOURCE_OWNERS: dict[str, str] = {
     "self_evolution_events.jsonl": "self_evolution_domain",
     "industry_learning_candidates.jsonl": "learning_domain",
     "external_research_runs.jsonl": "learning_domain",
+    "external_research_corrections.jsonl": "learning_domain",
     "market_research_candidates.jsonl": "learning_domain",
     "competitor_profiles.jsonl": "learning_domain",
     "social_market_research_config.json": "learning_domain",

@@ -35,6 +35,7 @@ def run_sqlite_drill(*, work_dir: Path | None = None, minimum: tuple[int, ...] =
     transaction_ok = False
     rollback_ok = False
     backup_ok = False
+    fts5_ok = False
     integrity = "not_run"
     error = ""
     try:
@@ -51,6 +52,12 @@ def run_sqlite_drill(*, work_dir: Path | None = None, minimum: tuple[int, ...] =
             except RuntimeError:
                 connection.rollback()
             rollback_ok = connection.execute("SELECT COUNT(*) FROM events WHERE id='two'").fetchone()[0] == 0
+            connection.execute("CREATE VIRTUAL TABLE context_probe USING fts5(content)")
+            connection.execute("INSERT INTO context_probe(content) VALUES (?)", ("xiaoyou context continuity",))
+            fts5_ok = connection.execute(
+                "SELECT COUNT(*) FROM context_probe WHERE context_probe MATCH ?", ("continuity",)
+            ).fetchone()[0] == 1
+            connection.commit()
             with sqlite3.connect(restored) as target:
                 connection.backup(target)
         with sqlite3.connect(restored) as connection:
@@ -59,7 +66,7 @@ def run_sqlite_drill(*, work_dir: Path | None = None, minimum: tuple[int, ...] =
     except Exception as exc:
         journal_mode = "unknown"
         error = f"{type(exc).__name__}:{exc}"
-    ok = version_ok and transaction_ok and rollback_ok and backup_ok and integrity == "ok" and not error
+    ok = version_ok and transaction_ok and rollback_ok and backup_ok and fts5_ok and integrity == "ok" and not error
     return {
         "ok": ok,
         "python_version": sys.version.split()[0],
@@ -70,6 +77,7 @@ def run_sqlite_drill(*, work_dir: Path | None = None, minimum: tuple[int, ...] =
         "transaction_ok": transaction_ok,
         "rollback_ok": rollback_ok,
         "backup_restore_ok": backup_ok,
+        "fts5_ok": fts5_ok,
         "integrity_check": integrity,
         "journal_mode": journal_mode,
         "production_databases_touched": False,

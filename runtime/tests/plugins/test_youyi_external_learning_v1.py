@@ -57,7 +57,7 @@ def _failed_research(_store, *, kind, query, now=None, limit=5, **_kwargs):
     }
 
 
-def test_weekly_external_learning_queues_boss_report_and_candidates(tmp_path, monkeypatch):
+def test_weekly_external_learning_keeps_verified_candidates_without_auto_sending(tmp_path, monkeypatch):
     from plugins.tuoguan_core import external_learning_runner
     from plugins.tuoguan_core.external_learning_runner import run_external_learning
 
@@ -68,13 +68,10 @@ def test_weekly_external_learning_queues_boss_report_and_candidates(tmp_path, mo
     result = run_external_learning("weekly_industry", store=store, now=datetime(2026, 8, 3, 8, 45, tzinfo=cn_tz))
 
     assert result["ok"] is True
-    assert result["queued"] is True
+    assert result["queued"] is False
+    assert result["delivery_mode"] == "candidate_only"
     outbox = json.loads((tmp_path / "notification_outbox.json").read_text(encoding="utf-8"))
-    assert len(outbox) == 1
-    assert outbox[0]["notification_type"] == "external_learning_report"
-    assert outbox[0]["touser"] == "boss1"
-    assert outbox[0]["auto_effects"]["sends_parent_messages"] is False
-    assert outbox[0]["auto_effects"]["sends_teacher_messages"] is False
+    assert outbox == []
     candidates = _read_jsonl(tmp_path, "industry_learning_candidates.jsonl")
     assert candidates
     assert candidates[0]["source_count"] == 1
@@ -98,7 +95,8 @@ def test_source_failure_records_failed_candidate_without_trend_claim(tmp_path, m
     assert candidates
     assert all(row["status"] == "source_failed" for row in candidates)
     outbox = json.loads((tmp_path / "notification_outbox.json").read_text(encoding="utf-8"))
-    assert "不生成趋势结论" in outbox[0]["content"]
+    assert "不生成趋势结论" in result["report"]["content"]
+    assert outbox == []
 
 
 def test_public_research_rejects_private_and_reference_only_urls(tmp_path):
@@ -137,7 +135,7 @@ def test_public_research_rejects_private_and_reference_only_urls(tmp_path):
     assert result["evidence"][0]["url"] == "https://example.test/public"
 
 
-def test_monthly_market_research_uses_market_ledgers_and_boss_only_outbox(tmp_path, monkeypatch):
+def test_monthly_market_research_uses_market_ledgers_without_auto_sending(tmp_path, monkeypatch):
     from plugins.tuoguan_core import external_learning_runner
     from plugins.tuoguan_core.external_learning_runner import run_external_learning
 
@@ -153,8 +151,38 @@ def test_monthly_market_research_uses_market_ledgers_and_boss_only_outbox(tmp_pa
     assert market and market[0]["status"] == "pending_review"
     assert competitors and competitors[0]["confidence"] == "low"
     outbox = json.loads((tmp_path / "notification_outbox.json").read_text(encoding="utf-8"))
-    assert outbox[0]["role"] == "boss"
-    assert "家长" not in outbox[0].get("touser", "")
+    assert outbox == []
+
+
+def test_irrelevant_public_sources_are_quarantined_without_trend_or_outbox(tmp_path, monkeypatch):
+    from plugins.tuoguan_core import external_learning_runner
+    from plugins.tuoguan_core.external_learning_runner import run_external_learning
+
+    def irrelevant(_store, *, kind, query, now=None, limit=5, **_kwargs):
+        return {
+            "kind": kind,
+            "query": query,
+            "evidence_count": 1,
+            "evidence": [{
+                "title": "中通快递",
+                "url": "https://www.zto.com/",
+                "description": "快递物流服务。",
+                "query": query,
+                "provider": "test",
+                "collected_at": (now or datetime.now(timezone.utc)).isoformat(),
+            }],
+            "errors": [],
+        }
+
+    monkeypatch.setattr(external_learning_runner, "collect_public_research", irrelevant)
+    store = _seed_store(tmp_path)
+    result = run_external_learning("weekly_industry", store=store)
+
+    assert result["run"]["status"] == "completed_no_relevant_sources"
+    assert result["run"]["evidence_count"] == 0
+    assert result["run"]["rejected_evidence_count"] == len(result["run"]["queries"])
+    assert all(row["status"] == "source_failed" for row in _read_jsonl(tmp_path, "industry_learning_candidates.jsonl"))
+    assert json.loads((tmp_path / "notification_outbox.json").read_text(encoding="utf-8")) == []
 
 
 def test_external_learning_brief_is_read_only_material(tmp_path, monkeypatch):

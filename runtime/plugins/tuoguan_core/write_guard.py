@@ -67,6 +67,7 @@ PROTECTED_BUSINESS_FILES = {
     "agent_delegation_results.jsonl",
     "attention_threads.jsonl",
     "external_research_runs.jsonl",
+    "external_research_corrections.jsonl",
     "market_research_candidates.jsonl",
     "competitor_profiles.jsonl",
     "social_market_research_config.json",
