@@ -34,14 +34,19 @@ _EDUCATION_SIGNALS = (
     "托管", "教培", "教育", "课后", "学生", "家长", "老师", "学校",
     "招生", "续费", "作业", "辅导", "培训", "课程", "少儿", "儿童",
 )
+_STRONG_EDUCATION_SIGNALS = (
+    "托管机构", "托管班", "教培机构", "课后托管", "课后服务", "家校",
+    "招生", "续费", "晚托", "午托", "小饭桌", "辅导机构", "培训机构",
+)
+_UNRELATED_LOGISTICS_SIGNALS = ("快递", "物流", "运单", "寄件", "收件", "货运")
 
 VALID_MODES = {"weekly_industry", "monthly_market", "manual_topic"}
 
 DEFAULT_INDUSTRY_QUERIES = [
-    "托管机构 续费 家校沟通 老师记录 2026",
-    "教培机构 招生 新生留存 家长转化 2026",
-    "课后服务 托管 老师管理 提升人效",
-    "托管班 增项课程 数学 阅读 习惯培养",
+    '"托管机构" 续费 家校沟通 老师管理',
+    '"教培机构" 招生 新生留存 家长转化',
+    '"课后托管" 老师管理 服务质量 人效',
+    '"托管班" 增项课程 数学 阅读 习惯培养',
 ]
 
 DEFAULT_MARKET_QUERIES = [
@@ -84,7 +89,9 @@ def run_external_learning(
             query=search_query,
             now=timestamp,
             limit=5,
-            persist=not dry_run,
+            # Raw search hits are untrusted. Only the validated candidate
+            # ledgers below may persist scheduled-learning evidence.
+            persist=False,
         )
         evidence = result.get("evidence") if isinstance(result.get("evidence"), list) else []
         accepted, rejected = _filter_relevant_evidence(
@@ -157,8 +164,32 @@ def run_external_learning(
         COMPETITOR_PROFILES_FILE,
         WEEKLY_MARKET_REPORT_RUNS_FILE,
         INDUSTRY_LEARNING_CANDIDATES_FILE,
+        "competitor_research_latest.json" if normalized_mode == "monthly_market" else "knowledge_research_latest.json",
     }
     with authorized_system_write(actual_store.data_dir, job_name="external_learning_runner", allowed_files=allowed_files) as auth:
+        latest_name = "competitor_research_latest.json" if normalized_mode == "monthly_market" else "knowledge_research_latest.json"
+        accepted_sources = [
+            source
+            for result in research_results
+            for source in (result.get("evidence") or [])
+            if isinstance(source, dict)
+        ]
+        actual_store.write_json(
+            latest_name,
+            {
+                "kind": "local_market" if normalized_mode == "monthly_market" else "industry_trend",
+                "queries": queries,
+                "evidence_count": accepted_evidence_count,
+                "raw_evidence_count": raw_evidence_count,
+                "rejected_evidence_count": rejected_evidence_count,
+                "evidence": accepted_sources[:20],
+                "errors": list(dict.fromkeys(errors))[:20],
+                "updated_at": timestamp.isoformat(timespec="seconds"),
+                "source_validation": "runner_relevance_filtered",
+                "content_validity": "validated" if accepted_evidence_count else "no_relevant_sources",
+                "auto_effects": _safe_auto_effects(),
+            },
+        )
         _append_jsonl(actual_store, EXTERNAL_RESEARCH_RUNS_FILE, {**run_row, "operation_id": auth.operation_id, "ledger_id": auth.ledger_id, "audit_id": auth.audit_id})
         for row in market_candidates:
             _append_jsonl(actual_store, MARKET_RESEARCH_CANDIDATES_FILE, {**row, "operation_id": auth.operation_id, "ledger_id": auth.ledger_id, "audit_id": auth.audit_id})
@@ -259,10 +290,14 @@ def _filter_relevant_evidence(query: str, evidence: list[Any], *, mode: str) -> 
             for key in ("title", "description", "url", "text", "excerpt")
         )
         domain_matches = [term for term in _EDUCATION_SIGNALS if term in text]
+        strong_matches = [term for term in _STRONG_EDUCATION_SIGNALS if term in text]
+        unrelated_matches = [term for term in _UNRELATED_LOGISTICS_SIGNALS if term in text]
         location_matches = [term for term in location_terms if term in text]
         reasons: list[str] = []
-        if not domain_matches:
+        if not strong_matches and len(domain_matches) < 2:
             reasons.append("education_domain_mismatch")
+        if unrelated_matches and not strong_matches:
+            reasons.append("unrelated_logistics_source")
         if mode == "monthly_market" and location_terms and not location_matches:
             reasons.append("local_scope_mismatch")
         if reasons:
@@ -274,7 +309,7 @@ def _filter_relevant_evidence(query: str, evidence: list[Any], *, mode: str) -> 
             continue
         item = dict(raw)
         item["source_validation"] = "relevant_public_candidate"
-        item["relevance_terms"] = domain_matches[:6] + location_matches[:2]
+        item["relevance_terms"] = strong_matches[:4] + domain_matches[:6] + location_matches[:2]
         accepted.append(item)
     return accepted, rejected
 

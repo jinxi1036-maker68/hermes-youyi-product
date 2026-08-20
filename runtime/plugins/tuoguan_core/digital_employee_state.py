@@ -1354,7 +1354,13 @@ def _institution_understanding_audit(store: TuoguanStore, identity: UserIdentity
             "reason": "家校沟通覆盖不足，会影响九月份续费目标推进。",
             "missing_count": parent_coverage.get("missing_count"),
         })
-    if not knowledge_latest.get("evidence_count"):
+    knowledge_validity = str(knowledge_latest.get("content_validity") or "").strip()
+    knowledge_evidence_count = (
+        0
+        if knowledge_validity in _QUARANTINED_EXTERNAL_RESEARCH_STATUSES
+        else int(knowledge_latest.get("evidence_count") or 0)
+    )
+    if not knowledge_evidence_count:
         gaps.append({
             "gap_key": "public_industry_learning_source",
             "status": "needs_search_provider",
@@ -1373,7 +1379,7 @@ def _institution_understanding_audit(store: TuoguanStore, identity: UserIdentity
             "active_goal_texts": [str(item.get("goal_text") or "") for item in confirmed_goals[:5]],
             "regular_manager_names": (((operating_model.get("programs") or {}).get("regular_tuoguan") or {}).get("manager_names") or []),
             "competitor_research_evidence_count": competitor_latest.get("evidence_count", 0),
-            "industry_research_evidence_count": knowledge_latest.get("evidence_count", 0),
+            "industry_research_evidence_count": knowledge_evidence_count,
         },
         "gaps": gaps,
         "gap_count": len(gaps),

@@ -135,6 +135,29 @@ def test_public_research_rejects_private_and_reference_only_urls(tmp_path):
     assert result["evidence"][0]["url"] == "https://example.test/public"
 
 
+def test_public_search_prefers_configured_firecrawl_without_exposing_key(monkeypatch):
+    from plugins.tuoguan_core import research
+
+    monkeypatch.setenv("FIRECRAWL_API_KEY", "secret-test-key")
+    captured = {}
+
+    def fake_request(url, *, payload, headers, timeout):
+        captured.update({"url": url, "payload": payload, "headers": headers, "timeout": timeout})
+        return {
+            "success": True,
+            "data": {"web": [{"title": "托管机构续费方法", "url": "https://example.test/edu", "description": "家校沟通与老师服务记录"}]},
+        }
+
+    monkeypatch.setattr(research, "_request_json", fake_request)
+    result = research.search_public_web("托管机构 续费", limit=5)
+
+    assert result["success"] is True
+    assert result["provider"] == "firecrawl"
+    assert result["data"]["web"][0]["provider"] == "firecrawl"
+    assert captured["url"].endswith("/v2/search")
+    assert captured["headers"]["Authorization"] == "Bearer secret-test-key"
+
+
 def test_monthly_market_research_uses_market_ledgers_without_auto_sending(tmp_path, monkeypatch):
     from plugins.tuoguan_core import external_learning_runner
     from plugins.tuoguan_core.external_learning_runner import run_external_learning
@@ -183,6 +206,11 @@ def test_irrelevant_public_sources_are_quarantined_without_trend_or_outbox(tmp_p
     assert result["run"]["rejected_evidence_count"] == len(result["run"]["queries"])
     assert all(row["status"] == "source_failed" for row in _read_jsonl(tmp_path, "industry_learning_candidates.jsonl"))
     assert json.loads((tmp_path / "notification_outbox.json").read_text(encoding="utf-8")) == []
+    latest = json.loads((tmp_path / "knowledge_research_latest.json").read_text(encoding="utf-8"))
+    assert latest["evidence_count"] == 0
+    assert latest["raw_evidence_count"] == len(result["run"]["queries"])
+    assert latest["content_validity"] == "no_relevant_sources"
+    assert not (tmp_path / "pending_knowledge.json").exists()
 
 
 def test_external_learning_brief_is_read_only_material(tmp_path, monkeypatch):

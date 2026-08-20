@@ -10,6 +10,7 @@ from datetime import datetime
 import html
 import ipaddress
 import json
+import os
 import re
 import urllib.parse
 import urllib.request
@@ -61,6 +62,24 @@ def _request_text(url: str, *, timeout: int = 10) -> str:
         return response.read(512_000).decode("utf-8", errors="replace")
 
 
+def _request_json(
+    url: str,
+    *,
+    payload: dict[str, Any],
+    headers: dict[str, str],
+    timeout: int = 20,
+) -> dict[str, Any]:
+    request = urllib.request.Request(
+        url,
+        data=json.dumps(payload, ensure_ascii=False).encode("utf-8"),
+        headers=headers,
+        method="POST",
+    )
+    with urllib.request.urlopen(request, timeout=timeout) as response:
+        value = json.loads(response.read(1_000_000).decode("utf-8", errors="replace"))
+    return value if isinstance(value, dict) else {"success": False, "error": "search provider returned non-object json"}
+
+
 def _normalize_result(item: dict[str, Any], *, query: str, provider: str, now: datetime | None = None) -> dict[str, Any]:
     url = str(item.get("url") or item.get("href") or item.get("link") or "").strip()
     title = html.unescape(str(item.get("title") or "").strip())
@@ -70,10 +89,47 @@ def _normalize_result(item: dict[str, Any], *, query: str, provider: str, now: d
         "url": url,
         "description": _limit_text(description, 500),
         "query": str(query or "").strip(),
-        "provider": provider,
+        "provider": str(item.get("provider") or provider),
         "evidence_level": str(item.get("evidence_level") or "public_search_candidate"),
         "collected_at": _now_iso(now),
     }
+
+
+def _firecrawl_search(query: str, limit: int = 5) -> dict[str, Any]:
+    api_key = str(os.getenv("FIRECRAWL_API_KEY") or "").strip()
+    if not api_key:
+        return {"success": False, "error": "firecrawl unavailable: FIRECRAWL_API_KEY missing"}
+    api_url = str(os.getenv("FIRECRAWL_API_URL") or "https://api.firecrawl.dev").strip().rstrip("/")
+    try:
+        payload = _request_json(
+            f"{api_url}/v2/search",
+            payload={
+                "query": str(query or "").strip(),
+                "limit": max(1, min(int(limit or 5), 10)),
+                "sources": ["web"],
+            },
+            headers={
+                "Authorization": f"Bearer {api_key}",
+                "Content-Type": "application/json",
+                "User-Agent": USER_AGENT,
+            },
+            timeout=20,
+        )
+    except Exception as exc:
+        return {"success": False, "error": f"firecrawl search failed: {type(exc).__name__}"}
+    if payload.get("success") is False:
+        return {"success": False, "error": "firecrawl search returned failure"}
+    data = payload.get("data")
+    if isinstance(data, dict):
+        rows = data.get("web") or data.get("results") or []
+    elif isinstance(data, list):
+        rows = data
+    else:
+        rows = payload.get("web") or payload.get("results") or []
+    if not isinstance(rows, list) or not rows:
+        return {"success": False, "error": "firecrawl search returned no web results"}
+    normalized = [{**row, "provider": "firecrawl"} for row in rows if isinstance(row, dict)]
+    return {"success": bool(normalized), "provider": "firecrawl", "data": {"web": normalized}}
 
 
 def _valid_public_url(url: str) -> bool:
@@ -181,6 +237,7 @@ def _coerce_search_payload(raw: Any) -> dict[str, Any]:
 def search_public_web(query: str, limit: int = 5) -> dict[str, Any]:
     errors: list[str] = []
     for provider, search in (
+        ("firecrawl", _firecrawl_search),
         ("ddgs", _ddgs_search),
         ("bing_rss", _bing_rss_search),
         ("duckduckgo_html", _duckduckgo_html_search),

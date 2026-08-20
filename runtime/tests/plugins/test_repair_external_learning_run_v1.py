@@ -23,14 +23,30 @@ def test_quarantine_invalid_external_run_preserves_history_and_hides_active_cont
         "content": "irrelevant report",
         "sent_at": "2026-08-20T13:19:29+08:00",
     }])
+    query = "托管机构 续费 家校沟通 老师记录 2026"
     (tmp_path / "external_research_runs.jsonl").write_text(
-        json.dumps({"run_id": "external_research:test", "mode": "weekly_industry", "created_at": "2026-08-20T13:19:26+08:00"}) + "\n",
+        json.dumps({"run_id": "external_research:test", "mode": "weekly_industry", "queries": [query], "created_at": "2026-08-20T13:19:26+08:00"}) + "\n",
         encoding="utf-8",
     )
     (tmp_path / "industry_learning_candidates.jsonl").write_text(
         json.dumps({"candidate_id": "candidate1", "status": "pending_review", "source": {"source_message_id": "external_research:test"}}) + "\n",
         encoding="utf-8",
     )
+    _write_json(tmp_path, "pending_knowledge.json", [{
+        "id": "pending_bad",
+        "kind": "industry_trend",
+        "query": query,
+        "status": "pending_review",
+        "evidence": [{"title": "中通快递", "query": query, "collected_at": "2026-08-20T13:19:26+08:00"}],
+        "created_at": "2026-08-20T13:19:26+08:00",
+    }])
+    _write_json(tmp_path, "knowledge_research_latest.json", {
+        "kind": "industry_trend",
+        "query": query,
+        "evidence_count": 1,
+        "evidence": [{"title": "中通快递", "query": query, "collected_at": "2026-08-20T13:19:26+08:00"}],
+        "updated_at": "2026-08-20T13:19:26+08:00",
+    })
     store = TuoguanStore(tmp_path)
     result = quarantine_external_learning_run(
         store=store,
@@ -44,5 +60,11 @@ def test_quarantine_invalid_external_run_preserves_history_and_hides_active_cont
     assert len(store.path_for("external_research_runs.jsonl").read_text(encoding="utf-8").splitlines()) == 1
     identity = UserIdentity("wecom", "boss1", "boss1", "金总", "boss", "approved")
     assert query_industry_learning_candidates(store, identity=identity)["candidate_count"] == 0
+    pending = store.read_json("pending_knowledge.json", [])
+    assert pending[0]["status"] == "quarantined"
+    latest = store.read_json("knowledge_research_latest.json", {})
+    assert latest["content_validity"] == "quarantined"
+    assert latest["active_evidence_count"] == 0
+    assert latest["evidence_count"] == 1
     contexts = query_active_work_context(store, identity=identity)["contexts"]
     assert not any(row.get("context_id") == "external_learning_report:test" for row in contexts)
