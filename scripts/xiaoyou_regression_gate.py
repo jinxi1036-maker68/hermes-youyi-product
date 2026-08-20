@@ -53,6 +53,7 @@ PY_COMPILE_TARGETS = [
     "scripts/repair_task_companion_state.py",
     "scripts/sanitize_shared_memory.py",
     "scripts/tune_xiaoyou_runtime_config.py",
+    "scripts/rotate_wecom_sessions_for_latency.py",
     "runtime/plugins/platforms/wecom/callback_adapter.py",
     "runtime/plugins/platforms/wecom/__init__.py",
     "runtime/plugins/platforms/wecom/adapter.py",
