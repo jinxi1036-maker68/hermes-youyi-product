@@ -31,8 +31,11 @@ KEY_FILES = [
     "workstyle_profiles.py",
 ]
 WECOM_KEY_FILES = [
+    "__init__.py",
+    "adapter.py",
     "callback_adapter.py",
     "inbound_receipts.py",
+    "plugin.yaml",
     "wecom_crypto.py",
 ]
 
@@ -114,6 +117,7 @@ mods = [
   "plugins.tuoguan_core.runtime_foundation",
   "plugins.tuoguan_core.digital_employee_state",
   "plugins.platforms.wecom.callback_adapter",
+  "plugins.platforms.wecom.adapter",
   "plugins.platforms.wecom.inbound_receipts",
   "plugins.platforms.wecom.wecom_crypto",
 ]

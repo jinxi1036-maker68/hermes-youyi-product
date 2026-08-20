@@ -53,6 +53,8 @@ PY_COMPILE_TARGETS = [
     "scripts/sanitize_shared_memory.py",
     "scripts/tune_xiaoyou_runtime_config.py",
     "runtime/plugins/platforms/wecom/callback_adapter.py",
+    "runtime/plugins/platforms/wecom/__init__.py",
+    "runtime/plugins/platforms/wecom/adapter.py",
     "runtime/plugins/platforms/wecom/inbound_receipts.py",
     "runtime/plugins/platforms/wecom/wecom_crypto.py",
 ]
