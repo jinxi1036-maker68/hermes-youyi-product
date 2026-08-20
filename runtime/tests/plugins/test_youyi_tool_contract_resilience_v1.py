@@ -108,6 +108,73 @@ def test_unknown_tool_arguments_fail_cleanly_before_service_dispatch(monkeypatch
     assert result["data"]["unsupported_arguments"] == ["unknown"]
 
 
+def test_missing_required_arguments_fail_cleanly_before_service_dispatch(monkeypatch):
+    from plugins.tuoguan_core import tools
+
+    class FakeService:
+        def goal_workspace(self, *, action: str):
+            raise AssertionError("missing required arguments must not reach the service")
+
+    monkeypatch.setattr(tools, "_service", lambda _args: FakeService())
+    result = json.loads(tools._handler("goal_workspace")({}))
+
+    assert result["ok"] is False
+    assert result["error"] == "missing_required_arguments"
+    assert result["data"]["missing_required_arguments"] == ["action"]
+
+
+def test_regular_tutoring_scope_does_not_turn_into_summer_scope(tmp_path: Path, monkeypatch):
+    from plugins.tuoguan_core import runtime_foundation
+    from plugins.tuoguan_core.tool_service import TuoguanToolService
+
+    store = _seed_store(tmp_path)
+    students = store.read_json("students.json", {})
+    students["暑假学生"] = {"teacher": "teacher1", "status": "active", "campus_id": "summer_2026"}
+    store.write_json("students.json", students)
+    store.write_json(
+        "academic_term_state.json",
+        {"service_relation_policy": "defer_until_new_term", "data_term": "previous_term"},
+    )
+    monkeypatch.setattr(runtime_foundation, "current_raw_text", lambda _user_id: "托管班，不是暑假班")
+    service = TuoguanToolService(store, platform="wecom_callback", user_id="boss1", user_name="金总")
+
+    result = service.query_students()
+
+    assert result["ok"] is True
+    assert result["data"]["count"] == 2
+    assert result["data"]["query_scope"] == "regular"
+    assert "正式托管历史名单共2名" in result["data"]["rendered_text"]
+    assert "不等于已确认的新学期在读人数" in result["data"]["rendered_text"]
+
+
+def test_simple_student_count_and_dashboard_use_authoritative_tool_rendering():
+    from plugins.tuoguan_core.runtime_foundation import _authoritative_read_reply
+
+    student_item = {
+        "raw_text": "现在托管班有多少孩子，不是暑假班",
+        "tool_calls": [{"tool": "tuoguan_query_students"}],
+        "tool_results": [{
+            "ok": True,
+            "data": {
+                "rendered_text": "正式托管历史名单共122名学生。当前处于新学期过渡期。",
+            },
+        }],
+    }
+    dashboard_item = {
+        "raw_text": "把看板链接发给我",
+        "tool_results": [{
+            "ok": True,
+            "data": {
+                "legacy_tool": "tuoguan_dashboard_link",
+                "rendered_text": "这是你的老板端托管 AI 看板链接：https://example.test/dashboard?token=signed",
+            },
+        }],
+    }
+
+    assert _authoritative_read_reply(student_item).startswith("正式托管历史名单共122名")
+    assert "https://example.test/dashboard" in _authoritative_read_reply(dashboard_item)
+
+
 def test_core_contract_requires_direct_visible_tool_calls():
     from plugins.tuoguan_core import _xiaoyou_core_skill_context
     from plugins.tuoguan_core.models import UserIdentity

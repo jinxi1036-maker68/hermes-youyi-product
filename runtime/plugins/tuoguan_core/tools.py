@@ -79,6 +79,25 @@ def _handler(method: str) -> Callable[[dict[str, Any]], str]:
         }
         method_fn = getattr(service, method)
         signature = inspect.signature(method_fn)
+        missing_business_arguments = sorted(
+            name
+            for name, parameter in signature.parameters.items()
+            if name != "operation_id"
+            and parameter.default is inspect.Parameter.empty
+            and parameter.kind in {inspect.Parameter.POSITIONAL_OR_KEYWORD, inspect.Parameter.KEYWORD_ONLY}
+            and name not in payload
+        )
+        if missing_business_arguments:
+            return tool_result({
+                "ok": False,
+                "error": "missing_required_arguments",
+                "message": "工具缺少必填参数，本轮没有执行；请补齐后重新调用。",
+                "data": {
+                    "tool": f"tuoguan_{method}",
+                    "missing_required_arguments": missing_business_arguments,
+                    "supported_arguments": sorted(signature.parameters),
+                },
+            })
         if "operation_id" in signature.parameters and not str(payload.get("operation_id") or "").strip():
             operation_id = str(get_session_env("HERMES_SESSION_MESSAGE_ID", "") or "").strip()
             if not operation_id:
@@ -107,6 +126,24 @@ def _handler(method: str) -> Callable[[dict[str, Any]], str]:
                     "supported_arguments": sorted(signature.parameters),
                 },
             })
+        missing_required = sorted(
+            name
+            for name, parameter in signature.parameters.items()
+            if parameter.default is inspect.Parameter.empty
+            and parameter.kind in {inspect.Parameter.POSITIONAL_OR_KEYWORD, inspect.Parameter.KEYWORD_ONLY}
+            and name not in payload
+        )
+        if missing_required:
+            return tool_result({
+                "ok": False,
+                "error": "missing_required_arguments",
+                "message": "工具缺少必填参数，本轮没有执行；请补齐后重新调用。",
+                "data": {
+                    "tool": f"tuoguan_{method}",
+                    "missing_required_arguments": missing_required,
+                    "supported_arguments": sorted(signature.parameters),
+                },
+            })
         return tool_result(method_fn(**payload))
 
     return run
@@ -124,7 +161,7 @@ TUOGUAN_QUERY_STUDENTS_SCHEMA = _schema(
         "student_name": {"type": "string", "description": "学生姓名；查询自己班/名下/负责范围学生名单或数量时留空。"},
         "teacher_name": {"type": "string", "description": "老板/店长代查某位老师负责范围时填写老师姓名；老师查自己范围时留空。"},
         "name": {"type": "string", "description": "student_name 的兼容别名；优先填写 student_name。"},
-        "query_scope": {"type": "string", "enum": ["visible", "summer"], "description": "默认 visible；用户明确查暑假班孩子时填 summer。"},
+        "query_scope": {"type": "string", "enum": ["visible", "regular", "summer"], "description": "默认 visible；正式托管班（不含暑假班口径）填 regular；用户明确查暑假班孩子时才填 summer。"},
         "grade": {"type": "string", "description": "按年级筛选时填写，如一年级、二年级；不筛选年级时留空。"},
         "limit": {"type": "integer", "default": 30, "description": "最多返回多少名学生，范围 1-100。"},
     }),
@@ -1520,13 +1557,16 @@ LEGACY_TOOLS = TOOLS
 
 
 def model_tools(surface: str = ""):
-    """Return the production model tool surface with a legacy rollback switch."""
+    """Return the compact production surface plus explicit routine fast paths."""
 
     selected = str(surface or os.getenv("HERMES_TUOGUAN_TOOL_SURFACE", "facade")).strip().lower()
     if selected == "legacy":
         return LEGACY_TOOLS
     if selected != "facade":
         raise ValueError("HERMES_TUOGUAN_TOOL_SURFACE must be facade or legacy")
-    from .capability_facades import build_facade_tools
+    from .capability_facades import FAST_PATH_TOOL_NAMES, build_facade_tools
 
-    return build_facade_tools(LEGACY_TOOLS, tool_result=tool_result)
+    fast_path_names = set(FAST_PATH_TOOL_NAMES)
+    fast_paths = tuple(tool for tool in LEGACY_TOOLS if tool[0] in fast_path_names)
+    facades = build_facade_tools(LEGACY_TOOLS, tool_result=tool_result)
+    return (*fast_paths, *facades)

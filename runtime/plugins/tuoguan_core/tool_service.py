@@ -1157,6 +1157,7 @@ class TuoguanToolService:
             raw_text = current_raw_text(self.identity.canonical_user_id) or current_raw_text(self.user_id)
         except Exception:
             raw_text = ""
+        scope = str(query_scope or "").strip().lower()
         scope_reason = "explicit_student" if requested else ""
         active_task: dict[str, Any] | None = None
         if not requested and self.identity.role == "teacher":
@@ -1205,12 +1206,21 @@ class TuoguanToolService:
             names = [requested]
             self._write_focus(student_name=requested)
         else:
-            scope = str(query_scope or "").strip().lower()
-            if "暑假班" in str(raw_text or ""):
+            compact_raw = "".join(str(raw_text or "").split())
+            regular_terms = ("正式托管", "托管班", "常规托管", "不是暑假班", "不含暑假班", "排除暑假班")
+            summer_negated = any(term in compact_raw for term in ("不是暑假班", "不含暑假班", "排除暑假班"))
+            if any(term in compact_raw for term in regular_terms):
+                scope = "regular"
+            elif "暑假班" in compact_raw and not summer_negated:
                 scope = "summer"
             if scope == "summer":
                 summer_names = self._summer_student_names()
                 names = sorted(name for name in visible if name in summer_names)
+            elif scope == "regular":
+                names = sorted(
+                    name for name, profile in visible.items()
+                    if str((profile or {}).get("campus_id") or "main") == "main"
+                )
             else:
                 names = sorted(visible)
             requested_grade = _normalize_grade(grade)
@@ -1236,6 +1246,13 @@ class TuoguanToolService:
             payload = [{"name": name, "profile": visible[name], "recent_records": []} for name in names[:safe_limit]]
             if scope == "summer":
                 title = "暑假班"
+            elif scope == "regular":
+                term_state = self.store.read_json("academic_term_state.json", {})
+                historical = bool(
+                    isinstance(term_state, dict)
+                    and term_state.get("service_relation_policy") == "defer_until_new_term"
+                )
+                title = "正式托管历史名单" if historical else "正式托管班"
             elif requested_teacher:
                 title = f"{target_identity.person_name}名下"
             else:
@@ -1245,6 +1262,8 @@ class TuoguanToolService:
             shown = "、".join(names[:safe_limit])
             suffix = "等" if len(names) > safe_limit else ""
             rendered_text = f"{title}共{len(names)}名学生" + (f"：{shown}{suffix}。" if shown else "。")
+            if scope == "regular" and historical:
+                rendered_text += " 当前处于新学期过渡期，这是上学期历史名单数量，不等于已确认的新学期在读人数。"
         data_version = ""
         try:
             data_version = str(int((self.store.data_dir / "records.json").stat().st_mtime_ns))
@@ -1263,6 +1282,7 @@ class TuoguanToolService:
                 "scope_user_id": target_identity.canonical_user_id,
                 "scope_person_name": target_identity.person_name,
                 "scope_reason": scope_reason or "visible_scope",
+                "query_scope": scope or "visible",
                 "active_task": deepcopy(active_task) if scope_reason == "active_task_student" and active_task else None,
             },
             message=f"查询到 {len(names)} 名有权限查看的学生，返回 {len(payload)} 名。",

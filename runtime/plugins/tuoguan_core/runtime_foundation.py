@@ -1061,10 +1061,11 @@ def observe_tool_result(*, session_id: str, tool_name: str, args: Any, result: A
             item["effective_scope"] = data.get("effective_scope", item.get("effective_scope"))
             item["result_count"] = data.get("result_count", data.get("count", item.get("result_count")))
             item["data_version"] = data.get("data_version", item.get("data_version"))
-            if effective_tool_name == "tuoguan_query_students":
+            successful = isinstance(parsed, dict) and parsed.get("ok") is True
+            if successful and effective_tool_name == "tuoguan_query_students":
                 item["terminal_tool_result"] = True
             non_terminal_redirect = isinstance(parsed, dict) and str(parsed.get("error") or "") in {"goal_workspace_required"}
-            if not non_terminal_redirect and (effective_tool_name in WRITE_TOOLS or effective_tool_name in {
+            if successful and not non_terminal_redirect and (effective_tool_name in WRITE_TOOLS or effective_tool_name in {
                 "tuoguan_next_task", "tuoguan_current_task_guidance",
                 "tuoguan_goal_workspace", "tuoguan_query_tasks", "tuoguan_query_operations_report",
                 "tuoguan_dashboard_link", "tuoguan_query_summer_points", "tuoguan_query_summer_points_ranking",
@@ -1238,7 +1239,12 @@ def _complete_model_selected_read_args(item: dict[str, Any], tool_name: str, arg
     if tool_name != "tuoguan_query_students" or not isinstance(args, dict):
         return
     raw = str(item.get("raw_text") or "")
-    if "暑假班" in raw and not any(str(args.get(key) or "").strip() for key in ("student_name", "teacher_name")):
+    if any(str(args.get(key) or "").strip() for key in ("student_name", "teacher_name")):
+        return
+    compact = _compact(raw)
+    if any(term in compact for term in ("正式托管", "托管班", "不是暑假班", "不含暑假班", "排除暑假班")):
+        args["query_scope"] = "regular"
+    elif "暑假班" in compact:
         args["query_scope"] = "summer"
 
 
@@ -1544,6 +1550,48 @@ def mark_outbound_reply_delivered(
     return delivered
 
 
+def _successful_rendered_text(item: dict[str, Any], tool_name: str) -> str:
+    results = list(item.get("tool_results") or [])
+    calls = list(item.get("tool_calls") or [])
+    for index in range(len(results) - 1, -1, -1):
+        result = results[index]
+        if not isinstance(result, dict) or result.get("ok") is not True:
+            continue
+        data = result.get("data") if isinstance(result.get("data"), dict) else {}
+        effective_tool = str(data.get("legacy_tool") or result.get("legacy_tool") or "")
+        if not effective_tool and index < len(calls) and isinstance(calls[index], dict):
+            effective_tool = str(calls[index].get("tool") or "")
+        if not effective_tool and str(result.get("action") or ""):
+            effective_tool = f"tuoguan_{result['action']}"
+        if effective_tool != tool_name:
+            continue
+        rendered = str(data.get("rendered_text") or result.get("rendered_text") or result.get("message") or "").strip()
+        if rendered:
+            return rendered
+    return ""
+
+
+def _authoritative_read_reply(item: dict[str, Any]) -> str:
+    """Return deterministic text for simple reads that must not be recomputed."""
+
+    raw = _compact(item.get("raw_text") or "")
+    if "看板" in raw and any(term in raw for term in ("链接", "地址", "打开", "发", "给", "h5")):
+        rendered = _successful_rendered_text(item, "tuoguan_dashboard_link")
+        if rendered:
+            return rendered
+        return "我这一轮没有拿到看板链接的可信结果，不能把它说成没有链接或功能不可用。请再发一次“看板”，我会直接重新生成。"
+
+    asks_student_fact = any(term in raw for term in ("学生", "孩子", "托管班")) and any(
+        term in raw for term in ("多少", "几个", "几名", "名单", "查一下", "看一下", "资料", "记录", "最近表现")
+    )
+    asks_for_coaching = any(term in raw for term in ("怎么说", "怎么办", "如何沟通", "怎么沟通", "不会做"))
+    if asks_student_fact and not asks_for_coaching:
+        rendered = _successful_rendered_text(item, "tuoguan_query_students")
+        if rendered:
+            return rendered
+    return ""
+
+
 def transform_final_response(*, store: TuoguanStore, session_id: str, response_text: str) -> str | None:
     verified_state_change = False
     used_trusted_tool = False
@@ -1562,6 +1610,9 @@ def transform_final_response(*, store: TuoguanStore, session_id: str, response_t
                 if verified_state_change:
                     break
         outreach_state = _tool_results_outreach_state(item.get("tool_results") or [])
+        authoritative_reply = _authoritative_read_reply(item)
+    if authoritative_reply:
+        response_text = authoritative_reply
     return _sanitize_external_reply(
         response_text,
         verified_state_change=verified_state_change,

@@ -89,6 +89,25 @@ DOMAIN_ROLES = {
     "health": ("boss", "manager"),
 }
 
+
+# These are the small, high-frequency abilities that a real employee needs to
+# find immediately.  The domain facades remain available for the long tail,
+# while these explicit tools avoid making the model rediscover an operation
+# name for routine work on every turn.
+FAST_PATH_TOOL_NAMES = (
+    "tuoguan_context",
+    "tuoguan_query_students",
+    "tuoguan_query_tasks",
+    "tuoguan_next_task",
+    "tuoguan_current_task_guidance",
+    "tuoguan_create_task",
+    "tuoguan_cancel_task",
+    "tuoguan_update_task",
+    "tuoguan_dashboard_link",
+    "tuoguan_query_staff_directory",
+    "tuoguan_query_active_work_context",
+)
+
 _WRITE_PREFIXES = (
     "register_", "create_", "record_", "change_", "report_", "submit_", "update_",
     "cancel_", "confirm_", "execute_", "review_learning_",
@@ -186,20 +205,60 @@ def build_facade_tools(
     def handler_for(domain: str) -> Callable[..., Any]:
         def run(args: dict[str, Any], **kwargs: Any) -> str:
             payload = dict(args or {})
-            operation = str(payload.get("operation") or "").strip()
+            nested = payload.get("arguments")
+            nested_arguments = dict(nested) if isinstance(nested, dict) else {}
+            # Accept one harmless layer of structural nesting produced by some
+            # OpenAI-compatible model adapters.  This only normalizes a tool
+            # call the model already selected; it never infers an operation
+            # from the user's text.
+            inner = nested_arguments.pop("arguments", None)
+            if isinstance(inner, dict):
+                nested_arguments = {**inner, **nested_arguments}
+            operation = str(
+                payload.get("operation")
+                or nested_arguments.pop("operation", "")
+                or ""
+            ).strip()
             if operation not in DOMAIN_OPERATIONS[domain]:
+                contracts = {}
+                for allowed in DOMAIN_OPERATIONS[domain]:
+                    allowed_schema, _handler = legacy[allowed]
+                    required, optional = _argument_contract(allowed_schema)
+                    contracts[allowed] = {"required": required, "optional": optional}
                 return tool_result({
                     "ok": False,
                     "error": "unknown_facade_operation",
-                    "message": "该领域没有这个 operation，本轮没有执行。",
-                    "data": {"domain": domain, "allowed_operations": list(DOMAIN_OPERATIONS[domain])},
+                    "message": "该领域没有这个 operation，本轮没有执行；请从 allowed_operations 选择准确名称。",
+                    "data": {
+                        "domain": domain,
+                        "allowed_operations": list(DOMAIN_OPERATIONS[domain]),
+                        "operation_contracts": contracts,
+                    },
                 })
-            arguments = payload.get("arguments") or {}
-            if not isinstance(arguments, dict):
+            if nested is not None and not isinstance(nested, dict):
                 return tool_result({
                     "ok": False, "error": "invalid_facade_arguments",
                     "message": "arguments 必须是对象，本轮没有执行。",
                 })
+            flat_arguments = {
+                key: value for key, value in payload.items()
+                if key not in {
+                    "operation", "arguments", "platform", "user_id", "user_name",
+                    "chat_id", "session_key",
+                }
+            }
+            conflicts = sorted(
+                key for key in flat_arguments
+                if key in nested_arguments and flat_arguments[key] != nested_arguments[key]
+            )
+            if conflicts:
+                return tool_result({
+                    "ok": False,
+                    "error": "ambiguous_facade_arguments",
+                    "message": "同一个参数同时出现在外层和 arguments 且值不同，本轮没有执行。",
+                    "data": {"conflicting_arguments": conflicts},
+                })
+            arguments = {**flat_arguments, **nested_arguments}
             identity_args = {
                 key: payload[key] for key in ("platform", "user_id", "user_name", "chat_id", "session_key")
                 if key in payload
@@ -243,11 +302,15 @@ def facade_schema_size(facade_tools: tuple[tuple[str, dict[str, Any], Callable[.
 
 def render_facade_instruction() -> str:
     domains = "、".join(f"tuoguan_{name}" for name in DOMAIN_OPERATIONS)
+    fast_paths = "、".join(FAST_PATH_TOOL_NAMES)
     return (
-        "【小优精简能力面】当前只暴露12个领域入口：" + domains + "。"
+        "【小优能力面】高频工作优先使用直连工具：" + fast_paths + "。"
+        "查正式托管学生使用 tuoguan_query_students(query_scope=regular)；查暑假班才使用 query_scope=summer；"
+        "用户要看板链接时直接使用 tuoguan_dashboard_link，不需要先查目标、任务或学生完整度。"
+        "其余能力使用12个领域入口：" + domains + "。"
         "员工手册或历史材料中的 tuoguan_query_tasks、tuoguan_cancel_task 等旧名称，"
-        "现在表示领域入口里的 operation，不是另一个可调用工具。"
-        "例如取消任务使用 tuoguan_tasks(operation=cancel_task, arguments={...})。"
+        "如果已作为高频直连工具出现就直接调用；否则表示领域入口里的 operation。"
+        "例如低频目标查询使用 tuoguan_goals(operation=goal_workspace, arguments={action:query_progress})。"
+        "不要编造 list、query_staff、query_goal_workspace 等不存在的 operation。"
         "必须由模型显式选择领域和 operation；系统不根据自然语言偷偷决定业务动作。"
     )
-
