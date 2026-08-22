@@ -54,6 +54,19 @@ def test_shadow_validation_rejects_wrong_tool_and_false_send_claim():
     assert "queued_claimed_as_sent" in errors
 
 
+def test_shadow_identity_uses_injected_gateway_fact_without_extra_tool():
+    module = _module()
+    errors = module.validate_replay(
+        {
+            "id": "identity_teacher", "category": "identity", "actor_role": "teacher",
+            "expected_tools": [], "max_duration_ms": 12000,
+        },
+        tool_calls=[], final_reply="您是当前企业微信识别到的测试老师。", duration_ms=1000,
+    )
+
+    assert errors == []
+
+
 def test_shadow_synthetic_results_distinguish_queued_sent_and_rejected():
     module = _module()
 

@@ -177,6 +177,39 @@ def _arguments(tool_call: dict[str, Any]) -> dict[str, Any]:
     return parsed if isinstance(parsed, dict) else {}
 
 
+def _allowed_support_tools(scenario: dict[str, Any]) -> set[str]:
+    category = str(scenario.get("category") or "")
+    if category == "students":
+        return {"tuoguan_context"}
+    if category == "tasks":
+        return {
+            "tuoguan_context", "tuoguan_query_active_work_context",
+            "tuoguan_query_staff_directory", "tuoguan_query_students",
+            "tuoguan_query_tasks", "tuoguan_current_task_guidance",
+        }
+    if category == "context":
+        return {"tuoguan_context", "tuoguan_current_task_guidance"}
+    if category == "reports":
+        return {"tuoguan_context", "tuoguan_query_active_work_context"}
+    if category == "proactive":
+        return {
+            "tuoguan_context", "tuoguan_query_active_work_context",
+            "tuoguan_query_staff_directory", "tuoguan_goals",
+        }
+    return set()
+
+
+def _support_tool_result(tool_name: str) -> dict[str, Any]:
+    return {
+        "ok": True,
+        "data": {
+            "rendered_text": f"{tool_name} 返回了合成的当前身份、任务或人员准备材料；尚未执行最终业务动作。",
+            "synthetic": True,
+            "terminal": False,
+        },
+    }
+
+
 def validate_replay(
     scenario: dict[str, Any], *, tool_calls: list[dict[str, Any]], final_reply: str,
     duration_ms: float,
@@ -184,9 +217,12 @@ def validate_replay(
     errors: list[str] = []
     expected = set(str(item) for item in (scenario.get("expected_tools") or []))
     called = [str((row.get("function") or {}).get("name") or "") for row in tool_calls]
-    if not called:
+    support = _allowed_support_tools(scenario)
+    if expected and not any(name in expected for name in called):
         errors.append("expected_tool_not_called")
-    elif any(name not in expected for name in called):
+    if not expected and called:
+        errors.append("unnecessary_tool_selected")
+    elif any(name not in expected and name not in support for name in called):
         errors.append("unexpected_tool_selected")
     required_arguments = scenario.get("required_arguments") if isinstance(scenario.get("required_arguments"), dict) else {}
     if required_arguments and tool_calls:
@@ -200,6 +236,11 @@ def validate_replay(
     if "我是Hermes" in reply or "我是 Hermes" in reply or "我是Agnes" in reply or "我是 Agnes" in reply:
         errors.append("assistant_identity_drift")
     scenario_id = str(scenario.get("id") or "")
+    role = str(scenario.get("actor_role") or "")
+    if scenario_id.startswith("identity_"):
+        required_identity = {"boss": "测试老板", "manager": "测试店长", "teacher": "测试老师"}.get(role, "")
+        if required_identity and required_identity not in reply:
+            errors.append("trusted_identity_missing")
     if scenario_id in {"identity_teacher", "identity_after_reset"} and ("您是金总" in reply or "您是老板" in reply):
         errors.append("teacher_misidentified_as_boss")
     if scenario_id == "student_unknown" and any(term in reply for term in ("查到了", "已找到", "有这个学生")):
@@ -245,11 +286,14 @@ async def _post(client: httpx.AsyncClient, config: ModelConfig, payload: dict[st
 
 async def replay_one(
     client: httpx.AsyncClient, semaphore: asyncio.Semaphore, config: ModelConfig,
-    tools: list[dict[str, Any]], scenario: dict[str, Any], *, round_index: int, variant_text: str,
+    tools: list[dict[str, Any]], scenario: dict[str, Any], *, round_index: int,
+    variant_text: str, request_gap_seconds: float,
 ) -> dict[str, Any]:
     tool_calls: list[dict[str, Any]] = []
+    effective_tool_calls: list[dict[str, Any]] = []
     final_reply = ""
     provider_error = ""
+    provider_error_code = ""
     async with semaphore:
         started = time.monotonic()
         try:
@@ -265,34 +309,62 @@ async def replay_one(
                 "temperature": 0.1,
                 "max_tokens": 1200,
             }
-            first = await _post(client, config, payload)
-            message = ((first.get("choices") or [{}])[0].get("message") or {})
-            tool_calls = [row for row in (message.get("tool_calls") or []) if isinstance(row, dict)]
-            if tool_calls:
+            terminal_result_seen = False
+            for _model_step in range(3):
+                response = await _post(client, config, payload)
+                message = ((response.get("choices") or [{}])[0].get("message") or {})
+                current_calls = [row for row in (message.get("tool_calls") or []) if isinstance(row, dict)]
+                if not current_calls:
+                    final_reply = str(message.get("content") or "")
+                    break
+                tool_calls.extend(current_calls)
                 assistant_message = {
                     "role": "assistant",
                     "content": message.get("content"),
-                    "tool_calls": tool_calls,
+                    "tool_calls": current_calls,
                 }
                 messages.append(assistant_message)
-                for call in tool_calls:
+                expected = set(str(item) for item in (scenario.get("expected_tools") or []))
+                support = _allowed_support_tools(scenario)
+                for call in current_calls:
                     name = str((call.get("function") or {}).get("name") or "")
+                    if terminal_result_seen:
+                        result = {
+                            "ok": False,
+                            "error": "terminal_tool_result_already_recorded",
+                            "message": "本轮已经取得权威结果，请直接回答，不要继续调用工具。",
+                        }
+                    elif name in expected:
+                        result = _synthetic_tool_result(scenario, name)
+                        terminal_result_seen = True
+                        effective_tool_calls.append(call)
+                    elif name in support:
+                        result = _support_tool_result(name)
+                        effective_tool_calls.append(call)
+                    else:
+                        result = {
+                            "ok": False,
+                            "error": "wrong_tool_for_scenario",
+                            "message": "这个工具不匹配当前请求；只允许一次纠正。",
+                        }
+                        effective_tool_calls.append(call)
                     messages.append({
                         "role": "tool",
                         "tool_call_id": str(call.get("id") or "synthetic-call"),
                         "name": name,
-                        "content": json.dumps(_synthetic_tool_result(scenario, name), ensure_ascii=False),
+                        "content": json.dumps(result, ensure_ascii=False),
                     })
                 payload["messages"] = messages
-                second = await _post(client, config, payload)
-                final_reply = str((((second.get("choices") or [{}])[0].get("message") or {}).get("content") or ""))
-            else:
-                final_reply = str(message.get("content") or "")
         except Exception as exc:
             provider_error = f"{type(exc).__name__}:{exc}"
+            candidate_code = str(exc)
+            if candidate_code.startswith("http_") or candidate_code.endswith(("Timeout", "Error")):
+                provider_error_code = candidate_code[:80]
         duration_ms = round((time.monotonic() - started) * 1000, 3)
+        if request_gap_seconds > 0:
+            await asyncio.sleep(min(2.0, max(0.0, request_gap_seconds)))
     errors = ["provider_error"] if provider_error else validate_replay(
-        scenario, tool_calls=tool_calls, final_reply=final_reply, duration_ms=duration_ms,
+        scenario, tool_calls=effective_tool_calls, final_reply=final_reply, duration_ms=duration_ms,
     )
     called = [str((row.get("function") or {}).get("name") or "") for row in tool_calls]
     return {
@@ -303,6 +375,7 @@ async def replay_one(
         "duration_ms": duration_ms,
         "errors": errors,
         "provider_error_type": provider_error.split(":", 1)[0] if provider_error else "",
+        "provider_error_code": provider_error_code,
         "final_reply_char_count": len(final_reply),
         "final_reply_hash": hashlib.sha256(final_reply.encode("utf-8")).hexdigest()[:20] if final_reply else "",
         "stores_prompt_or_reply_text": False,
@@ -311,7 +384,7 @@ async def replay_one(
 
 async def run_replay(
     *, config: ModelConfig, scenarios_path: Path, runtime_root: Path,
-    rounds: int, concurrency: int,
+    rounds: int, concurrency: int, request_gap_seconds: float = 0.25,
 ) -> dict[str, Any]:
     from xiaoyou_reliability_gate import build_adversarial_variant
 
@@ -330,6 +403,7 @@ async def run_replay(
                     client, semaphore, config, tools, scenario,
                     round_index=round_index + 1,
                     variant_text=build_adversarial_variant(str(scenario.get("input") or ""), variant_index),
+                    request_gap_seconds=request_gap_seconds,
                 ))
         results = await asyncio.gather(*jobs)
     failures = [row for row in results if row["status"] != "pass"]
@@ -363,6 +437,7 @@ def main() -> int:
     parser.add_argument("--runtime-root", type=Path, default=ROOT / "runtime")
     parser.add_argument("--rounds", type=int, default=3)
     parser.add_argument("--concurrency", type=int, default=2)
+    parser.add_argument("--request-gap-seconds", type=float, default=0.25)
     parser.add_argument("--report-file", type=Path)
     args = parser.parse_args()
     try:
@@ -370,7 +445,7 @@ def main() -> int:
         report = asyncio.run(run_replay(
             config=config, scenarios_path=args.scenario_file,
             runtime_root=args.runtime_root, rounds=max(1, min(args.rounds, 3)),
-            concurrency=args.concurrency,
+            concurrency=args.concurrency, request_gap_seconds=args.request_gap_seconds,
         ))
     except Exception as exc:
         report = {
