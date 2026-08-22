@@ -21,6 +21,8 @@ PAYLOAD_ROOTS = (
     "runtime/plugins/platforms/wecom",
     "scripts",
     "systemd",
+    "work/commercialization/xiaoyou_runtime_constitution_v1.md",
+    "work/commercialization/xiaoyou_reliability_scenarios_v1.json",
 )
 FORBIDDEN_PARTS = {"__pycache__", ".pytest_cache", ".git", ".venv", "data", "logs", "backups"}
 FORBIDDEN_SUFFIXES = {".pyc", ".pyo", ".log", ".db", ".sqlite", ".sqlite3"}
