@@ -32,9 +32,11 @@ def test_tuoguan_core_does_not_register_pre_model_business_decision_hooks():
     import plugins.tuoguan_core as plugin
 
     hooks = []
+    middleware = []
     tools = []
     ctx = SimpleNamespace(
         register_hook=lambda name, fn: hooks.append((name, fn)),
+        register_middleware=lambda name, fn: middleware.append((name, fn)),
         register_tool=lambda **kwargs: tools.append(kwargs),
     )
 
@@ -50,6 +52,7 @@ def test_tuoguan_core_does_not_register_pre_model_business_decision_hooks():
     else:
         assert names == ["pre_llm_call", "pre_tool_call", "post_tool_call", "transform_llm_output", "post_llm_call"]
     assert "pre_gateway_dispatch" not in names
+    assert [name for name, _fn in middleware] == ["llm_request"]
     assert {tool["name"] for tool in tools}
 
 

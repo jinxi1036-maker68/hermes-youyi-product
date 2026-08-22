@@ -90,13 +90,29 @@ def test_jsonl_update_and_append_share_one_resource_lock(tmp_path: Path):
 
 
 def test_public_reply_uses_xiaoyou_name_but_preserves_technical_version_reference():
-    from plugins.tuoguan_core.runtime_foundation import _sanitize_external_reply
+    from plugins.tuoguan_core.runtime_foundation import _authoritative_task_write_reply, _sanitize_external_reply
 
     assert _sanitize_external_reply("Hermes 已整理了内部工作材料。", used_trusted_tool=True) == "小优已整理了内部工作材料。"
     assert "Hermes v0.20" in _sanitize_external_reply("Hermes v0.20 是当前底座版本。", used_trusted_tool=True)
     mixed = _sanitize_external_reply("当前版本正常，但我不是 Hermes 助手；底层是 Hermes v0.20。", used_trusted_tool=True)
     assert "我不是小优助手" in mixed
     assert "Hermes v0.20" in mixed
+    identity = _sanitize_external_reply(
+        "我是 Agnes 2.5 模型。", actor_role="teacher", actor_name="李老师", identity_query=True,
+    )
+    assert identity == "当前企业微信识别到您是李老师，角色是老师。我是小优。"
+    cancelled = _authoritative_task_write_reply({
+        "tool_calls": [{"tool": "tuoguan_tasks"}],
+        "tool_results": [{
+            "ok": True,
+            "data": {
+                "legacy_tool": "tuoguan_cancel_task",
+                "rendered_text": "任务已取消，提醒已停止。",
+                "writeback_verified": True,
+            },
+        }],
+    })
+    assert cancelled == "任务已取消，提醒已停止。"
 
 
 def test_self_evolution_is_deduplicated_scoped_and_applied(tmp_path: Path):

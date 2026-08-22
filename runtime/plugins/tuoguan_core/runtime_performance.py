@@ -9,7 +9,7 @@ import threading
 from typing import Any
 
 
-DEFAULT_TOOL_CALL_BUDGET = 12
+DEFAULT_TOOL_CALL_BUDGET = 4
 MAX_CORRECTABLE_FAILURES = 2
 _CORRECTABLE_ERRORS = {
     "unknown_facade_operation",

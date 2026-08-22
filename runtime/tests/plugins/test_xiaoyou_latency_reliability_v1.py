@@ -50,7 +50,7 @@ def test_turn_tool_budget_blocks_duplicate_and_runaway_calls():
         "reason": "duplicate_tool_call_in_turn",
     }
 
-    for index in range(1, 12):
+    for index in range(1, 4):
         assert guard_turn_tool_call(
             session_id,
             tool_name="tuoguan_tasks",
@@ -62,7 +62,7 @@ def test_turn_tool_budget_blocks_duplicate_and_runaway_calls():
         args={"operation": "query_tasks", "arguments": {"page": 99}},
     )
     assert exhausted and exhausted["reason"] == "tool_call_budget_exhausted"
-    assert turn_tool_budget_snapshot(session_id)["count"] == 12
+    assert turn_tool_budget_snapshot(session_id)["count"] == 4
 
 
 def test_turn_tool_budget_allows_one_contract_correction_then_stops():
@@ -169,6 +169,34 @@ def test_plugin_blocks_any_more_business_tools_after_authoritative_result(tmp_pa
         args={"operation": "query_student_service_relations", "arguments": {}},
     )
     assert blocked and blocked["reason"] == "terminal_tool_result_already_recorded"
+
+    initial = plugin._on_llm_request_middleware(
+        platform="wecom_callback", session_id="new-session",
+        request={"model": "agnes-2.5-flash", "tools": [{"type": "function"}]},
+    )
+    assert initial["request"]["parallel_tool_calls"] is False
+    assert "tools" in initial["request"]
+
+    finalized = plugin._on_llm_request_middleware(
+        platform="wecom_callback", session_id="terminal-session",
+        request={"model": "agnes-2.5-flash", "tools": [{"type": "function"}]},
+    )
+    assert finalized["request"]["parallel_tool_calls"] is False
+    assert finalized["request"]["tool_choice"] == "none"
+    assert "tools" not in finalized["request"]
+
+    plugin._reset_turn_tool_budget("budget-session")
+    for index in range(4):
+        assert plugin._guard_turn_tool_call(
+            "budget-session", tool_name="tuoguan_query_tasks", args={"index": index},
+        ) is None
+    exhausted = plugin._on_llm_request_middleware(
+        platform="wecom_callback", session_id="budget-session",
+        request={"model": "agnes-2.5-flash", "tools": [{"type": "function"}]},
+    )
+    assert exhausted["reason"] == "tool_budget_requires_final_reply"
+    assert exhausted["request"]["tool_choice"] == "none"
+    assert "tools" not in exhausted["request"]
 
 
 @pytest.mark.asyncio

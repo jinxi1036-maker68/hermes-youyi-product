@@ -14,17 +14,20 @@ import yaml
 
 TUNING = {
     "context_length": 262144,
-    "max_tokens": 4096,
-    "request_timeout_seconds": 30,
-    "stale_timeout_seconds": 35,
+    "max_tokens": 1600,
+    # Hermes v0.20 retries one transport failure before activating fallback.
+    # Twelve seconds keeps the full primary-primary-fallback path below the
+    # gateway's 35 second hard ceiling.
+    "request_timeout_seconds": 12,
+    "stale_timeout_seconds": 15,
 }
 
 AGENT_TUNING = {
     # Hermes v0.20 counts the initial attempt here, so 2 means one retry.
     "api_max_retries": 2,
     "max_turns": 8,
-    "gateway_timeout": 45,
-    "gateway_timeout_warning": 25,
+    "gateway_timeout": 35,
+    "gateway_timeout_warning": 15,
 }
 
 COMPRESSION_TUNING = {
@@ -39,27 +42,29 @@ def _hash(data: bytes) -> str:
 
 def tune(config_file: Path, backup_dir: Path, *, apply: bool) -> dict[str, object]:
     original = config_file.read_bytes()
+    original_mode = config_file.stat().st_mode & 0o777
     data = yaml.safe_load(original.decode("utf-8"))
     if not isinstance(data, dict):
         return {"ok": False, "error": "config_not_mapping"}
 
-    providers = data.get("custom_providers")
+    providers = data.get("custom_providers", [])
     if not isinstance(providers, list):
         return {"ok": False, "error": "custom_providers_missing"}
     matches = [
         item for item in providers
         if isinstance(item, dict) and str(item.get("model") or "") == "agnes-2.5-flash"
     ]
-    if len(matches) != 1:
+    if len(matches) > 1:
         return {"ok": False, "error": "agnes_provider_match_count", "match_count": len(matches)}
 
-    provider = matches[0]
     changed: dict[str, dict[str, object]] = {}
-    for key, value in TUNING.items():
-        before = provider.get(key)
-        if before != value:
-            changed[f"agnes.{key}"] = {"before": before, "after": value}
-            provider[key] = value
+    if matches:
+        provider = matches[0]
+        for key, value in TUNING.items():
+            before = provider.get(key)
+            if before != value:
+                changed[f"agnes.{key}"] = {"before": before, "after": value}
+                provider[key] = value
 
     model = data.get("model")
     if not isinstance(model, dict):
@@ -82,10 +87,24 @@ def tune(config_file: Path, backup_dir: Path, *, apply: bool) -> dict[str, objec
             agent[key] = value
 
     fallback_value = data.get("fallback_providers")
-    if fallback_value is None or isinstance(fallback_value, str):
-        # Hermes also accepts a provider-name string here. It has no per-model
-        # timeout fields to tune, so preserve it exactly as configured.
-        fallbacks: list[object] = []
+    fallback_migration: dict[str, object] = {}
+    if isinstance(fallback_value, str) and fallback_value.lstrip().startswith("["):
+        try:
+            parsed_fallbacks = json.loads(fallback_value)
+        except json.JSONDecodeError:
+            return {"ok": False, "error": "fallback_providers_string_invalid"}
+        if not isinstance(parsed_fallbacks, list) or not all(isinstance(item, dict) for item in parsed_fallbacks):
+            return {"ok": False, "error": "fallback_providers_string_not_list"}
+        data["fallback_providers"] = parsed_fallbacks
+        fallbacks = parsed_fallbacks
+        fallback_migration = {
+            "from": "json_string",
+            "to": "yaml_list",
+            "count": len(parsed_fallbacks),
+        }
+    elif fallback_value is None or isinstance(fallback_value, str):
+        # Preserve a plain provider-name string exactly as configured.
+        fallbacks = []
     elif isinstance(fallback_value, list):
         fallbacks = fallback_value
     else:
@@ -117,9 +136,10 @@ def tune(config_file: Path, backup_dir: Path, *, apply: bool) -> dict[str, objec
         "original_sha256": _hash(original),
         "writeback_verified": False,
         "backup_file": "",
+        "fallback_migration": fallback_migration,
     }
-    if not apply or not changed:
-        result["writeback_verified"] = not changed
+    if not apply or (not changed and not fallback_migration):
+        result["writeback_verified"] = not changed and not fallback_migration
         return result
 
     backup_dir.mkdir(parents=True, exist_ok=True)
@@ -132,13 +152,17 @@ def tune(config_file: Path, backup_dir: Path, *, apply: bool) -> dict[str, objec
     rendered = yaml.safe_dump(data, allow_unicode=True, sort_keys=False).encode("utf-8")
     temporary = config_file.with_name(f".{config_file.name}.{os.getpid()}.tmp")
     temporary.write_bytes(rendered)
+    os.chmod(temporary, original_mode or 0o600)
     os.replace(temporary, config_file)
+    os.chmod(config_file, original_mode or 0o600)
     verified_data = yaml.safe_load(config_file.read_text(encoding="utf-8"))
-    verified_provider = next(
-        item for item in verified_data["custom_providers"]
+    verified_matches = [
+        item for item in (verified_data.get("custom_providers") or [])
         if isinstance(item, dict) and str(item.get("model") or "") == "agnes-2.5-flash"
-    )
-    verified = all(verified_provider.get(key) == value for key, value in TUNING.items())
+    ]
+    verified = len(verified_matches) <= 1
+    if verified_matches:
+        verified = verified and all(verified_matches[0].get(key) == value for key, value in TUNING.items())
     verified = verified and all(verified_data["model"].get(key) == value for key, value in TUNING.items())
     verified = verified and all(verified_data["agent"].get(key) == value for key, value in AGENT_TUNING.items())
     verified = verified and all(verified_data["compression"].get(key) == value for key, value in COMPRESSION_TUNING.items())
@@ -150,13 +174,18 @@ def tune(config_file: Path, backup_dir: Path, *, apply: bool) -> dict[str, objec
             if isinstance(fallback, dict)
             for key in ("max_tokens", "request_timeout_seconds", "stale_timeout_seconds")
         )
+    elif fallback_migration:
+        verified = False
     else:
         verified = verified and verified_fallbacks == fallback_value
+    permissions_preserved = (config_file.stat().st_mode & 0o777) == (original_mode or 0o600)
+    verified = bool(verified and permissions_preserved)
     result.update({
         "backup_file": str(backup),
         "updated_sha256": _hash(config_file.read_bytes()),
-        "writeback_verified": bool(verified),
-        "ok": bool(verified),
+        "writeback_verified": verified,
+        "permissions_preserved": permissions_preserved,
+        "ok": verified,
     })
     return result
 

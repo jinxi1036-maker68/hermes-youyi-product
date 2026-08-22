@@ -970,14 +970,25 @@ def test_two_low_frequency_followups_then_escalate_to_manager_plan(tmp_path):
 
 
 def test_outreach_honesty_guard_distinguishes_candidate_queue_and_sent():
-    from plugins.tuoguan_core.runtime_foundation import _sanitize_external_reply
+    from plugins.tuoguan_core.runtime_foundation import _sanitize_external_reply, _tool_results_outreach_state
 
     candidate = _sanitize_external_reply("我现在就去找李老师。", verified_state_change=True, used_trusted_tool=True, outreach_state="candidate")
     assert "尚未进入发送队列" in candidate
     queued = _sanitize_external_reply("我已经通知李老师了。", verified_state_change=True, used_trusted_tool=True, outreach_state="queued")
     assert "只有入队回执" in queued
+    for false_sent_claim in ("消息已发送。", "发送成功。", "对方已收到。"):
+        guarded = _sanitize_external_reply(
+            false_sent_claim, verified_state_change=True, used_trusted_tool=True, outreach_state="queued",
+        )
+        assert "只有入队回执" in guarded
     sent = _sanitize_external_reply("我已经通知李老师了。", verified_state_change=True, used_trusted_tool=True, outreach_state="sent")
     assert sent == "我已经通知李老师了。"
+    denied_state = _tool_results_outreach_state({"ok": False, "error": "permission_denied", "data": {}})
+    assert denied_state == "denied"
+    denied = _sanitize_external_reply("工具权限尚未开放。", used_trusted_tool=True, outreach_state=denied_state)
+    assert "未执行" in denied
+    assert "未入队" in denied
+    assert "没有联系" in denied
 
 
 def test_public_tools_expose_authorization_execution_and_goal_actions(tmp_path, monkeypatch):

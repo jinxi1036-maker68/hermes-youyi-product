@@ -214,6 +214,7 @@ def _sanitize_external_reply(
     actor_role: str = "",
     actor_name: str = "",
     outreach_state: str = "",
+    identity_query: bool = False,
 ) -> str:
     value = str(text or "")
     technical_refs: list[str] = []
@@ -231,6 +232,13 @@ def _sanitize_external_reply(
     value = re.sub(r"hermes", "小优", value, flags=re.IGNORECASE)
     for index, technical_name in enumerate(technical_refs):
         value = value.replace(f"__XIAOYOU_TECHNICAL_NAME_{index}__", technical_name)
+    value = re.sub(
+        r"我是\s*Agnes(?:\s*[-v]?\s*\d+(?:\.\d+)*)?(?:\s*(?:助手|模型))?",
+        "我是小优",
+        value,
+        flags=re.IGNORECASE,
+    )
+    value = re.sub(r"Agnes\s*助手", "小优", value, flags=re.IGNORECASE)
     value = re.sub(r"(?<=[\u3400-\u9fff])\s+小优", "小优", value)
     value = re.sub(r"小优\s+(?=[\u3400-\u9fff])", "小优", value)
     if str(actor_role or "") != "boss" and str(actor_name or "").strip():
@@ -241,6 +249,14 @@ def _sanitize_external_reply(
             r"(?m)^(\s*(?:(?:在的|好的|你好|您好|早上好|下午好|晚上好)[，,、\s]*)?)金总(?=[，,。！!：:\s])"
         )
         value = salutation.sub(lambda match: f"{match.group(1)}{actor_name}", value)
+    if identity_query and (str(actor_name or "").strip() or str(actor_role or "").strip()):
+        role_label = {"boss": "老板", "manager": "店长", "teacher": "老师"}.get(
+            str(actor_role or ""), "当前成员",
+        )
+        display = str(actor_name or "").strip() or role_label
+        return f"当前企业微信识别到您是{display}，角色是{role_label}。我是小优。"
+    if outreach_state == "denied":
+        return "该对象当前没有主动联系授权，本轮未执行、未入队，也没有联系对方。"
     lowered = value.lower()
     if any(marker in lowered for marker in _INTERNAL_ERROR_MARKERS):
         return "我刚才连接中断，这次没有处理完整。请稍等一下再发一次，我会重新接着处理。"
@@ -258,7 +274,10 @@ def _sanitize_external_reply(
     )
     if not verified_state_change and any(term in value for term in unverified_task_claim_terms):
         return "我刚才不能在没有任务工具确认的情况下说任务已闭环。请告诉我具体是哪一个任务或学生，我会按任务记录核验后再确认。"
-    sent_claim_terms = ("已经发给", "已发给", "已经通知", "已通知", "我刚问了", "我已经问了", "已经联系")
+    sent_claim_terms = (
+        "已经发给", "已发给", "已经通知", "已通知", "我刚问了", "我已经问了", "已经联系",
+        "已发送", "已经发送", "发送成功", "对方已收到", "对方已经收到",
+    )
     queued_claim_terms = ("我现在就去找", "我这就去找", "我马上去问", "现在去问", "已安排发送", "已经安排发送")
     if any(term in value for term in sent_claim_terms) and outreach_state != "sent":
         if outreach_state == "queued":
@@ -1274,6 +1293,17 @@ def block_tool_after_terminal_result(*, session_id: str, tool_name: str, args: A
     }
 
 
+def terminal_tool_result_recorded(session_id: str) -> bool:
+    """Return whether this session already has an authoritative turn result."""
+
+    key = str(session_id or "").strip()
+    if not key:
+        return False
+    with _LOCK:
+        item = _TURN_BY_SESSION.get(key)
+        return bool(item and item.get("terminal_tool_result"))
+
+
 def _audit(store: TuoguanStore, item: dict[str, Any], event: str, result: str, **extra: Any) -> str:
     audit_id = f"audit_{uuid.uuid4().hex}"
     _append_jsonl(store, "business_action_audit.jsonl", {
@@ -1593,12 +1623,22 @@ def _authoritative_read_reply(item: dict[str, Any]) -> str:
     return ""
 
 
+def _authoritative_task_write_reply(item: dict[str, Any]) -> str:
+    """Use a verified task receipt when model wording hides the terminal state."""
+
+    rendered = _successful_rendered_text(item, "tuoguan_cancel_task")
+    if rendered and _tool_results_have_verified_write(item.get("tool_results") or []):
+        return rendered
+    return ""
+
+
 def transform_final_response(*, store: TuoguanStore, session_id: str, response_text: str) -> str | None:
     verified_state_change = False
     used_trusted_tool = False
     actor_role = ""
     actor_name = ""
     outreach_state = ""
+    identity_query = False
     with _LOCK:
         item = _TURN_BY_SESSION.get(str(session_id or "")) or {}
         actor_role = str(item.get("role") or "")
@@ -1611,7 +1651,9 @@ def transform_final_response(*, store: TuoguanStore, session_id: str, response_t
                 if verified_state_change:
                     break
         outreach_state = _tool_results_outreach_state(item.get("tool_results") or [])
-        authoritative_reply = _authoritative_read_reply(item)
+        raw = _compact(item.get("raw_text") or "")
+        identity_query = any(term in raw for term in ("我是谁", "认得我", "识别到的身份", "什么身份", "我的身份"))
+        authoritative_reply = _authoritative_task_write_reply(item) or _authoritative_read_reply(item)
     if authoritative_reply:
         response_text = authoritative_reply
     return _sanitize_external_reply(
@@ -1621,17 +1663,24 @@ def transform_final_response(*, store: TuoguanStore, session_id: str, response_t
         actor_role=actor_role,
         actor_name=actor_name,
         outreach_state=outreach_state,
+        identity_query=identity_query,
     )
 
 
 def _tool_results_outreach_state(results: Any) -> str:
     rank = {"": 0, "candidate": 1, "authorized": 2, "queued": 3, "sending": 4, "sent": 5}
     best = ""
+    denied = False
     values = results if isinstance(results, list) else [results]
     for item in values:
         if not isinstance(item, dict):
             continue
         data = item.get("data") if isinstance(item.get("data"), dict) else item
+        error = str(item.get("error") or "").strip().lower()
+        if item.get("ok") is False and error in {
+            "permission_denied", "unauthorized", "forbidden", "target_not_authorized",
+        }:
+            denied = True
         candidates: list[Any] = [data]
         if isinstance(data, dict):
             candidates.extend([data.get("candidate"), data.get("outbox_item"), data.get("execution")])
@@ -1644,4 +1693,4 @@ def _tool_results_outreach_state(results: Any) -> str:
                 state = "queued"
             if rank.get(state, 0) > rank.get(best, 0):
                 best = state
-    return best
+    return best or ("denied" if denied else "")

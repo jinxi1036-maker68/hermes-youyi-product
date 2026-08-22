@@ -34,14 +34,15 @@ DOMAIN_OPERATIONS: dict[str, tuple[str, ...]] = {
         "query_goal_actions", "submit_goal_action",
     ),
     "proactive_work": (
+        "submit_relationship_touch_candidate", "query_active_work_context",
+        "query_proactive_authorizations", "execute_relationship_touch", "update_relationship_touch",
+        "query_relationship_touch_candidates",
         "query_hermes_work_items", "submit_hermes_work_item", "update_hermes_work_item",
         "query_wakeup_requests", "submit_wakeup_request", "update_wakeup_request",
         "submit_due_wakeup_candidate", "query_business_events", "submit_business_event",
         "query_action_executions", "submit_action_execution", "query_autonomous_work_brief",
-        "query_proactive_work_radar", "query_active_work_context", "query_attention_threads",
-        "update_attention_thread", "query_relationship_touch_candidates",
-        "submit_relationship_touch_candidate", "query_proactive_authorizations",
-        "submit_proactive_authorization", "execute_relationship_touch", "update_relationship_touch",
+        "query_proactive_work_radar", "query_attention_threads", "update_attention_thread",
+        "submit_proactive_authorization",
     ),
     "institution": (
         "query_institution_onboarding_gaps", "query_operational_facts", "submit_operational_fact",
@@ -98,7 +99,7 @@ DOMAIN_ROLES = {
 # while these explicit tools avoid making the model rediscover an operation
 # name for routine work on every turn.
 FAST_PATH_TOOL_NAMES = (
-    "tuoguan_context",
+    "tuoguan_submit_relationship_touch_candidate",
     "tuoguan_query_students",
     "tuoguan_query_tasks",
     "tuoguan_next_task",
@@ -169,11 +170,31 @@ def _domain_schema(domain: str, legacy: dict[str, tuple[dict[str, Any], Callable
         if optional:
             text += " optional=" + ",".join(optional)
         contracts.append(text)
+    selection_hint = {
+        "tasks": (
+            "选择提示：老师汇报进展、结果或完成证据用 update_task；不会做或不知道怎么说用 current_task_guidance；"
+            "开始当前最高优先级任务或继续唯一开放任务用 next_task；取消或停止提醒用 cancel_task；"
+            "老板或店长明确分配一次性任务、低风险测试任务时直接用 create_task，不要绕到 goal_workspace。"
+        ),
+        "proactive_work": (
+            "选择提示：用户明确要求现在主动找授权对象时，第一选择必须是 submit_relationship_touch_candidate，"
+            "并显式设置 execute_if_authorized=true；查询目标、人员、工作事项或看板都不等于主动执行。"
+            "只有确实需要消除对象歧义时才先查 query_active_work_context；不能把查询或候选说成已经发送。"
+        ),
+        "reports": (
+            "选择提示：老板要早报、晚报或今日重点用 query_operations_report；要看板链接用 dashboard_link。"
+        ),
+        "learning": (
+            "选择提示：公开行业学习先查询有来源的候选或研究记录；检查物流快递、资金托管等同词污染时优先用 "
+            "query_industry_learning_candidates，并明确说明无关内容已隔离、不生成教培趋势。"
+        ),
+    }.get(domain, "")
     return {
         "description": (
             f"小优{domain}领域能力。模型必须显式选择 operation；系统不根据聊天文本替模型路由。"
             "arguments 只填该 operation 的业务参数，身份始终来自可信企业微信会话。"
-            "操作契约：" + "；".join(contracts)
+            + selection_hint
+            + "操作契约：" + "；".join(contracts)
         ),
         "parameters": {
             "type": "object",

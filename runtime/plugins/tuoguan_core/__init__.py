@@ -35,6 +35,7 @@ from .runtime_foundation import (
     ensure_outbound_reply_recorded as _foundation_ensure_outbound_reply_recorded,
     mark_outbound_reply_delivered as _foundation_mark_outbound_reply_delivered,
     should_clarify_without_tool as _foundation_should_clarify_without_tool,
+    terminal_tool_result_recorded as _foundation_terminal_tool_result_recorded,
     transform_final_response as _foundation_transform_final_response,
 )
 from .turn_trace import (
@@ -50,6 +51,7 @@ from .runtime_performance import (
     guard_turn_tool_call as _guard_turn_tool_call,
     observe_turn_tool_result as _observe_turn_tool_result,
     reset_turn_tool_budget as _reset_turn_tool_budget,
+    turn_tool_budget_snapshot as _turn_tool_budget_snapshot,
 )
 
 logger = logging.getLogger(__name__)
@@ -521,6 +523,7 @@ def _role_layer_context(*, identity: Any, raw_text: str = "") -> str:
             "当老板问“最近老师有没有说什么/店长有没有反馈/团队状态/店里有什么问题/有没有抱怨/谁情绪不稳定”时，必须优先调用 tuoguan_query_staff_voice_radar 查询员工声音雷达。",
             "低风险员工声音默认只讲趋势；中高风险可以点名并给证据摘要；严重风险以老板-only 提醒候选和现有 outbox 边界处理。",
             "已分配任务缺少结果或闭环证据时，不要再创建第二条任务；先查询原任务，再用 tuoguan_submit_relationship_touch_candidate 以 action_type=ask_task_fact、related_task_id=原任务 id、execute_if_authorized=true 追问执行人。正式任务协作与普通关系触达分别校验。",
+            "当当前材料已经给出目标人、一个具体问题和询问原因，且你判断现在应该主动问时，直接调用 tuoguan_submit_relationship_touch_candidate 并设置 execute_if_authorized=true；不要再次遍历目标、任务或活动上下文。",
             "是否继续追问、找谁核实、怎样处理，仍由模型结合老板目标和真实事实自主判断。",
         ]
         if any(term in compact for term in ("找你", "和你聊", "跟你聊", "联系你", "给你发消息", "对话", "聊天", "今天有没有老师", "今天有没有店长")):
@@ -1684,7 +1687,9 @@ def _on_pre_llm_call(**kwargs: Any) -> dict[str, str] | None:
             append_context(
                 "【短回复衔接规则】短回复本身不是拒绝执行的理由。先结合本轮原话、最近主动外发和上述活动线程判断指向；"
                 "“什么意思/这个/展开”优先解释最近活动；“继续/可以”优先沿最近活动推进；"
-                "相关时自然衔接，并在真实写入前调用对应可信工具。若多个线程同样可能或没有任何证据，只追问一个最关键的区分问题。",
+                "若快照已经给出唯一、新鲜且参与人匹配的锚点，直接围绕该锚点回答，不要再遍历任务、日报、attention 或员工声音等查询工具；"
+                "只有要写入、取消、外发或快照明确缺少必要事实时才调用一个最匹配的工具。"
+                "若多个线程同样可能或没有任何证据，只追问一个最关键的区分问题。",
                 "short_reply_contract",
             )
         else:
@@ -1725,6 +1730,34 @@ def _on_post_tool_call(**kwargs: Any) -> None:
     )
     _observe_turn_tool_result(session_id, tool_name=tool_name, result=result)
     _record_trace_tool_event(session_id, tool_name=tool_name, result=result)
+
+
+def _on_llm_request_middleware(**kwargs: Any) -> dict[str, Any] | None:
+    """Bound Agnes tool rounds without choosing a business action."""
+
+    platform_raw = kwargs.get("platform")
+    platform = str(getattr(platform_raw, "value", platform_raw) or "").lower()
+    request = kwargs.get("request")
+    if platform != "wecom_callback" or not isinstance(request, dict):
+        return None
+    effective = deepcopy(request)
+    effective["parallel_tool_calls"] = False
+    reason = "single_business_tool_batch_requested"
+    session_id = str(kwargs.get("session_id") or "")
+    budget = _turn_tool_budget_snapshot(session_id)
+    if _foundation_terminal_tool_result_recorded(session_id):
+        effective.pop("tools", None)
+        effective["tool_choice"] = "none"
+        reason = "authoritative_result_requires_final_reply"
+    elif budget["count"] >= budget["budget"]:
+        effective.pop("tools", None)
+        effective["tool_choice"] = "none"
+        reason = "tool_budget_requires_final_reply"
+    return {
+        "request": effective,
+        "source": "tuoguan_core",
+        "reason": reason,
+    }
 
 
 def _on_pre_tool_call(**kwargs: Any) -> dict[str, str] | None:
@@ -1905,6 +1938,9 @@ def register(ctx) -> None:
     ctx.register_hook("pre_llm_call", _on_pre_llm_call)
     ctx.register_hook("pre_tool_call", _on_pre_tool_call)
     ctx.register_hook("post_tool_call", _on_post_tool_call)
+    register_middleware = getattr(ctx, "register_middleware", None)
+    if callable(register_middleware):
+        register_middleware("llm_request", _on_llm_request_middleware)
     try:
         from hermes_cli.plugins import VALID_HOOKS
     except Exception:

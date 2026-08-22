@@ -34,7 +34,10 @@ def test_default_model_surface_has_compact_facades_and_routine_fast_paths(monkey
         "tuoguan_staff_voice", "tuoguan_learning", "tuoguan_reports", "tuoguan_health",
     }
     assert len(tools) == len(expected_facades) + len(FAST_PATH_TOOL_NAMES) == 23
-    assert {name for name, _schema, _handler in tools} == expected_facades | set(FAST_PATH_TOOL_NAMES)
+    visible = {name for name, _schema, _handler in tools}
+    assert visible == expected_facades | set(FAST_PATH_TOOL_NAMES)
+    assert "tuoguan_submit_relationship_touch_candidate" in visible
+    assert "tuoguan_context" not in visible
     assert size["estimated_tokens"] < 8000
     assert "xiaoyou-capabilities-v1-23" in __import__(
         "plugins.tuoguan_core.capability_facades", fromlist=["render_facade_instruction"]
