@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 
 import pytest
 
@@ -62,6 +63,112 @@ def test_turn_tool_budget_blocks_duplicate_and_runaway_calls():
     )
     assert exhausted and exhausted["reason"] == "tool_call_budget_exhausted"
     assert turn_tool_budget_snapshot(session_id)["count"] == 12
+
+
+def test_turn_tool_budget_allows_one_contract_correction_then_stops():
+    from plugins.tuoguan_core.runtime_performance import (
+        guard_turn_tool_call,
+        observe_turn_tool_result,
+        reset_turn_tool_budget,
+        turn_tool_budget_snapshot,
+    )
+
+    session_id = "contract-correction-session"
+    reset_turn_tool_budget(session_id)
+    assert guard_turn_tool_call(
+        session_id, tool_name="tuoguan_students", args={"operation": "bad"},
+    ) is None
+    observe_turn_tool_result(
+        session_id, tool_name="tuoguan_students",
+        result={"ok": False, "error": "unknown_facade_operation"},
+    )
+    assert guard_turn_tool_call(
+        session_id, tool_name="tuoguan_query_students", args={"query_scope": "regular"},
+    ) is None
+    observe_turn_tool_result(
+        session_id, tool_name="tuoguan_query_students",
+        result={"ok": False, "error": "unsupported_arguments"},
+    )
+    blocked = guard_turn_tool_call(
+        session_id, tool_name="tuoguan_query_students", args={"query_scope": "visible"},
+    )
+    assert blocked and blocked["reason"] == "corrective_tool_retry_exhausted"
+    assert turn_tool_budget_snapshot(session_id)["correctable_failure_count"] == 2
+
+
+def test_turn_trace_splits_model_and_tool_time_without_storing_content(tmp_path):
+    from plugins.tuoguan_core.store import TuoguanStore
+    from plugins.tuoguan_core.turn_trace import (
+        begin_tool_event,
+        begin_turn_trace,
+        finalize_turn_trace,
+        record_context_sources,
+        record_tool_event,
+    )
+
+    store = TuoguanStore(tmp_path)
+    begin_turn_trace(
+        session_id="trace-session", message_id="message-1", tenant_id="demo_tuoguan",
+        app_id="app-1", user_id="teacher-1", role="teacher",
+        raw_text="private student sentence", visible_tool_count=23,
+    )
+    record_context_sources("trace-session", ["trusted_gateway_identity", "work_context_snapshot"])
+    begin_tool_event("trace-session", tool_name="tuoguan_query_students")
+    record_tool_event(
+        "trace-session", tool_name="tuoguan_query_students",
+        result={"ok": True, "data": {"rendered_text": "private result"}},
+    )
+    trace = finalize_turn_trace(
+        store, session_id="trace-session", delivery_status="prepared", final_reply="private reply",
+    )
+
+    assert trace is not None
+    assert trace["turn_class"] == "direct_read"
+    assert trace["model_segment_count"] == 2
+    assert [item["phase"] for item in trace["model_events"]] == ["initial_model", "final_model"]
+    assert trace["final_outcome"] == "completed"
+    serialized = __import__("json").dumps(trace, ensure_ascii=False)
+    assert "private student sentence" not in serialized
+    assert "private result" not in serialized
+    assert "private reply" not in serialized
+
+
+def test_plugin_blocks_any_more_business_tools_after_authoritative_result(tmp_path):
+    import plugins.tuoguan_core as plugin
+    from plugins.tuoguan_core.runtime_foundation import (
+        begin_inbound,
+        clear_runtime_state,
+        inject_model_context,
+        observe_tool_result,
+    )
+    from plugins.tuoguan_core.store import TuoguanStore
+
+    manual = tmp_path / "manual_context"
+    manual.mkdir()
+    (manual / "hermes_model_context_injection_allowlist_v1.json").write_text(
+        json.dumps({"runtime_foundation": {"enabled": True}}), encoding="utf-8",
+    )
+    store = TuoguanStore(tmp_path)
+    clear_runtime_state()
+    begin_inbound(
+        store=store, message_id="terminal-message", conversation_id="teacher-1",
+        user_id="teacher-1", role="teacher", raw_text="查正式托管学生",
+    )
+    assert inject_model_context(
+        session_id="terminal-session", sender_id="teacher-1", user_message="查正式托管学生",
+    )
+    observe_tool_result(
+        session_id="terminal-session", tool_name="tuoguan_query_students",
+        args={"query_scope": "regular"},
+        result={"ok": True, "data": {"rendered_text": "正式托管学生共10名"}},
+    )
+    plugin._reset_turn_tool_budget("terminal-session")
+
+    blocked = plugin._on_pre_tool_call(
+        session_id="terminal-session", tool_name="tuoguan_students",
+        args={"operation": "query_student_service_relations", "arguments": {}},
+    )
+    assert blocked and blocked["reason"] == "terminal_tool_result_already_recorded"
 
 
 @pytest.mark.asyncio

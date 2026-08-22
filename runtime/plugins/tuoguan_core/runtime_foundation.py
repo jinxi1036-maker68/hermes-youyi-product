@@ -1265,6 +1265,7 @@ def block_tool_after_terminal_result(*, session_id: str, tool_name: str, args: A
         idempotency_verified = bool(item.get("idempotency_verified"))
     return {
         "action": "block",
+        "reason": "terminal_tool_result_already_recorded",
         "message": (
             "该任务已确认完成，本轮已经幂等结束。请直接回复用户，不要再调用其他工具。"
             if idempotency_verified

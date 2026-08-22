@@ -5151,10 +5151,18 @@ def query_xiaoyou_health(
         issues.append(f"过去24小时出现 {turn_runtime['writeback_failure_count']} 次写后反查失败。")
     if turn_runtime["incomplete_tool_count"]:
         issues.append(f"过去24小时有 {turn_runtime['incomplete_tool_count']} 次工具调用没有完成回执。")
+    if turn_runtime["corrective_retry_exhausted_count"]:
+        issues.append(f"过去24小时有 {turn_runtime['corrective_retry_exhausted_count']} 个回合因连续错工具被终止。")
+    if turn_runtime["failed_turn_count"]:
+        issues.append(f"过去24小时有 {turn_runtime['failed_turn_count']} 个模型回合明确失败，失败类型已留档。")
     if runtime_learning["unverified_commitment_count"]:
         issues.append(f"过去24小时出现 {runtime_learning['unverified_commitment_count']} 次未验证承诺。")
     if turn_runtime["performance"]["ordinary_reply_p95_over_target"]:
         issues.append(f"普通回复 p95 为 {turn_runtime['performance']['total_turn_p95_ms']}ms，超过20秒目标。")
+    if turn_runtime["performance"]["simple_reply_p95_over_target"]:
+        issues.append(f"简单对话 p95 为 {turn_runtime['performance']['simple_reply_p95_ms']}ms，超过12秒目标。")
+    if turn_runtime["performance"]["direct_read_p95_over_target"]:
+        issues.append(f"直接查询 p95 为 {turn_runtime['performance']['direct_read_p95_ms']}ms，超过20秒目标。")
     if int(proactive_work.get("stuck_candidate_count") or 0):
         issues.append(f"有 {int(proactive_work.get('stuck_candidate_count') or 0)} 条主动联系候选超过6小时仍未进入执行或关闭状态。")
     tool_failure_count = int(((evolution.get("health_signals") or {}).get("tool_failure_candidate_count") or 0)) if isinstance(evolution, dict) else 0
@@ -5379,9 +5387,31 @@ def _xiaoyou_turn_trace_health(store: TuoguanStore, since_ts: float) -> dict[str
         for row in rows
         if isinstance(row.get("total_turn_ms"), (int, float))
     ]
+    model_durations = [
+        float(event.get("duration_ms"))
+        for row in rows
+        for event in (row.get("model_events") or [])
+        if isinstance(event, dict) and isinstance(event.get("duration_ms"), (int, float))
+    ]
+    simple_durations = [
+        float(row["total_turn_ms"]) for row in rows
+        if str(row.get("turn_class") or "") == "simple_conversation"
+        and isinstance(row.get("total_turn_ms"), (int, float))
+    ]
+    direct_read_durations = [
+        float(row["total_turn_ms"]) for row in rows
+        if str(row.get("turn_class") or "") == "direct_read"
+        and isinstance(row.get("total_turn_ms"), (int, float))
+    ]
+    complex_durations = [
+        float(row["total_turn_ms"]) for row in rows
+        if str(row.get("turn_class") or "") == "complex"
+        and isinstance(row.get("total_turn_ms"), (int, float))
+    ]
     ambiguity_counts: dict[str, int] = {}
     guard_rewrite_count = 0
     context_guard_failure_count = 0
+    corrective_retry_exhausted_count = 0
     for event in guard_events:
         guard = str(event.get("guard") or "")
         result = str(event.get("result") or "unknown")
@@ -5391,18 +5421,32 @@ def _xiaoyou_turn_trace_health(store: TuoguanStore, since_ts: float) -> dict[str
             guard_rewrite_count += 1
         if guard == "work_context_ambiguity" and result in {"misattached", "identity_mismatch", "failed", "rejected"}:
             context_guard_failure_count += 1
+        if guard == "corrective_tool_retry_exhausted" and result == "blocked":
+            corrective_retry_exhausted_count += 1
+    failure_type_counts: dict[str, int] = {}
+    for row in rows:
+        failure_type = str(row.get("failure_type") or "")
+        if failure_type:
+            failure_type_counts[failure_type] = failure_type_counts.get(failure_type, 0) + 1
     performance = {
         "context_build_p95_ms": _p95(context_durations),
         "business_read_tool_p95_ms": _p95(read_durations),
         "business_write_tool_p95_ms": _p95(write_durations),
         "total_turn_p95_ms": _p95(total_durations),
         "model_and_tool_p95_ms": _p95(model_and_tool_durations),
+        "model_segment_p95_ms": _p95(model_durations),
+        "simple_reply_p95_ms": _p95(simple_durations),
+        "direct_read_p95_ms": _p95(direct_read_durations),
+        "complex_reply_p95_ms": _p95(complex_durations),
     }
     performance.update({
         "context_build_p95_over_target": performance["context_build_p95_ms"] > 300,
         "business_read_p95_over_target": performance["business_read_tool_p95_ms"] > 500,
         "business_write_p95_over_target": performance["business_write_tool_p95_ms"] > 1000,
         "ordinary_reply_p95_over_target": performance["total_turn_p95_ms"] > 20000,
+        "simple_reply_p95_over_target": performance["simple_reply_p95_ms"] > 12000,
+        "direct_read_p95_over_target": performance["direct_read_p95_ms"] > 20000,
+        "complex_reply_p95_over_target": performance["complex_reply_p95_ms"] > 35000,
     })
     return {
         "available": bool(rows),
@@ -5413,6 +5457,10 @@ def _xiaoyou_turn_trace_health(store: TuoguanStore, since_ts: float) -> dict[str
         "incomplete_tool_count": len(incomplete_tools),
         "final_claim_guard_rewrite_count": guard_rewrite_count,
         "context_guard_failure_count": context_guard_failure_count,
+        "corrective_retry_exhausted_count": corrective_retry_exhausted_count,
+        "failed_turn_count": sum(failure_type_counts.values()),
+        "failure_type_counts": failure_type_counts,
+        "corrective_tool_retry_count": sum(int(row.get("corrective_tool_retry_count") or 0) for row in rows),
         "context_ambiguity_counts": ambiguity_counts,
         "performance": performance,
         "privacy_preserving": True,

@@ -48,6 +48,7 @@ from .turn_trace import (
 from .runtime_performance import (
     clear_turn_tool_budget as _clear_turn_tool_budget,
     guard_turn_tool_call as _guard_turn_tool_call,
+    observe_turn_tool_result as _observe_turn_tool_result,
     reset_turn_tool_budget as _reset_turn_tool_budget,
 )
 
@@ -1722,6 +1723,7 @@ def _on_post_tool_call(**kwargs: Any) -> None:
         args=kwargs.get("args"),
         result=result,
     )
+    _observe_turn_tool_result(session_id, tool_name=tool_name, result=result)
     _record_trace_tool_event(session_id, tool_name=tool_name, result=result)
 
 
@@ -1731,12 +1733,21 @@ def _on_pre_tool_call(**kwargs: Any) -> dict[str, str] | None:
     # and pathological tool loops that make a chat turn stall.
     session_id = str(kwargs.get("session_id") or "")
     tool_name = str(kwargs.get("tool_name") or "")
-    directive = _guard_turn_tool_call(
-        session_id,
-        tool_name=tool_name,
-        args=kwargs.get("args"),
-    )
-    if directive is not None:
+    args = kwargs.get("args")
+    for boundary in (
+        lambda: _foundation_block_tool_after_terminal_result(
+            session_id=session_id, tool_name=tool_name, args=args,
+        ),
+        lambda: _foundation_validate_tool_call(
+            session_id=session_id, tool_name=tool_name, args=args,
+        ),
+        lambda: _guard_turn_tool_call(
+            session_id, tool_name=tool_name, args=args,
+        ),
+    ):
+        directive = boundary()
+        if directive is None:
+            continue
         _record_trace_guard_event(
             session_id,
             guard=str(directive.get("reason") or "tool_resource_boundary"),

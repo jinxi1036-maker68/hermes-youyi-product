@@ -13,6 +13,10 @@ def test_facade_manifest_covers_every_legacy_operation_once():
     assert len(assigned) == len(set(assigned)) == len(legacy) == 104
     assert set(assigned) == legacy
     manifest = operation_manifest()
+    assert manifest["manifest_version"] == "xiaoyou-capabilities-v1-23"
+    assert manifest["frozen"] is True
+    assert manifest["model_visible_tool_count"] == 23
+    assert len(manifest["fast_paths"]) == 11
     assert set(manifest["operations"]) == legacy
     assert all(item["required_evidence"] for item in manifest["operations"].values())
 
@@ -32,6 +36,9 @@ def test_default_model_surface_has_compact_facades_and_routine_fast_paths(monkey
     assert len(tools) == len(expected_facades) + len(FAST_PATH_TOOL_NAMES) == 23
     assert {name for name, _schema, _handler in tools} == expected_facades | set(FAST_PATH_TOOL_NAMES)
     assert size["estimated_tokens"] < 8000
+    assert "xiaoyou-capabilities-v1-23" in __import__(
+        "plugins.tuoguan_core.capability_facades", fromlist=["render_facade_instruction"]
+    ).render_facade_instruction()
 
 
 def test_legacy_surface_remains_available_only_as_explicit_rollback(monkeypatch):

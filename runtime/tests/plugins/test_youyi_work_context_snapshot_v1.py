@@ -36,6 +36,10 @@ def test_snapshot_is_identity_scoped_and_contains_beijing_time(tmp_path):
     assert snapshot["timezone"] == "Asia/Shanghai"
     assert snapshot["current_time"].startswith("2026-08-13T18:00:00")
     assert [item["context_id"] for item in snapshot["candidate_threads"]] == ["teacher-task"]
+    assert snapshot["authoritative_object_refs"] == ({
+        "object_type": "task", "object_id": "teacher-task", "source": "tasks.json",
+    },)
+    assert snapshot["candidate_threads"][0]["authoritative_source"] == "tasks.json"
 
 
 def test_snapshot_marks_multiple_threads_without_selecting_intent(tmp_path):

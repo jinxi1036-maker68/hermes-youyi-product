@@ -27,6 +27,16 @@ _SOURCE_CONFIDENCE = {
     "relationship_touch_candidates": 0.98,
     "goal_actions.jsonl": 0.98,
 }
+_AUTHORITATIVE_CONTEXT_SOURCES = {
+    "task": ("task", "tasks.json"),
+    "recent_outbound": ("notification", "notification_outbox.json"),
+    "daily_report": ("daily_report", "daily_report_runs.jsonl"),
+    "recent_tool_result": ("tool_result", "reply_ledger.jsonl"),
+    "owner_attention": ("attention_thread", "attention_threads.jsonl"),
+    "relationship_touch": ("relationship_touch", "relationship_touch_candidates.jsonl"),
+    "goal_action": ("goal_action", "goal_actions.jsonl"),
+    "social_market_research": ("market_evidence", "social_market_research_candidates.jsonl"),
+}
 
 
 @dataclass(frozen=True)
@@ -42,6 +52,7 @@ class WorkContextSnapshot:
     current_time: str
     timezone: str
     candidate_threads: tuple[dict[str, Any], ...]
+    authoritative_object_refs: tuple[dict[str, str], ...]
     ambiguity_state: str
     generated_at: str
 
@@ -85,6 +96,9 @@ def _normalize_candidate(item: dict[str, Any], *, identity: UserIdentity, now: d
         freshness = "current" if age <= timedelta(hours=3) else "recent"
     source = str(item.get("evidence_source") or "")
     confidence = _SOURCE_CONFIDENCE.get(source, 0.9 if source else 0.7)
+    object_type, authority = _AUTHORITATIVE_CONTEXT_SOURCES.get(
+        context_type, (context_type or "unknown", source or "unknown")
+    )
     return {
         "context_type": context_type,
         "context_id": str(item.get("context_id") or ""),
@@ -94,6 +108,8 @@ def _normalize_candidate(item: dict[str, Any], *, identity: UserIdentity, now: d
         "freshness": freshness,
         "confidence": confidence,
         "evidence_source": source,
+        "authoritative_object_type": object_type,
+        "authoritative_source": authority,
         "participant_ids": _participant_ids(item, identity),
     }
 
@@ -127,6 +143,11 @@ def build_work_context_snapshot(
         ambiguity = "single_candidate"
     else:
         ambiguity = "multiple_candidates_model_must_disambiguate"
+    authoritative_refs = tuple({
+        "object_type": str(item.get("authoritative_object_type") or "unknown"),
+        "object_id": str(item.get("context_id") or ""),
+        "source": str(item.get("authoritative_source") or item.get("evidence_source") or "unknown"),
+    } for item in candidates)
     snapshot = WorkContextSnapshot(
         snapshot_id=f"snapshot_{uuid.uuid4().hex}",
         tenant_id=current_tenant_id(),
@@ -139,6 +160,7 @@ def build_work_context_snapshot(
         current_time=current.isoformat(timespec="seconds"),
         timezone="Asia/Shanghai",
         candidate_threads=tuple(candidates),
+        authoritative_object_refs=authoritative_refs,
         ambiguity_state=ambiguity,
         generated_at=current.isoformat(timespec="seconds"),
     )
@@ -157,6 +179,7 @@ def render_work_context_snapshot(snapshot: dict[str, Any]) -> str:
             f"- 类型={item.get('context_type') or ''}；id={item.get('context_id') or ''}；"
             f"状态={item.get('status') or ''}；时间={item.get('updated_at') or '未知'}；"
             f"新鲜度={item.get('freshness') or 'unknown'}；证据={item.get('evidence_source') or '未知'}；"
+            f"权威来源={item.get('authoritative_source') or '未知'}；"
             f"摘要={item.get('summary') or ''}"
         )
     ambiguity = str(snapshot.get("ambiguity_state") or "")

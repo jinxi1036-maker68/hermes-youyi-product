@@ -7,6 +7,9 @@ import json
 from typing import Any, Callable
 
 
+CAPABILITY_MANIFEST_VERSION = "xiaoyou-capabilities-v1-23"
+
+
 DOMAIN_OPERATIONS: dict[str, tuple[str, ...]] = {
     "people": (
         "context", "query_staff_directory", "resolve_student_responsibility",
@@ -127,7 +130,15 @@ def operation_manifest() -> dict[str, Any]:
                 "required_evidence": "execution_receipt" if write else "trusted_tool_result",
                 "allowed_commitment": "verified_writeback_only" if write else "result_facts_only",
             }
-    return {"domains": 12, "operations": operations}
+    return {
+        "manifest_version": CAPABILITY_MANIFEST_VERSION,
+        "frozen": True,
+        "surface": "11_fast_paths_plus_12_domain_facades",
+        "model_visible_tool_count": len(FAST_PATH_TOOL_NAMES) + len(DOMAIN_OPERATIONS),
+        "fast_paths": list(FAST_PATH_TOOL_NAMES),
+        "domains": len(DOMAIN_OPERATIONS),
+        "operations": operations,
+    }
 
 
 def _argument_contract(schema: dict[str, Any]) -> tuple[list[str], list[str]]:
@@ -304,7 +315,7 @@ def render_facade_instruction() -> str:
     domains = "、".join(f"tuoguan_{name}" for name in DOMAIN_OPERATIONS)
     fast_paths = "、".join(FAST_PATH_TOOL_NAMES)
     return (
-        "【小优能力面】高频工作优先使用直连工具：" + fast_paths + "。"
+        f"【小优能力面｜{CAPABILITY_MANIFEST_VERSION}｜封版】高频工作优先使用直连工具：" + fast_paths + "。"
         "查正式托管学生使用 tuoguan_query_students(query_scope=regular)；查暑假班才使用 query_scope=summer；"
         "用户要看板链接时直接使用 tuoguan_dashboard_link，不需要先查目标、任务或学生完整度。"
         "其余能力使用12个领域入口：" + domains + "。"
