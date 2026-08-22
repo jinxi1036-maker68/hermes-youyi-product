@@ -230,3 +230,31 @@ def test_external_learning_brief_is_read_only_material(tmp_path, monkeypatch):
     assert brief["ok"] is True
     assert brief["market_research_candidates"]["candidate_count"] >= 1
     assert "不替模型" in brief["rendered_text"] or "是否采纳" in brief["rendered_text"]
+
+
+def test_public_learning_health_exposes_relevance_evidence_without_actions(tmp_path):
+    from plugins.tuoguan_core.digital_employee_state import _xiaoyou_public_learning_health
+
+    store = _seed_store(tmp_path)
+    now = datetime.now(timezone.utc)
+    (tmp_path / "external_research_runs.jsonl").write_text(
+        json.dumps({
+            "tenant_id": "youyi_tuoguan",
+            "mode": "weekly_industry",
+            "status": "completed_no_relevant_sources",
+            "evidence_count": 0,
+            "raw_evidence_count": 4,
+            "rejected_evidence_count": 4,
+            "created_at": now.isoformat(),
+        }, ensure_ascii=False) + "\n",
+        encoding="utf-8",
+    )
+
+    health = _xiaoyou_public_learning_health(store, now.timestamp() - 3600)
+
+    assert health["latest_status"] == "completed_no_relevant_sources"
+    assert health["rejected_irrelevant_count_last_24h"] == 4
+    assert health["accepted_evidence_count_last_24h"] == 0
+    assert health["no_trend_without_sources"] is True
+    assert health["updates_institution_facts"] is False
+    assert health["sends_messages"] is False

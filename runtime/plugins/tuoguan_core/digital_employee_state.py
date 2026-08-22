@@ -5107,6 +5107,7 @@ def query_xiaoyou_health(
     turn_runtime = _xiaoyou_turn_trace_health(store, since_ts)
     teacher_coaching = _xiaoyou_teacher_coaching_health(store, since_ts)
     social_market = _xiaoyou_social_market_health(store, since_ts)
+    public_learning = _xiaoyou_public_learning_health(store, since_ts)
     try:
         from .proactive_work import proactive_health_snapshot
 
@@ -5172,6 +5173,8 @@ def query_xiaoyou_health(
         issues.append(f"最近一次社交市场采集状态为 {social_market['latest_status']}，小优不能把它写成市场趋势。")
     if social_market["incomplete_evidence_count_last_24h"]:
         issues.append(f"近24小时有 {social_market['incomplete_evidence_count_last_24h']} 条市场候选缺少完整来源，已从有效观察中隔离。")
+    if public_learning["latest_status"] == "completed_no_relevant_sources":
+        issues.append("最近一次教培公开学习没有获得相关来源；无关结果已隔离，不能生成趋势结论。")
     if turn_runtime["context_guard_failure_count"]:
         issues.append(f"过去24小时出现 {turn_runtime['context_guard_failure_count']} 次工作上下文守卫失败。")
     if teacher_coaching["performance_boundary_violation_count"]:
@@ -5230,6 +5233,7 @@ def query_xiaoyou_health(
             "status_counts": deepcopy(runtime_learning.get("evolution_status_counts") or {}),
         },
         "market_learning": social_market,
+        "public_learning": public_learning,
         "runtime_learning": {**runtime_learning, "turn_trace": turn_runtime},
         "task_coaching": teacher_coaching,
         "issues": issues[:12],
@@ -5545,6 +5549,27 @@ def _xiaoyou_social_market_health(store: TuoguanStore, since_ts: float) -> dict[
         "latest_at": str(latest.get("created_at") or latest.get("collected_at") or ""),
         "latest_error_count": len(latest.get("errors") or []) if isinstance(latest.get("errors"), list) else 0,
         "external_observation_only": True,
+    }
+
+
+def _xiaoyou_public_learning_health(store: TuoguanStore, since_ts: float) -> dict[str, Any]:
+    all_runs = [
+        row for row in _read_jsonl(store, "external_research_runs.jsonl")
+        if str(row.get("tenant_id") or "") in {"", current_tenant_id()}
+    ]
+    recent = [row for row in all_runs if _ts(row.get("created_at")) >= since_ts]
+    latest = max(all_runs, key=lambda row: _ts(row.get("created_at")), default={})
+    return {
+        "available": bool(all_runs),
+        "run_count_last_24h": len(recent),
+        "latest_status": str(latest.get("status") or ""),
+        "latest_mode": str(latest.get("mode") or ""),
+        "accepted_evidence_count_last_24h": sum(int(row.get("evidence_count") or 0) for row in recent),
+        "raw_evidence_count_last_24h": sum(int(row.get("raw_evidence_count") or 0) for row in recent),
+        "rejected_irrelevant_count_last_24h": sum(int(row.get("rejected_evidence_count") or 0) for row in recent),
+        "no_trend_without_sources": True,
+        "updates_institution_facts": False,
+        "sends_messages": False,
     }
 
 

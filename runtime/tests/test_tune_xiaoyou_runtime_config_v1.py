@@ -49,9 +49,11 @@ def test_runtime_tuning_applies_to_primary_provider_fallback_and_agent(tmp_path:
     assert updated["compression"]["threshold"] == 0.18
     assert updated["compression"]["hygiene_hard_message_limit"] == 80
     assert updated["agent"]["api_max_retries"] == 2
-    assert updated["agent"]["max_turns"] == 16
+    assert updated["agent"]["max_turns"] == 8
+    assert updated["agent"]["gateway_timeout"] == 45
+    assert updated["agent"]["gateway_timeout_warning"] == 25
     assert updated["fallback_providers"][0]["api_key"] == "fallback-secret"
-    assert updated["fallback_providers"][0]["request_timeout_seconds"] == 45
+    assert updated["fallback_providers"][0]["request_timeout_seconds"] == 30
     assert len(list((tmp_path / "backup").glob("config.before-latency-tuning.*.yaml"))) == 1
 
 

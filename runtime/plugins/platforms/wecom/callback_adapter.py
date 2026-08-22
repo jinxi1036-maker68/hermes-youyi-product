@@ -66,6 +66,16 @@ DEFAULT_PATH = "/wecom/callback"
 # unauthenticated POST can force before signature verification.
 _MAX_BODY = 65_536
 ACCESS_TOKEN_TTL_SECONDS = 7200
+DEFAULT_MODEL_TURN_TIMEOUT_SECONDS = 45.0
+
+
+def _model_turn_timeout_seconds() -> float:
+    raw = str(os.getenv("HERMES_WECOM_MODEL_TURN_TIMEOUT_SECONDS", "") or "").strip()
+    try:
+        value = float(raw) if raw else DEFAULT_MODEL_TURN_TIMEOUT_SECONDS
+    except (TypeError, ValueError):
+        value = DEFAULT_MODEL_TURN_TIMEOUT_SECONDS
+    return min(120.0, max(10.0, value))
 
 
 def _import_tuoguan_module(name: str):
@@ -115,9 +125,19 @@ class WecomCallbackAdapter(BasePlatformAdapter):
 
         async def reliable_handler(event: MessageEvent):
             try:
-                response = await handler(event)
+                response = await asyncio.wait_for(
+                    handler(event),
+                    timeout=_model_turn_timeout_seconds(),
+                )
             except asyncio.CancelledError:
                 raise
+            except asyncio.TimeoutError:
+                logger.error(
+                    "[WecomCallback] Model turn exceeded %.1fs message_id=%s",
+                    _model_turn_timeout_seconds(),
+                    event.message_id,
+                )
+                response = None
             except Exception:
                 logger.exception("[WecomCallback] Model handler failed before producing a reply")
                 response = None

@@ -40,6 +40,7 @@ PY_COMPILE_TARGETS = [
     "scripts/tenant_acceptance_check.py",
     "scripts/xiaoyou_regression_gate.py",
     "scripts/xiaoyou_reliability_gate.py",
+    "scripts/xiaoyou_reliability_observer.py",
     "scripts/xiaoyou_architecture_audit.py",
     "scripts/xiaoyou_production_load_check.py",
     "scripts/xiaoyou_deploy_guard.py",
@@ -71,6 +72,7 @@ PYTEST_TARGETS = [
     "runtime/tests/test_rotate_wecom_sessions_for_latency_v1.py",
     "runtime/tests/test_repair_proactive_employee_state_v1.py",
     "runtime/tests/test_xiaoyou_reliability_gate_v1.py",
+    "runtime/tests/test_xiaoyou_reliability_observer_v1.py",
 ]
 
 RISKY_TRACKED_PATTERNS = (

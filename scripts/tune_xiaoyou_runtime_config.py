@@ -15,15 +15,16 @@ import yaml
 TUNING = {
     "context_length": 262144,
     "max_tokens": 4096,
-    "request_timeout_seconds": 45,
-    "stale_timeout_seconds": 60,
+    "request_timeout_seconds": 30,
+    "stale_timeout_seconds": 35,
 }
 
 AGENT_TUNING = {
+    # Hermes v0.20 counts the initial attempt here, so 2 means one retry.
     "api_max_retries": 2,
-    "max_turns": 16,
-    "gateway_timeout": 240,
-    "gateway_timeout_warning": 60,
+    "max_turns": 8,
+    "gateway_timeout": 45,
+    "gateway_timeout_warning": 25,
 }
 
 COMPRESSION_TUNING = {

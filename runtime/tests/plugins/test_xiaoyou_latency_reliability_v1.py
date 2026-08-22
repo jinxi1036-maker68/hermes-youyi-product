@@ -202,6 +202,24 @@ async def test_wecom_handler_error_does_not_leave_user_in_silence():
 
 
 @pytest.mark.asyncio
+async def test_wecom_slow_model_turn_gets_bounded_visible_failure(monkeypatch):
+    from plugins.platforms.wecom import callback_adapter
+
+    adapter = callback_adapter.WecomCallbackAdapter.__new__(callback_adapter.WecomCallbackAdapter)
+    monkeypatch.setattr(callback_adapter, "_model_turn_timeout_seconds", lambda: 0.01)
+
+    async def slow_handler(_event):
+        await asyncio.sleep(0.05)
+        return "不应送达"
+
+    adapter.set_message_handler(slow_handler)
+    response = await adapter._message_handler(_event())
+
+    assert "没有拿到可靠结果" in response
+    assert "不应送达" not in response
+
+
+@pytest.mark.asyncio
 async def test_wecom_cancelled_handler_remains_cancellable():
     from plugins.platforms.wecom.callback_adapter import WecomCallbackAdapter
 
