@@ -461,6 +461,17 @@ TUOGUAN_QUERY_STAFF_DIRECTORY_SCHEMA = _schema(
     ["user_id"],
 )
 
+TUOGUAN_OFFBOARD_STAFF_SCHEMA = _schema(
+    "老板专属人员离职管理。金总明确要求删除、移除或停用一位已离职老师/店长时使用：撤销托管业务访问、停止未发送提醒并保留历史任务和服务记录。该操作不删除企业微信组织通讯录成员；只有 ok=true 且 writeback_verified=true 才能说已经完成。",
+    _identity_props({
+        "target_name": {"type": "string", "description": "离职人员姓名或常用称呼；与 target_user_id 至少提供一个。"},
+        "target_user_id": {"type": "string", "description": "可选，企业微信 user_id；同名时必须提供。"},
+        "reason": {"type": "string", "description": "可选，离职或停用原因。"},
+        "operation_id": {"type": "string", "description": "当前可信消息 id，作为幂等键。"},
+    }),
+    ["user_id", "operation_id"],
+)
+
 TUOGUAN_QUERY_PERSON_WORKSTYLE_PROFILE_SCHEMA = _schema(
     "只读查询某个人希望小优怎样服务自己，包括汇报长短、语气、提醒时间、跟进方式、细节程度、格式偏好和不要怎样说。档案只影响小优的服务方式，不改变权限、制度、工资、家长外发、正式任务或事实判断。",
     _identity_props({
@@ -1472,6 +1483,7 @@ TOOLS = (
     ("tuoguan_query_institution_onboarding_gaps", TUOGUAN_QUERY_INSTITUTION_ONBOARDING_GAPS_SCHEMA, _handler("query_institution_onboarding_gaps")),
     ("tuoguan_query_operational_facts", TUOGUAN_QUERY_OPERATIONAL_FACTS_SCHEMA, _handler("query_operational_facts")),
     ("tuoguan_query_staff_directory", TUOGUAN_QUERY_STAFF_DIRECTORY_SCHEMA, _handler("query_staff_directory")),
+    ("tuoguan_offboard_staff", TUOGUAN_OFFBOARD_STAFF_SCHEMA, _handler("offboard_staff")),
     ("tuoguan_query_person_workstyle_profile", TUOGUAN_QUERY_PERSON_WORKSTYLE_PROFILE_SCHEMA, _handler("query_person_workstyle_profile")),
     ("tuoguan_submit_person_workstyle_preference", TUOGUAN_SUBMIT_PERSON_WORKSTYLE_PREFERENCE_SCHEMA, _handler("submit_person_workstyle_preference")),
     ("tuoguan_query_workstyle_adaptation_health", TUOGUAN_QUERY_WORKSTYLE_ADAPTATION_HEALTH_SCHEMA, _handler("query_workstyle_adaptation_health")),

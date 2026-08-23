@@ -888,6 +888,8 @@ def _claim_next_notification_outbox_item(store: TuoguanStore, *, excluded_task_i
     allowed_files = {"notification_outbox.json"}
     write_auth = prepare_system_write(store.data_dir, job_name="notification_outbox_claim", allowed_files=allowed_files)
 
+    from .staff_administration import staff_is_offboarded
+
     def mutate(outbox: Any) -> Any:
         outbox = outbox if isinstance(outbox, list) else []
         for item in outbox:
@@ -992,6 +994,15 @@ def _claim_next_notification_outbox_item(store: TuoguanStore, *, excluded_task_i
             if not target or not content:
                 item.update({"status": "failed", "last_error": "missing_target_or_content", "last_attempt_at": now_iso})
                 claim.update({"item": deepcopy(item), "event": "notification_failed", "result": "missing_target_or_content"})
+                return outbox[-2000:]
+            if staff_is_offboarded(store, target):
+                item.update({
+                    "status": "suppressed",
+                    "suppressed_reason": "recipient_staff_offboarded",
+                    "suppressed_at": now_iso,
+                })
+                item.pop("retry_at", None)
+                claim.update({"item": deepcopy(item), "event": "notification_suppressed", "result": "recipient_staff_offboarded"})
                 return outbox[-2000:]
             activity_key = (str(store.data_dir.resolve()), target)
             last_inbound = _coerce_runtime_datetime(
@@ -1679,6 +1690,7 @@ def _on_pre_llm_call(**kwargs: Any) -> dict[str, str] | None:
             "确认", "提交", "上报", "修改", "改成", "设为",
             "记住", "以后按", "以后就按", "工作方式", "偏好", "汇报格式",
             "取消任务", "关闭任务", "删除任务", "关掉", "不用再提醒", "停止提醒",
+            "离职", "删除老师", "删除员工", "移除老师", "移除员工", "停用老师", "停用员工",
         )
     ) and not asks_how_to_confirm
     write_like = write_like or (task_completion_like and not asks_how_to_confirm)
@@ -1707,6 +1719,8 @@ def _on_pre_llm_call(**kwargs: Any) -> dict[str, str] | None:
             "不要根据历史里的“写入被拦截/配置未生效/所有写入不能用”等旧结论直接拒绝或声称失败；"
             "用户明确要求取消、关闭、删除任务或停止任务提醒时，必须优先调用 tuoguan_cancel_task；"
             "tuoguan_update_task 只用于任务反馈、进展和完成闭环，不能用于取消任务。"
+            "老板明确要求删除、移除或停用离职老师/店长时，必须使用 people 领域的 offboard_staff；"
+            "该操作是保留历史的离职停用，不是删除企业微信组织通讯录。"
             "只有本轮工具返回 ok=false 时，才可以说明本轮未成功。"
             "写入成功必须来自工具 ok=true 且 writeback_verified=true；不要伪造成功。",
             "verified_write_contract",

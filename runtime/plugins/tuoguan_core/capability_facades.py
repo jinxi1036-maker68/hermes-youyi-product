@@ -7,12 +7,12 @@ import json
 from typing import Any, Callable
 
 
-CAPABILITY_MANIFEST_VERSION = "xiaoyou-capabilities-v1-23"
+CAPABILITY_MANIFEST_VERSION = "xiaoyou-capabilities-v1.1-23"
 
 
 DOMAIN_OPERATIONS: dict[str, tuple[str, ...]] = {
     "people": (
-        "context", "query_staff_directory", "resolve_student_responsibility",
+        "context", "query_staff_directory", "offboard_staff", "resolve_student_responsibility",
         "query_profile_candidates", "submit_profile_candidate", "submit_profile_candidate_correction",
     ),
     "students": (
@@ -93,6 +93,10 @@ DOMAIN_ROLES = {
     "health": ("boss", "manager"),
 }
 
+OPERATION_ROLES = {
+    "offboard_staff": ("boss",),
+}
+
 
 # These are the small, high-frequency abilities that a real employee needs to
 # find immediately.  The domain facades remain available for the long tail,
@@ -114,7 +118,7 @@ FAST_PATH_TOOL_NAMES = (
 
 _WRITE_PREFIXES = (
     "register_", "create_", "record_", "change_", "report_", "submit_", "update_",
-    "cancel_", "confirm_", "execute_", "review_learning_",
+    "cancel_", "confirm_", "execute_", "offboard_", "review_learning_",
 )
 
 
@@ -125,7 +129,7 @@ def operation_manifest() -> dict[str, Any]:
             write = operation.startswith(_WRITE_PREFIXES)
             operations[operation] = {
                 "domain": domain,
-                "roles": list(DOMAIN_ROLES[domain]),
+                "roles": list(OPERATION_ROLES.get(operation, DOMAIN_ROLES[domain])),
                 "risk": "write_guarded" if write else "read_only",
                 "access": "write" if write else "read",
                 "required_evidence": "execution_receipt" if write else "trusted_tool_result",
@@ -171,6 +175,11 @@ def _domain_schema(domain: str, legacy: dict[str, tuple[dict[str, Any], Callable
             text += " optional=" + ",".join(optional)
         contracts.append(text)
     selection_hint = {
+        "people": (
+            "选择提示：查询人员、姓名、企业微信状态用 query_staff_directory；"
+            "老板明确要求将一位已离职员工删除、移除或停用时用 offboard_staff。"
+            "offboard_staff 是保留历史的离职停用，不会伪装成已删除企业微信通讯录成员。"
+        ),
         "tasks": (
             "选择提示：老师汇报进展、结果或完成证据用 update_task；不会做或不知道怎么说用 current_task_guidance；"
             "开始当前最高优先级任务或继续唯一开放任务用 next_task；取消或停止提醒用 cancel_task；"

@@ -59,6 +59,7 @@ from .operational_facts import (
     submit_operational_fact_candidate,
 )
 from .staff_directory import query_staff_directory as build_staff_directory_report
+from .staff_administration import offboard_staff as offboard_staff_member, staff_is_offboarded
 from .active_work_context import query_active_work_context as build_active_work_context
 from .staff_conversation_activity import query_staff_conversation_activity as build_staff_conversation_activity
 from .self_evolution import query_self_evolution_ledger as build_self_evolution_ledger
@@ -848,6 +849,7 @@ class TuoguanToolService:
             "create_trial_lead",
             "create_task",
             "cancel_task",
+            "offboard_staff",
             "update_task",
             "report_safety_event",
             "change_summer_points",
@@ -1458,6 +1460,8 @@ class TuoguanToolService:
             return denied
         if not self.permissions.can_manage_tasks(self.identity):
             return self._error("permission_denied", "只有老板或店长可以创建并分配任务。")
+        if staff_is_offboarded(self.store, assignee_user_id):
+            return self._error("target_staff_inactive", "该员工已经离职停用，不能再分配任务或发送提醒。")
         if goal_id:
             from .goal_operator import find_active_goal
             from .proactive_work import GOAL_TASK_HIGH_RISK_TERMS, effective_proactive_permission, verify_goal_task_responsibility
@@ -3089,6 +3093,43 @@ class TuoguanToolService:
             limit=limit,
         )
         return self._ok("query_staff_directory", data=result, message=result.get("rendered_text", ""))
+
+    def offboard_staff(
+        self,
+        *,
+        operation_id: str,
+        target_name: str = "",
+        target_user_id: str = "",
+        reason: str = "",
+    ) -> dict[str, Any]:
+        denied = self._approved()
+        if denied:
+            return denied
+        if self.identity.role != "boss":
+            return self._error("permission_denied", "只有老板可以办理人员离职停用。")
+        raw_text = self._trusted_runtime_raw_text("offboard_staff")
+        if raw_text and not any(term in raw_text for term in ("离职", "停用", "删除", "移除", "开除", "不干了", "不用他了", "不用她了")):
+            return self._error("missing_explicit_offboarding_intent", "本轮没有明确的离职、停用、删除或移除人员要求，未修改权限。")
+
+        def execute() -> dict[str, Any]:
+            result = offboard_staff_member(
+                self.store,
+                identity=self.identity,
+                target_name=target_name,
+                target_user_id=target_user_id,
+                reason=reason,
+                source_text=raw_text,
+            )
+            if not result.get("ok"):
+                return result
+            data = result.get("data") if isinstance(result.get("data"), dict) else {}
+            return self._ok(
+                "offboard_staff",
+                data=data,
+                message=str(result.get("message") or "人员已完成离职停用。"),
+            )
+
+        return self._operation(operation_id, "offboard_staff", execute)
 
     def query_person_workstyle_profile(
         self,

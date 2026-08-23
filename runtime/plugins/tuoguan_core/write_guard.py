@@ -83,6 +83,7 @@ PROTECTED_BUSINESS_FILES = {
     "turn_traces.jsonl",
     "tool_operations.json",
     "teacher_coaching_events.jsonl",
+    "staff_offboarding_events.jsonl",
 }
 
 

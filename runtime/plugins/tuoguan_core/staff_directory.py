@@ -40,7 +40,7 @@ def query_staff_directory(
     for entry in entries:
         if requested_role and str(entry.get("role") or "") != requested_role:
             continue
-        if not include_inactive and not (entry.get("in_wecom_directory") or entry.get("is_whitelisted")):
+        if not include_inactive and not entry.get("is_active_staff"):
             continue
         score = _match_score(entry, query_keys)
         if query_keys and score <= 0:
@@ -53,7 +53,7 @@ def query_staff_directory(
         for entry in entries:
             if requested_role and str(entry.get("role") or "") != requested_role:
                 continue
-            if not include_inactive and not (entry.get("in_wecom_directory") or entry.get("is_whitelisted")):
+            if not include_inactive and not entry.get("is_active_staff"):
                 continue
             item = deepcopy(entry)
             item["match_score"] = 0
@@ -125,7 +125,14 @@ def _build_entries(store: TuoguanStore) -> list[dict[str, Any]]:
         )
         in_directory = bool(member)
         is_whitelisted = user_id in allowed or user_id in supers or user_id in roles
-        status = _membership_status(in_directory=in_directory, is_whitelisted=is_whitelisted, member=member)
+        employment_status = str(profile.get("status") or "active").strip().lower()
+        is_active_staff = employment_status not in {"inactive", "left", "offboarded", "terminated", "离职", "停用"} and bool(in_directory or is_whitelisted)
+        status = _membership_status(
+            in_directory=in_directory,
+            is_whitelisted=is_whitelisted,
+            member=member,
+            employment_status=employment_status,
+        )
         entry = {
             "user_id": user_id,
             "business_name": business_name,
@@ -138,6 +145,8 @@ def _build_entries(store: TuoguanStore) -> list[dict[str, Any]]:
             "in_wecom_directory": in_directory,
             "is_whitelisted": is_whitelisted,
             "membership_status": status,
+            "employment_status": employment_status,
+            "is_active_staff": is_active_staff,
             "department_names": list(member.get("department_names") or []),
             "source_evidence": _evidence(user_id, profile, member, aliases_by_user.get(user_id, []), fact, is_whitelisted),
         }
@@ -280,7 +289,9 @@ def _role_for(user_id: str, profile: dict[str, Any], member: dict[str, Any], rol
     return "staff"
 
 
-def _membership_status(*, in_directory: bool, is_whitelisted: bool, member: dict[str, Any]) -> str:
+def _membership_status(*, in_directory: bool, is_whitelisted: bool, member: dict[str, Any], employment_status: str = "active") -> str:
+    if str(employment_status or "").lower() in {"inactive", "left", "offboarded", "terminated", "离职", "停用"}:
+        return "已离职停用（保留历史）"
     if in_directory and is_whitelisted:
         return "企业微信在职且已授权"
     if in_directory:
