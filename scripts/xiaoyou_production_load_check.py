@@ -249,6 +249,7 @@ def _canonical_link_topology(base: Path) -> dict[str, Any]:
     groups = {
         "tuoguan_core": [_runtime_dir(base), *_package_dirs(base)],
         "wecom": [_wecom_runtime_dir(base), *_wecom_package_dirs(base)],
+        "scripts": [base / "scripts"],
     }
     output: dict[str, Any] = {"groups": {}}
     all_canonical = True

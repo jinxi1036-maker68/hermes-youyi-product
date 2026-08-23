@@ -35,6 +35,7 @@ def _targets(base: Path) -> list[tuple[str, Path, str]]:
         ("tuoguan_runtime", base / "runtime/plugins/tuoguan_core", "runtime/plugins/tuoguan_core"),
         ("tuoguan_home", base / "home-proddata/plugins/tuoguan_core", "runtime/plugins/tuoguan_core"),
         ("wecom_runtime", base / "runtime/plugins/platforms/wecom", "runtime/plugins/platforms/wecom"),
+        ("scripts", base / "scripts", "scripts"),
     ]
     for root_name in ("lib", "lib64"):
         for package_dir in sorted((base / ".venv" / root_name).glob("python*/site-packages/plugins")):

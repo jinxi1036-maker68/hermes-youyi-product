@@ -59,6 +59,8 @@ def test_release_installer_blocks_unknown_production_modules(tmp_path):
     assert plan["error"] == "unknown_existing_modules"
     assert plan["unknown_existing_file_count"] == 1
     assert plan["applied"] is False
+    scripts_target = next(item for item in plan["targets"] if item["label"] == "scripts")
+    assert scripts_target["source_relative"] == "scripts"
 
 
 def test_release_installer_rolls_back_partial_link_failure(tmp_path, monkeypatch):
