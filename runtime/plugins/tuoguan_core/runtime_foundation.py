@@ -83,6 +83,7 @@ WRITE_TOOLS = {
     "tuoguan_submit_agent_delegation_result",
     "tuoguan_update_agent_delegation_decision",
     "tuoguan_update_attention_thread",
+    "tuoguan_review_project_opportunity",
 }
 
 MODEL_SELECTED_READ_TOOLS = {
@@ -135,6 +136,7 @@ MODEL_SELECTED_READ_TOOLS = {
     "tuoguan_query_competitor_profiles",
     "tuoguan_query_external_learning_brief",
     "tuoguan_query_social_market_research",
+    "tuoguan_query_project_opportunities",
     "tuoguan_query_value_progress_ledger",
     "tuoguan_query_agent_delegations",
     "tuoguan_query_agent_delegation_results",
@@ -809,6 +811,7 @@ def write_authorization_for(user_id: str, operation: str) -> dict[str, str] | No
         "submit_agent_delegation_result",
         "update_agent_delegation_decision",
         "update_attention_thread",
+        "review_project_opportunity",
     }
     if str(operation or "") not in supported_write_operations:
         return None

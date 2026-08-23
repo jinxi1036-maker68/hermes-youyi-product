@@ -64,6 +64,10 @@ from .active_work_context import query_active_work_context as build_active_work_
 from .staff_conversation_activity import query_staff_conversation_activity as build_staff_conversation_activity
 from .self_evolution import query_self_evolution_ledger as build_self_evolution_ledger
 from .social_market_research import query_social_market_research as build_social_market_research
+from .project_opportunities import (
+    query_project_opportunities as build_project_opportunities,
+    review_project_opportunity as review_project_opportunity_state,
+)
 from .proactive_work import (
     execute_relationship_touch as execute_relationship_touch_state,
     query_goal_actions as build_goal_actions,
@@ -886,6 +890,7 @@ class TuoguanToolService:
             "update_relationship_touch",
             "submit_goal_action",
             "update_attention_thread",
+            "review_project_opportunity",
         }
         if compact_raw in {
             "你再试一下",
@@ -4515,6 +4520,73 @@ class TuoguanToolService:
         if not result.get("ok"):
             return self._error(str(result.get("error") or "social_market_research_unavailable"), str(result.get("message") or "社交平台市场观察查询失败。"))
         return self._ok("query_social_market_research", data=result, message=str(result.get("rendered_text") or ""))
+
+    def query_project_opportunities(
+        self,
+        *,
+        project_id: str = "",
+        status: str = "",
+        include_internal: bool = False,
+        limit: int = 20,
+    ) -> dict[str, Any]:
+        denied = self._approved()
+        if denied:
+            return denied
+        if self.identity.role != "boss":
+            return self._error("permission_denied", "只有老板可以查询新项目机会候选。")
+        result = build_project_opportunities(
+            self.store,
+            project_id=str(project_id or "").strip(),
+            status=str(status or "").strip(),
+            include_internal=bool(include_internal),
+            limit=max(1, min(int(limit or 20), 100)),
+        )
+        return self._ok(
+            "query_project_opportunities",
+            data=result,
+            message=str(result.get("rendered_text") or ""),
+        )
+
+    def review_project_opportunity(
+        self,
+        *,
+        opportunity_id: str,
+        decision: str,
+        operation_id: str,
+        note: str = "",
+    ) -> dict[str, Any]:
+        denied = self._approved()
+        if denied:
+            return denied
+        if self.identity.role != "boss":
+            return self._error("permission_denied", "只有老板可以审核新项目机会候选。")
+
+        def execute() -> dict[str, Any]:
+            result = review_project_opportunity_state(
+                self.store,
+                opportunity_id=str(opportunity_id or "").strip(),
+                decision=str(decision or "").strip(),
+                actor_user_id=self.identity.canonical_user_id,
+                operation_id=str(operation_id or "").strip(),
+                note=str(note or "").strip(),
+            )
+            if not result.get("ok"):
+                return result
+            candidate = result.get("candidate") if isinstance(result.get("candidate"), dict) else {}
+            messages = {
+                "validation_approved": "已批准验证这个机会；这不等于正式立项，后续人员联系仍受主动授权约束。",
+                "deferred": "已暂缓这个机会，不会据此创建验证任务。",
+                "dismissed": "已驳回这个机会，30天内不会重复进入决策。",
+                "decision_pending": "已重新打开这个机会，仍需基于当前证据决定是否验证。",
+                "evidence_ready": "已重新打开这个机会，等待小优补齐验证方案。",
+            }
+            return self._ok(
+                "review_project_opportunity",
+                data={"candidate": candidate, "writeback_verified": bool(result.get("writeback_verified"))},
+                message=messages.get(str(candidate.get("status") or ""), "项目机会状态已更新。"),
+            )
+
+        return self._operation(operation_id, "review_project_opportunity", execute)
 
     def submit_industry_learning_candidate(
         self,

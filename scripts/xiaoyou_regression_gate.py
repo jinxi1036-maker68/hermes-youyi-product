@@ -36,6 +36,8 @@ PY_COMPILE_TARGETS = [
     "runtime/plugins/tuoguan_core/self_evolution.py",
     "runtime/plugins/tuoguan_core/workstyle_profiles.py",
     "runtime/plugins/tuoguan_core/social_market_research.py",
+    "runtime/plugins/tuoguan_core/project_opportunities.py",
+    "scripts/project_opportunity_scan.py",
     "scripts/tenant_initializer.py",
     "scripts/tenant_acceptance_check.py",
     "scripts/xiaoyou_regression_gate.py",

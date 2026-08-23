@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections import Counter, defaultdict
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 import json
 import os
 import uuid
@@ -30,6 +30,7 @@ from .programs import (
     student_program_ids,
     user_program_ids,
 )
+from .project_opportunities import query_project_opportunities
 from .tasks import build_task_contract, closure_missing_fields
 
 
@@ -51,14 +52,8 @@ _MONTHLY_PARENT_TRIGGER = "monthly_parent_communication"
 _RENEWAL_30_TRIGGER = "renewal_30_evidence"
 _RENEWAL_15_TRIGGER = "renewal_15_communication"
 _RENEWAL_7_TRIGGER = "renewal_7_confirmation"
-_OPPORTUNITY_KEYWORDS = {
-    "计算专项": ("计算", "口算", "数学", "错题", "应用题"),
-    "练字专项": ("练字", "书写", "字迹", "卷面", "抄写"),
-    "阅读专项": ("阅读", "作文", "语文", "理解", "表达"),
-    "英语背诵": ("英语", "单词", "背诵", "朗读", "默写"),
-    "习惯培养": ("专注", "拖拉", "坐姿", "习惯", "自律"),
-}
 _ACTION_PRIORITY_RANK = {"S": 0, "A": 1, "B": 2, "C": 3}
+_BUSINESS_TIMEZONE = timezone(timedelta(hours=8))
 
 
 def _float_env(name: str, default: float) -> float:
@@ -94,6 +89,12 @@ def _performance_rules() -> dict[str, Any]:
     }
 
 
+def _business_naive(value: datetime) -> datetime:
+    if value.tzinfo is None:
+        return value
+    return value.astimezone(_BUSINESS_TIMEZONE).replace(tzinfo=None)
+
+
 def _parse_dt(value: Any) -> datetime | None:
     if value in (None, ""):
         return None
@@ -102,9 +103,7 @@ def _parse_dt(value: Any) -> datetime | None:
         parsed = datetime.fromisoformat(text)
     except ValueError:
         return None
-    if parsed.tzinfo is not None:
-        parsed = parsed.astimezone().replace(tzinfo=None)
-    return parsed
+    return _business_naive(parsed)
 
 
 def _timestamp(item: dict[str, Any]) -> datetime | None:
@@ -1882,26 +1881,6 @@ def _teacher_dashboard(
     }
 
 
-def _opportunities(records: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    cards: list[dict[str, Any]] = []
-    corpus = [(_record_student(record), " ".join(_record_tags(record)) + " " + _record_content(record)) for record in records]
-    for name, keywords in _OPPORTUNITY_KEYWORDS.items():
-        matched_students = {
-            student
-            for student, text in corpus
-            if student and any(keyword in text for keyword in keywords)
-        }
-        if matched_students:
-            cards.append(
-                {
-                    "name": name,
-                    "student_count": len(matched_students),
-                    "sample_students": sorted(matched_students)[:6],
-                }
-            )
-    return sorted(cards, key=lambda item: item["student_count"], reverse=True)[:8]
-
-
 def _data_quality_report(
     *,
     students: dict[str, dict[str, Any]],
@@ -2199,6 +2178,7 @@ def _boss_dashboard(
     payroll_snapshot: dict[str, Any] | None,
     now: datetime,
     store: TuoguanStore,
+    project_id: str = "",
 ) -> dict[str, Any]:
     week_start = now - timedelta(days=7)
     scoped_students = {
@@ -2359,6 +2339,18 @@ def _boss_dashboard(
         2,
     )
     learning_candidates = list_pending_learning_candidates(store)
+    project_opportunities = (
+        query_project_opportunities(store, project_id=project_id, limit=3, now=now)
+        if role == "boss"
+        else {
+            "ok": True,
+            "data_state": "empty",
+            "source_updated_at": "",
+            "visible_count": 0,
+            "items": [],
+            "boundary": "只有老板可以查看新项目机会候选。",
+        }
+    )
     summary = {
         "student_count": student_count,
         "today_records": len(today_records),
@@ -2515,7 +2507,8 @@ def _boss_dashboard(
         "data_quality": data_quality,
         "renewal_funnel": renewal_funnel,
         "rule_center": {} if is_manager else rule_center,
-        "opportunities": _opportunities(scoped_records),
+        "project_opportunities": project_opportunities,
+        "opportunities": [],
         "learning": {
             "pending_count": len(learning_candidates),
             "recent_candidates": [
@@ -2560,7 +2553,7 @@ def build_dashboard_snapshot(
     store: TuoguanStore,
     now: datetime | None = None,
 ) -> dict[str, Any]:
-    timestamp = now or datetime.now()
+    timestamp = _business_naive(now or datetime.now())
     students = _load_students(store)
     records = _load_records(store)
     tasks = store.load_tasks()
@@ -2701,6 +2694,7 @@ def build_dashboard_snapshot(
             payroll_snapshot=payroll_snapshot if program_id == REGULAR_PROGRAM_ID else {},
             now=timestamp,
             store=store,
+            project_id=program_id,
         )
         project_dashboard["program_views"] = boss_dashboard["program_views"]
         project_dashboard["program_role"] = "global_owner"

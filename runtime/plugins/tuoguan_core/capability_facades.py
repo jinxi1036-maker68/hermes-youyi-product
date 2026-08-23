@@ -7,7 +7,7 @@ import json
 from typing import Any, Callable
 
 
-CAPABILITY_MANIFEST_VERSION = "xiaoyou-capabilities-v1.1-23"
+CAPABILITY_MANIFEST_VERSION = "xiaoyou-capabilities-v1.2-23"
 
 
 DOMAIN_OPERATIONS: dict[str, tuple[str, ...]] = {
@@ -61,6 +61,7 @@ DOMAIN_OPERATIONS: dict[str, tuple[str, ...]] = {
         "query_self_evolution_ledger", "query_industry_learning_candidates",
         "query_external_research_runs", "query_market_research_candidates", "query_competitor_profiles",
         "query_external_learning_brief", "query_social_market_research",
+        "query_project_opportunities", "review_project_opportunity",
         "submit_industry_learning_candidate", "submit_learning_candidate", "list_learning_candidates",
         "review_learning_candidate",
     ),
@@ -95,6 +96,8 @@ DOMAIN_ROLES = {
 
 OPERATION_ROLES = {
     "offboard_staff": ("boss",),
+    "query_project_opportunities": ("boss",),
+    "review_project_opportunity": ("boss",),
 }
 
 
@@ -118,7 +121,7 @@ FAST_PATH_TOOL_NAMES = (
 
 _WRITE_PREFIXES = (
     "register_", "create_", "record_", "change_", "report_", "submit_", "update_",
-    "cancel_", "confirm_", "execute_", "offboard_", "review_learning_",
+    "cancel_", "confirm_", "execute_", "offboard_", "review_learning_", "review_project_",
 )
 
 
@@ -195,7 +198,9 @@ def _domain_schema(domain: str, legacy: dict[str, tuple[dict[str, Any], Callable
         ),
         "learning": (
             "选择提示：公开行业学习先查询有来源的候选或研究记录；检查物流快递、资金托管等同词污染时优先用 "
-            "query_industry_learning_candidates，并明确说明无关内容已隔离、不生成教培趋势。"
+            "query_industry_learning_candidates，并明确说明无关内容已隔离、不生成教培趋势。老板询问内部运营中是否发现"
+            "数学提升、阅读、书写、习惯等新服务项目时用 query_project_opportunities；只有老板明确批准验证、暂缓、驳回或"
+            "重新打开某个候选时才用 review_project_opportunity。机会候选不等于正式立项。"
         ),
     }.get(domain, "")
     return {

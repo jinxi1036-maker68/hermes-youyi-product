@@ -1420,6 +1420,32 @@ TUOGUAN_QUERY_SOCIAL_MARKET_RESEARCH_SCHEMA = _schema(
     ["user_id"],
 )
 
+TUOGUAN_QUERY_PROJECT_OPPORTUNITIES_SCHEMA = _schema(
+    "老板只读查询小优基于最近30天内部运营证据形成的新项目机会候选。结果会明确证据强度、待验证事实和边界；候选不等于正式立项。",
+    _identity_props({
+        "project_id": {"type": "string", "description": "可选，限定一个项目。"},
+        "status": {"type": "string", "description": "可选，按候选状态筛选。"},
+        "include_internal": {"type": "boolean", "default": False, "description": "仅老板排查时查看未达到展示门槛的内部观察。"},
+        "limit": {"type": "integer", "default": 20},
+    }),
+    ["user_id"],
+)
+
+TUOGUAN_REVIEW_PROJECT_OPPORTUNITY_SCHEMA = _schema(
+    "老板审核新项目机会候选。批准验证不等于正式立项，也不会绕过主动联系授权；所有写入必须幂等并写后反查。",
+    _identity_props({
+        "opportunity_id": {"type": "string", "description": "项目机会候选编号。"},
+        "decision": {
+            "type": "string",
+            "enum": ["approve_validation", "defer", "dismiss", "reopen"],
+            "description": "批准验证、暂缓、驳回或重新打开。",
+        },
+        "note": {"type": "string", "description": "可选，老板说明。"},
+        "operation_id": {"type": "string", "description": "当前消息id或幂等键。"},
+    }),
+    ["user_id", "opportunity_id", "decision", "operation_id"],
+)
+
 TUOGUAN_SUBMIT_INDUSTRY_LEARNING_CANDIDATE_SCHEMA = _schema(
     "提交带来源的行业学习候选。老板审核前不会进入正式手册、长期记忆或优益机构事实；写入必须提供 operation_id。",
     _identity_props({
@@ -1544,6 +1570,8 @@ TOOLS = (
     ("tuoguan_query_competitor_profiles", TUOGUAN_QUERY_COMPETITOR_PROFILES_SCHEMA, _handler("query_competitor_profiles")),
     ("tuoguan_query_external_learning_brief", TUOGUAN_QUERY_EXTERNAL_LEARNING_BRIEF_SCHEMA, _handler("query_external_learning_brief")),
     ("tuoguan_query_social_market_research", TUOGUAN_QUERY_SOCIAL_MARKET_RESEARCH_SCHEMA, _handler("query_social_market_research")),
+    ("tuoguan_query_project_opportunities", TUOGUAN_QUERY_PROJECT_OPPORTUNITIES_SCHEMA, _handler("query_project_opportunities")),
+    ("tuoguan_review_project_opportunity", TUOGUAN_REVIEW_PROJECT_OPPORTUNITY_SCHEMA, _handler("review_project_opportunity")),
     ("tuoguan_submit_industry_learning_candidate", TUOGUAN_SUBMIT_INDUSTRY_LEARNING_CANDIDATE_SCHEMA, _handler("submit_industry_learning_candidate")),
     ("tuoguan_generate_autonomous_recovery_report", TUOGUAN_GENERATE_AUTONOMOUS_RECOVERY_REPORT_SCHEMA, _handler("generate_autonomous_recovery_report")),
     ("tuoguan_generate_due_wakeup_candidates", TUOGUAN_GENERATE_DUE_WAKEUP_CANDIDATES_SCHEMA, _handler("generate_due_wakeup_candidates")),

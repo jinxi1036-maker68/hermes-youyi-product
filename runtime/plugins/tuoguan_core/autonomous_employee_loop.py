@@ -70,6 +70,14 @@ from .self_evolution import (
 )
 from .staff_directory import query_staff_directory
 from .social_market_research import query_social_market_research
+from .project_opportunities import (
+    PROJECT_OPPORTUNITY_EVENTS_FILE,
+    mark_stale_project_opportunities,
+    project_opportunity_scan_due,
+    record_project_opportunity_assessment,
+    record_project_opportunity_scan_run,
+    scan_project_opportunity_evidence,
+)
 from .proactive_work import (
     GOAL_ACTIONS_FILE,
     PROACTIVE_AUTHORIZATIONS_FILE,
@@ -139,6 +147,7 @@ _ALLOWED_FILES = {
     SELF_EVOLUTION_EVENTS_FILE,
     AGENT_DELEGATIONS_FILE,
     AGENT_DELEGATION_RESULTS_FILE,
+    PROJECT_OPPORTUNITY_EVENTS_FILE,
 }
 
 
@@ -220,6 +229,7 @@ def run_autonomous_employee_loop(
 
 
 def build_employee_loop_materials(store: TuoguanStore, *, identity: UserIdentity, timestamp: datetime, wakeup_summary: dict[str, Any] | None = None) -> dict[str, Any]:
+    cadence = _work_cadence(timestamp)
     onboarding = _query_onboarding(store)
     active_goals = query_active_goal_work_state(store, identity=identity, now=timestamp)
     raw_work_items = query_hermes_work_items(store, identity=identity, include_closed=False, limit=20)
@@ -256,7 +266,22 @@ def build_employee_loop_materials(store: TuoguanStore, *, identity: UserIdentity
     term_state = (wakeup_summary or {}).get("term_state") or _fallback_term_state(store, timestamp)
     deferred_items = (wakeup_summary or {}).get("deferred_items") or []
     new_term_readiness = (wakeup_summary or {}).get("new_term_readiness") or {}
-    cadence = _work_cadence(timestamp)
+    opportunity_scan_due = (
+        str(cadence.get("mode") or "") in {"evening_review", "night_read_only_review"}
+        and project_opportunity_scan_due(store, now=timestamp)
+    )
+    project_opportunity_evidence = (
+        scan_project_opportunity_evidence(store, now=timestamp, limit=3)
+        if opportunity_scan_due
+        else {
+            "ok": True,
+            "dry_run": True,
+            "scan_due": False,
+            "evaluated_bundle_count": 0,
+            "strong_bundle_count": 0,
+            "bundles": [],
+        }
+    )
     public_identity = _public_identity_material(store)
     trusted_staff_identities = _trusted_staff_identity_material(store)
     materials = {
@@ -281,6 +306,7 @@ def build_employee_loop_materials(store: TuoguanStore, *, identity: UserIdentity
             "Public industry learning is advice material with sources; never treat it as confirmed institution fact before owner review.",
             "External learning and market research are evidence candidates. Use them to improve advice, but do not copy them into institution facts or long-term memory until the owner reviews them.",
             "Social market research from Xiaohongshu/Douyin is only external platform observation. It may inform market awareness, but it is not a confirmed Youyi fact and never authorizes publishing, following, liking, or commenting.",
+            "Project opportunity evidence is an internal 30-day evidence bundle. Only strong bundles may become owner-visible candidates, and even then they are not formal projects. Never contact staff or create validation tasks before owner approval.",
             "Self-evolution is Xiaoyou's employee growth loop: daytime work, evening review, night learning, next-day application. It is internal candidate material, not a Router.",
             "Low-risk personal service preferences and self-corrections may inform future context only after writeback evidence. Medium/high-risk policy, salary, permissions, parent outreach, handbook, or institution-rule changes remain pending review.",
             "If this wakeup is evening or night, inspect self_evolution_brief, employee_scorecard, business_events, action_executions, workstyle preferences, proactive_work_radar, and multi_agent_brief. Save concise evolution_candidates for what Xiaoyou learned, what it must not repeat, and what should guide tomorrow.",
@@ -316,6 +342,7 @@ def build_employee_loop_materials(store: TuoguanStore, *, identity: UserIdentity
         "industry_learning_candidates": _compact_for_model(industry_learning),
         "external_learning_brief": _compact_for_model(external_learning),
         "social_market_research": _compact_for_model(social_market),
+        "project_opportunity_evidence": _compact_for_model(project_opportunity_evidence, max_chars=7000),
         "value_progress_ledger": _compact_for_model(value_progress),
         "attention_threads": _compact_for_model(attention_threads),
         "multi_agent_brief": _compact_for_model(multi_agent),
@@ -330,7 +357,7 @@ def build_employee_loop_materials(store: TuoguanStore, *, identity: UserIdentity
         "deferred_items": _compact_for_model(deferred_items),
         "new_term_readiness": _compact_for_model(new_term_readiness),
         "patrol_counts": _compact_for_model(patrol_counts),
-        "allowed_internal_outputs": ["observations", "work_item_updates", "questions_to_humans", "boss_attention_candidates", "relationship_touch_candidates", "relationship_touch_executions", "goal_action_submissions", "goal_action_decisions", "institution_fact_gaps", "value_progress_entries", "agent_delegation_decisions", "evolution_candidates", "self_review", "stop_or_wait_reason"],
+        "allowed_internal_outputs": ["observations", "work_item_updates", "questions_to_humans", "boss_attention_candidates", "relationship_touch_candidates", "relationship_touch_executions", "goal_action_submissions", "goal_action_decisions", "institution_fact_gaps", "value_progress_entries", "agent_delegation_decisions", "project_opportunity_assessments", "evolution_candidates", "self_review", "stop_or_wait_reason"],
         "forbidden_external_outputs": sorted(_FORBIDDEN_EFFECT_KEYS),
     }
     base_onboarding = onboarding.get("data") or onboarding if isinstance(onboarding, dict) else {}
@@ -351,6 +378,8 @@ def build_employee_loop_materials(store: TuoguanStore, *, identity: UserIdentity
         "industry_learning_candidate_count": int(industry_learning.get("candidate_count") or 0) if isinstance(industry_learning, dict) else 0,
         "external_research_run_count": int(((external_learning.get("external_research_runs") or {}).get("run_count") or 0)) if isinstance(external_learning, dict) else 0,
         "social_market_candidate_count": int(social_market.get("candidate_count") or 0) if isinstance(social_market, dict) else 0,
+        "project_opportunity_scan_due_count": 1 if opportunity_scan_due else 0,
+        "project_opportunity_strong_bundle_count": int(project_opportunity_evidence.get("strong_bundle_count") or 0),
         "value_progress_entry_count": int(value_progress.get("entry_count") or 0) if isinstance(value_progress, dict) else 0,
         "work_mode": str(cadence.get("mode") or ""),
         "owner_attention_allowed": bool(cadence.get("owner_attention_allowed")),
@@ -617,6 +646,8 @@ def validate_employee_decision(raw: dict[str, Any]) -> dict[str, Any]:
         "institution_fact_gaps": _list_of_dicts(cleaned.get("institution_fact_gaps"), 8),
         "value_progress_entries": _list_of_dicts(cleaned.get("value_progress_entries"), 6),
         "agent_delegation_decisions": _list_of_dicts(cleaned.get("agent_delegation_decisions"), 2),
+        "project_opportunity_assessments": _list_of_dicts(cleaned.get("project_opportunity_assessments"), 3),
+        "project_opportunity_scan": _dict(cleaned.get("project_opportunity_scan")),
         "evolution_candidates": _list_of_dicts(cleaned.get("evolution_candidates"), 8),
         "self_review": _dict(cleaned.get("self_review")),
         "external_actions": [],
@@ -715,6 +746,23 @@ def validate_employee_decision(raw: dict[str, Any]) -> dict[str, Any]:
         if _limit(item.get("goal_action_id"), 120)
         and _limit(item.get("decision"), 40) in {"execute", "wait", "adjust", "stop", "escalate"}
     ][:3]
+    decision["project_opportunity_assessments"] = [
+        {
+            "bundle_id": _limit(item.get("bundle_id"), 160),
+            "worth_validating": bool(item.get("worth_validating")),
+            "hypothesis": _truthful_internal_text(item.get("hypothesis"), 300),
+            "reasoning": _truthful_internal_text(item.get("reasoning"), 600),
+            "missing_facts": _list_any(item.get("missing_facts"), 8),
+            "validation_plan": _dict(item.get("validation_plan")),
+        }
+        for item in decision.get("project_opportunity_assessments") or []
+        if _limit(item.get("bundle_id"), 160)
+    ][:3]
+    scan = decision.get("project_opportunity_scan") if isinstance(decision.get("project_opportunity_scan"), dict) else {}
+    decision["project_opportunity_scan"] = {
+        "status": _limit(scan.get("status") or "not_due", 40),
+        "error": _limit(scan.get("error"), 500),
+    }
     decision["evolution_candidates"] = _normalize_evolution_candidates(decision.get("evolution_candidates") or [])
     forbidden_text = json.dumps(cleaned, ensure_ascii=False).lower()
     if any(key.lower() in forbidden_text for key in _FORBIDDEN_EFFECT_KEYS):
@@ -1169,6 +1217,54 @@ def materialize_employee_decision(
         )
         latest_owner_contact_at = _latest_owner_contact_at(materials)
         cadence_mode = str(((materials or {}).get("work_cadence") or {}).get("mode") or "")
+        opportunity_material = (
+            (materials or {}).get("project_opportunity_evidence")
+            if isinstance((materials or {}).get("project_opportunity_evidence"), dict)
+            else {}
+        )
+        bundles_by_id = {
+            str(item.get("bundle_id") or ""): item
+            for item in opportunity_material.get("bundles") or []
+            if isinstance(item, dict) and str(item.get("bundle_id") or "")
+        }
+        opportunity_scan = decision.get("project_opportunity_scan") if isinstance(decision.get("project_opportunity_scan"), dict) else {}
+        opportunity_scan_status = str(opportunity_scan.get("status") or "not_due")
+        opportunity_candidate_count = 0
+        if opportunity_scan_status in {"completed", "failed"}:
+            stale_res = mark_stale_project_opportunities(
+                store,
+                operation_id=f"{op_prefix}:project_opportunity_stale",
+                now=timestamp,
+            )
+            if stale_res.get("stale_count"):
+                writes.append(_write_result("project_opportunity_stale", stale_res))
+            for idx, assessment in enumerate(decision.get("project_opportunity_assessments") or []):
+                if not isinstance(assessment, dict):
+                    continue
+                bundle = bundles_by_id.get(str(assessment.get("bundle_id") or ""))
+                if not bundle:
+                    continue
+                res = record_project_opportunity_assessment(
+                    store,
+                    evidence_bundle=bundle,
+                    judgement=assessment,
+                    actor_user_id=identity.canonical_user_id,
+                    operation_id=f"{op_prefix}:project_opportunity:{idx}",
+                    now=timestamp,
+                )
+                writes.append(_write_result("project_opportunity_candidate", res))
+                if res.get("ok") and not res.get("suppressed"):
+                    opportunity_candidate_count += 1
+            scan_res = record_project_opportunity_scan_run(
+                store,
+                status=opportunity_scan_status,
+                operation_id=f"{op_prefix}:project_opportunity_scan",
+                evaluated_bundle_count=int(opportunity_material.get("evaluated_bundle_count") or 0),
+                candidate_count=opportunity_candidate_count,
+                error=str(opportunity_scan.get("error") or ""),
+                now=timestamp,
+            )
+            writes.append(_write_result("project_opportunity_scan", scan_res))
         ready_evolution_count = 0
         for idx, candidate in enumerate(decision.get("evolution_candidates") or []):
             if not isinstance(candidate, dict):
@@ -1529,6 +1625,40 @@ def _call_model_for_decision(materials: dict[str, Any]) -> dict[str, Any]:
         actions_input,
         max_tokens=1800,
     )
+    opportunity_evidence = payload.get("project_opportunity_evidence")
+    opportunity_bundles = (
+        opportunity_evidence.get("bundles") or []
+        if isinstance(opportunity_evidence, dict)
+        else []
+    )
+    opportunity_due = bool(
+        isinstance(opportunity_evidence, dict)
+        and opportunity_evidence.get("scan_due") is not False
+        and str((payload.get("work_cadence") or {}).get("mode") or "")
+        in {"evening_review", "night_read_only_review"}
+    )
+    if opportunity_due and opportunity_bundles:
+        try:
+            opportunity_review = _request_model_phase(
+                "project_opportunities",
+                _PROJECT_OPPORTUNITY_PROMPT,
+                {
+                    "timestamp": payload.get("timestamp"),
+                    "identity": payload.get("identity"),
+                    "evidence_bundles": opportunity_bundles,
+                },
+                max_tokens=1300,
+            )
+            opportunity_scan = {"status": "completed", "error": ""}
+        except Exception as exc:
+            opportunity_review = {"assessments": []}
+            opportunity_scan = {"status": "failed", "error": _safe_error(exc)}
+    elif opportunity_due:
+        opportunity_review = {"assessments": []}
+        opportunity_scan = {"status": "completed", "error": ""}
+    else:
+        opportunity_review = {"assessments": []}
+        opportunity_scan = {"status": "not_due", "error": ""}
     cadence = str((payload.get("work_cadence") or {}).get("mode") or "")
     if cadence in {"evening_review", "night_read_only_review"}:
         review = _request_model_phase(
@@ -1564,6 +1694,8 @@ def _call_model_for_decision(materials: dict[str, Any]) -> dict[str, Any]:
         "goal_action_decisions": actions.get("goal_action_decisions") or [],
         "value_progress_entries": actions.get("value_progress_entries") or [],
         "agent_delegation_decisions": actions.get("agent_delegation_decisions") or [],
+        "project_opportunity_assessments": opportunity_review.get("assessments") or [],
+        "project_opportunity_scan": opportunity_scan,
         "evolution_candidates": review.get("evolution_candidates") or [],
         "self_review": review.get("self_review") or {},
         "external_actions": [],
@@ -1655,6 +1787,13 @@ _REVIEW_PROMPT = """你是托管机构数字员工小优，本轮只做晚间经
 建议主动找老板、店长或老师时，证据还必须包含当前有效 authorization_id；没有正式授权只能标为 candidate，不能 ready_for_application。
 self_review 也必须带非空 evidence；只能总结本轮真实核验过的材料。没有证据时返回空对象，不得把模型感想写成经验。
 只返回一个精简 JSON 对象，字段固定为 evolution_candidates 和 self_review。evolution_candidates 最多3条；self_review 只保留今天核验、学到、缺少、明日重点和质量分。"""
+
+_PROJECT_OPPORTUNITY_PROMPT = """你是托管机构数字员工小优，本轮只判断内部运营证据是否值得形成新项目机会候选。
+系统已经计算覆盖率、学生数、日期数、教师数和新鲜度门槛。你不能修改这些门槛，也不能用外部热门课程替代内部证据。
+只有 strong_evidence=true 的证据包才可以 worth_validating=true。候选仍不是正式立项，不得声称已经联系员工、创建任务、启动试点或得到老板批准。
+对每个证据包给出简洁假设、判断理由、仍缺事实和低成本验证方案。验证方案必须包含 objective、method、sample_scope、success_evidence、estimated_days、requires_staff_contact。
+如果证据可能只是记录偏差、正向进步或无法形成可交付服务，worth_validating 必须为 false。
+只返回一个 JSON 对象，字段固定为 assessments；最多3条。每条必须原样引用 bundle_id。"""
 
 
 def _load_model_configs() -> list[dict[str, Any]]:
@@ -1819,6 +1958,7 @@ def _model_payload(materials: dict[str, Any]) -> dict[str, Any]:
         "industry_learning_candidates": _compact_for_model(materials.get("industry_learning_candidates"), max_chars=3000),
         "external_learning_brief": _compact_for_model(materials.get("external_learning_brief"), max_chars=3000),
         "social_market_research": _compact_for_model(materials.get("social_market_research"), max_chars=4000),
+        "project_opportunity_evidence": _compact_for_model(materials.get("project_opportunity_evidence"), max_chars=7000),
         "value_progress_ledger": _compact_for_model(materials.get("value_progress_ledger"), max_chars=3000),
         "attention_threads": _compact_for_model(materials.get("attention_threads"), max_chars=3500),
         "multi_agent_brief": _compact_for_model(materials.get("multi_agent_brief"), max_chars=3500),

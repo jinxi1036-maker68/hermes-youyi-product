@@ -27,6 +27,11 @@ from .employee_identity import owner_user_id as _owner_user_id
 from .employee_identity import system_identity as _system_identity
 from .models import UserIdentity
 from .self_evolution import SELF_EVOLUTION_EVENTS_FILE, build_self_evolution_brief, record_self_evolution_application
+from .project_opportunities import (
+    PROJECT_OPPORTUNITY_EVENTS_FILE,
+    mark_opportunity_report_notified,
+    pending_report_opportunity,
+)
 from .store import JSON_NO_CHANGE, TuoguanStore
 from .tenant_context import current_tenant_id
 from .workstyle_profiles import WORKSTYLE_EVENTS_FILE, daily_report_style_for_owner, record_workstyle_application
@@ -102,6 +107,7 @@ def queue_daily_boss_report(
             DAILY_REPORT_RUNS_FILE,
             WORKSTYLE_EVENTS_FILE,
             SELF_EVOLUTION_EVENTS_FILE,
+            PROJECT_OPPORTUNITY_EVENTS_FILE,
         },
     ) as auth:
         outbox_state: dict[str, Any] = {"queued": False, "existing_status": ""}
@@ -129,6 +135,14 @@ def queue_daily_boss_report(
             return outbox[-2000:]
 
         actual_store.update_json(NOTIFICATION_OUTBOX_FILE, [], upsert_daily_report)
+        opportunity_id = str(report.get("project_opportunity_id") or "")
+        if opportunity_id:
+            mark_opportunity_report_notified(
+                actual_store,
+                opportunity_id=opportunity_id,
+                report_id=notification_id,
+                now=timestamp,
+            )
         if not outbox_state["queued"]:
             return {
                 "ok": True,
@@ -309,6 +323,8 @@ def build_daily_boss_report(kind: str, *, store: TuoguanStore | None = None, now
         scope="daily_report",
     )
     staff_voice = query_staff_voice_radar(actual_store, identity=identity, now_at=timestamp.isoformat(timespec="seconds"), since_hours=24, limit=10)
+    report_opportunity = pending_report_opportunity(actual_store, now=timestamp)
+    opportunity_line = _project_opportunity_report_line(report_opportunity)
     attention = query_attention_threads(actual_store, identity=identity, include_closed=False, limit=5)
     items = work.get("items") if isinstance(work.get("items"), list) else []
     open_attention = attention.get("attention_threads") if isinstance(attention.get("attention_threads"), list) else []
@@ -329,14 +345,15 @@ def build_daily_boss_report(kind: str, *, store: TuoguanStore | None = None, now
     source_counts["self_evolution_review_queue_count"] = int(self_evolution.get("review_queue_count") or 0)
     source_counts["staff_voice_signal_count"] = int(staff_voice.get("signal_count") or 0) if isinstance(staff_voice, dict) else 0
     source_counts["staff_voice_high_or_urgent_open_count"] = int(staff_voice.get("high_or_urgent_open_count") or 0) if isinstance(staff_voice, dict) else 0
+    source_counts["project_opportunity_new_count"] = 1 if report_opportunity else 0
     owner_id = _owner_user_id(actual_store)
     workstyle = daily_report_style_for_owner(actual_store, owner_id)
     source_counts["workstyle_preference_count"] = len(workstyle.get("active_preferences") or [])
     if report_kind == "morning":
-        content = _render_morning_report(timestamp, items, waiting_items, open_attention, brief, self_evolution, source_counts, proactivity_health, workstyle, staff_voice)
+        content = _render_morning_report(timestamp, items, waiting_items, open_attention, brief, self_evolution, source_counts, proactivity_health, workstyle, staff_voice, opportunity_line)
         summary = "小优每日早间工作安排"
     else:
-        content = _render_evening_report(timestamp, items, waiting_items, open_attention, brief, self_evolution, source_counts, proactivity_health, workstyle, staff_voice)
+        content = _render_evening_report(timestamp, items, waiting_items, open_attention, brief, self_evolution, source_counts, proactivity_health, workstyle, staff_voice, opportunity_line)
         summary = "小优每日晚间工作日报"
     return {
         "ok": True,
@@ -347,6 +364,7 @@ def build_daily_boss_report(kind: str, *, store: TuoguanStore | None = None, now
         "source_counts": source_counts,
         "applied_workstyle_preferences": deepcopy(workstyle.get("applied_preferences") or []),
         "applied_workstyle_dimensions": deepcopy(workstyle.get("applied_dimensions") or []),
+        "project_opportunity_id": str((report_opportunity or {}).get("opportunity_id") or ""),
         "model_led": False,
         "limits_model": False,
         "auto_effects": _safe_auto_effects(),
@@ -365,6 +383,7 @@ def _render_morning_report(
     proactivity_health: list[str],
     workstyle: dict[str, Any],
     staff_voice: dict[str, Any],
+    opportunity_line: str,
 ) -> str:
     scorecard = brief.get("employee_scorecard") if isinstance(brief.get("employee_scorecard"), dict) else {}
     latest_review = scorecard.get("latest_review") if isinstance(scorecard.get("latest_review"), dict) else {}
@@ -392,6 +411,8 @@ def _render_morning_report(
     staff_voice_line = _staff_voice_report_line(staff_voice, purpose="morning")
     if staff_voice_line:
         candidate_lines.insert(2, staff_voice_line)
+    if opportunity_line:
+        candidate_lines.insert(1, opportunity_line)
     if _style_is_ultra_concise(workstyle):
         return _render_ultra_morning_report(
             items=items,
@@ -401,6 +422,7 @@ def _render_morning_report(
             source_counts=source_counts,
             proactivity_health=proactivity_health,
             workstyle=workstyle,
+            opportunity_line=opportunity_line,
         )
     report_items = _concise_report_items(
         candidate_lines,
@@ -426,6 +448,7 @@ def _render_evening_report(
     proactivity_health: list[str],
     workstyle: dict[str, Any],
     staff_voice: dict[str, Any],
+    opportunity_line: str,
 ) -> str:
     scorecard = brief.get("employee_scorecard") if isinstance(brief.get("employee_scorecard"), dict) else {}
     latest_review = scorecard.get("latest_review") if isinstance(scorecard.get("latest_review"), dict) else {}
@@ -455,6 +478,8 @@ def _render_evening_report(
     staff_voice_line = _staff_voice_report_line(staff_voice, purpose="evening")
     if staff_voice_line:
         candidate_lines.insert(2, staff_voice_line)
+    if opportunity_line:
+        candidate_lines.insert(1, opportunity_line)
     if _style_is_ultra_concise(workstyle):
         return _render_ultra_evening_report(
             items=items,
@@ -464,6 +489,7 @@ def _render_evening_report(
             candidate_lines=candidate_lines,
             proactivity_health=proactivity_health,
             workstyle=workstyle,
+            opportunity_line=opportunity_line,
         )
     report_items = _concise_report_items(
         candidate_lines,
@@ -487,6 +513,7 @@ def _render_ultra_morning_report(
     source_counts: dict[str, int],
     proactivity_health: list[str],
     workstyle: dict[str, Any],
+    opportunity_line: str,
 ) -> str:
     status = _ultra_morning_status(source_counts)
     confirmation = _first_safe_report_text(
@@ -507,6 +534,8 @@ def _render_ultra_morning_report(
     ]
     if proactivity_health:
         rows.append(f"异常：{_strip_report_prefix(_limit_report_text(proactivity_health[0], 54))}")
+    if opportunity_line:
+        rows.append(_limit_report_text(opportunity_line, 76))
     rows.append(_style_closing_line(workstyle))
     return _limit_message(_join_style_lines(rows, workstyle), _style_limit(workstyle))
 
@@ -520,6 +549,7 @@ def _render_ultra_evening_report(
     candidate_lines: list[str],
     proactivity_health: list[str],
     workstyle: dict[str, Any],
+    opportunity_line: str,
 ) -> str:
     completed = _first_safe_report_text(
         _value_lines(value_entries, {}) or candidate_lines,
@@ -541,8 +571,10 @@ def _render_ultra_evening_report(
         f"完成：{_strip_report_prefix(completed)}",
         f"异常：{_strip_report_prefix(issue)}",
         f"明日计划：{_strip_report_prefix(tomorrow)}",
-        _style_closing_line(workstyle),
     ]
+    if opportunity_line:
+        rows.append(_limit_report_text(opportunity_line, 76))
+    rows.append(_style_closing_line(workstyle))
     return _limit_message(_join_style_lines(rows, workstyle), _style_limit(workstyle))
 
 
@@ -897,6 +929,17 @@ def _staff_voice_report_line(radar: dict[str, Any], *, purpose: str) -> str:
         trend = trends[0]
         return f"员工声音：低风险趋势 {trend.get('category')} {trend.get('count')} 条，先观察趋势，不点名打扰。"
     return ""
+
+
+def _project_opportunity_report_line(candidate: dict[str, Any] | None) -> str:
+    if not isinstance(candidate, dict):
+        return ""
+    title = _limit_text(candidate.get("title") or "新服务方向", 36)
+    affected = int(candidate.get("affected_student_count") or 0)
+    status = str(candidate.get("status") or "")
+    if status == "decision_pending":
+        return f"新项目机会：{title}已达到强证据门槛，涉及{affected}名学生，待您决定是否验证；尚未立项。"
+    return f"新项目机会：{title}已达到强证据门槛，涉及{affected}名学生，小优正在整理验证边界；尚未立项。"
 
 
 def _first_or_default(lines: list[str], fallback: str) -> str:

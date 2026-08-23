@@ -73,6 +73,7 @@ PROTECTED_BUSINESS_FILES = {
     "social_market_research_config.json",
     "social_market_research_runs.jsonl",
     "social_market_research_candidates.jsonl",
+    "project_opportunity_events.jsonl",
     "weekly_market_report_runs.jsonl",
     "relationship_touch_candidates.jsonl",
     "relationship_touch_policy.json",
