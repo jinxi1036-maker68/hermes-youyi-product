@@ -53,6 +53,7 @@ WRITE_TOOLS = {
     "tuoguan_submit_profile_candidate_correction",
     "tuoguan_submit_information_request_record",
     "tuoguan_submit_information_request_update",
+    "tuoguan_advance_institution_work",
     "tuoguan_submit_goal_evidence",
     "tuoguan_submit_performance_evidence_candidate",
     "tuoguan_submit_performance_evidence_response",
@@ -103,6 +104,7 @@ MODEL_SELECTED_READ_TOOLS = {
     "tuoguan_query_goal_progress",
     "tuoguan_resolve_student_responsibility",
     "tuoguan_query_institution_onboarding_gaps",
+    "tuoguan_query_institution_work",
     "tuoguan_query_operational_facts",
     "tuoguan_query_staff_directory",
     "tuoguan_query_person_workstyle_profile",
@@ -225,6 +227,7 @@ def _sanitize_external_reply(
     outreach_state: str = "",
     outreach_guard_applies: bool | None = None,
     identity_query: bool = False,
+    institution_commitment_state: str = "",
 ) -> str:
     value = str(text or "")
     # Direct callers that explicitly supply an outreach state are testing an
@@ -289,6 +292,19 @@ def _sanitize_external_reply(
     )
     if not verified_state_change and any(term in value for term in unverified_task_claim_terms):
         return "我刚才不能在没有任务工具确认的情况下说任务已闭环。请告诉我具体是哪一个任务或学生，我会按任务记录核验后再确认。"
+    institution_claim_terms = ("制度已确认", "方案已确认", "流程已确认", "已经落实", "已落实", "制度已生效", "流程已生效")
+    if any(term in value for term in institution_claim_terms):
+        replacements = {
+            "draft": "草案已保存，仍待老板审核",
+            "awaiting_content_approval": "草案正在等待内容审核",
+            "awaiting_implementation_authorization": "内容已确认，仍待单独授权落实",
+            "implementing": "已获得落实授权，仍在等待真实执行回执",
+            "verifying": "正在核验落实结果",
+            "effective": "已记录核验结果，但仍应以当前执行证据为准",
+        }
+        if institution_commitment_state in replacements:
+            return replacements[institution_commitment_state] + "。"
+        return "我不能在没有机构工作事项回执的情况下说制度已确认或已经落实。"
     sent_claim_terms = (
         "已经发给", "已发给", "已经通知", "已通知", "我刚问了", "我已经问了", "已经联系",
         "已发送", "已经发送", "发送成功", "对方已收到", "对方已经收到",
@@ -793,6 +809,7 @@ def write_authorization_for(user_id: str, operation: str) -> dict[str, str] | No
         "submit_profile_candidate_correction",
         "submit_information_request_record",
         "submit_information_request_update",
+        "advance_institution_work",
         "submit_goal_evidence",
         "submit_performance_evidence_candidate",
         "submit_performance_evidence_response",
@@ -1657,6 +1674,7 @@ def transform_final_response(*, store: TuoguanStore, session_id: str, response_t
     outreach_state = ""
     outreach_guard_applies = False
     identity_query = False
+    institution_commitment_state = ""
     with _LOCK:
         item = _TURN_BY_SESSION.get(str(session_id or "")) or {}
         actor_role = str(item.get("role") or "")
@@ -1671,6 +1689,7 @@ def transform_final_response(*, store: TuoguanStore, session_id: str, response_t
                 if verified_state_change:
                     break
         outreach_state = _tool_results_outreach_state(item.get("tool_results") or [])
+        institution_commitment_state = _tool_results_institution_stage(item.get("tool_results") or [])
         raw = _compact(item.get("raw_text") or "")
         if any(term in raw for term in ("主动联系", "主动找", "去问老师", "去问店长", "去问老板")):
             outreach_guard_applies = True
@@ -1687,6 +1706,7 @@ def transform_final_response(*, store: TuoguanStore, session_id: str, response_t
         outreach_state=outreach_state,
         outreach_guard_applies=outreach_guard_applies,
         identity_query=identity_query,
+        institution_commitment_state=institution_commitment_state,
     )
 
 
@@ -1717,3 +1737,29 @@ def _tool_results_outreach_state(results: Any) -> str:
             if rank.get(state, 0) > rank.get(best, 0):
                 best = state
     return best or ("denied" if denied else "")
+
+
+def _tool_results_institution_stage(results: Any) -> str:
+    """Extract the verified institution stage from this turn's trusted result.
+
+    A generic verified write only proves that *something* was persisted.  It
+    must not let a draft be described as an approved or effective policy.
+    """
+
+    stages = {
+        "discovered", "investigating", "drafting", "awaiting_content_approval",
+        "content_approved", "awaiting_implementation_authorization", "implementing",
+        "effective", "verifying", "closed", "deferred", "rejected", "failed", "superseded",
+    }
+    values = results if isinstance(results, list) else [results]
+    for item in reversed(values):
+        if not isinstance(item, dict):
+            continue
+        data = item.get("data") if isinstance(item.get("data"), dict) else item
+        if not isinstance(data, dict):
+            continue
+        work_item = data.get("work_item") if isinstance(data.get("work_item"), dict) else data
+        stage = str(work_item.get("institution_stage") or "")
+        if stage in stages:
+            return stage
+    return ""

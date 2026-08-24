@@ -62,6 +62,7 @@ PY_COMPILE_TARGETS = [
     "scripts/repair_proactive_employee_state_v1.py",
     "scripts/repair_task_companion_state.py",
     "scripts/repair_task_dashboard_state_v1.py",
+    "scripts/migrate_institution_work_closure_v1.py",
     "scripts/sanitize_shared_memory.py",
     "scripts/tune_xiaoyou_runtime_config.py",
     "scripts/rotate_wecom_sessions_for_latency.py",

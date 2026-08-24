@@ -238,6 +238,7 @@ def create_assigned_task(
     created_by_name: str = "",
     business_goal: str = "",
     known_facts: list[str] | None = None,
+    assignee_role: str = "",
 ) -> dict[str, Any]:
     if not str(title).strip() or not str(assignee_user_id).strip():
         return {"ok": False, "reason_code": "missing_required_fields", "writeback_verified": False}
@@ -271,6 +272,7 @@ def create_assigned_task(
             evidence_requirement=evidence_requirement,
             business_goal=business_goal,
             assignee_user_id=assignee_user_id,
+            assignee_role=assignee_role,
             assigned_by_user_id=created_by,
             assigned_by_role=created_by_role,
             known_facts=known_facts,

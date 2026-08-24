@@ -256,6 +256,7 @@ def build_task_contract(
     business_goal: str = "",
     assignee_user_id: str = "",
     assignee_name: str = "",
+    assignee_role: str = "",
     assigned_by_user_id: str = "",
     assigned_by_role: str = "",
     known_facts: list[str] | None = None,
@@ -313,7 +314,7 @@ def build_task_contract(
         "responsible_actor": {
             "user_id": str(assignee_user_id or "").strip(),
             "name": str(assignee_name or "").strip(),
-            "role": "teacher" if assignee_user_id else "",
+            "role": _normalized_role(assignee_role) or ("teacher" if assignee_user_id else ""),
         },
         "assignment_authority": {
             "user_id": str(assigned_by_user_id or "").strip(),

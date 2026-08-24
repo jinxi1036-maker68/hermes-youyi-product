@@ -32,6 +32,11 @@ _OBJECT_ID_KEYS = (
     ("task_id", "task"),
     ("goal_action_id", "goal_action"),
     ("goal_id", "goal"),
+    ("work_item_id", "institution_work_item"),
+    ("artifact_version_id", "institution_artifact_version"),
+    ("decision_id", "institution_owner_decision"),
+    ("execution_link_id", "institution_execution_link"),
+    ("verification_id", "institution_verification"),
     ("candidate_id", "candidate"),
     ("attention_id", "attention_thread"),
     ("notification_id", "notification"),
@@ -51,7 +56,7 @@ def _first(mapping: dict[str, Any], key: str) -> str:
     value = mapping.get(key)
     if value not in (None, ""):
         return str(value)
-    for nested_key in ("task", "goal", "action", "candidate", "item", "receipt"):
+    for nested_key in ("task", "goal", "action", "candidate", "item", "work_item", "artifact", "decision", "execution_link", "verification", "receipt"):
         nested = mapping.get(nested_key)
         if isinstance(nested, dict) and nested.get(key) not in (None, ""):
             return str(nested[key])
@@ -73,6 +78,11 @@ def _object_identity(result: dict[str, Any], operation: str) -> tuple[str, str]:
         ("action", "goal_action"),
         ("candidate", "candidate"),
         ("attention_thread", "attention_thread"),
+        ("work_item", "institution_work_item"),
+        ("artifact", "institution_artifact_version"),
+        ("decision", "institution_owner_decision"),
+        ("execution_link", "institution_execution_link"),
+        ("verification", "institution_verification"),
     ):
         nested = data.get(nested_key)
         if isinstance(nested, dict) and nested.get("id") not in (None, ""):

@@ -44,6 +44,7 @@ from .digital_employee_state import (
     query_external_learning_brief,
     query_industry_learning_candidates,
     query_institution_understanding,
+    query_institution_work,
     query_multi_agent_brief,
     query_proactive_work_radar,
     query_relationship_touch_candidates,
@@ -56,6 +57,7 @@ from .digital_employee_state import (
     submit_business_event,
     submit_fact_gap_candidate,
     submit_hermes_work_item,
+    advance_institution_work,
     submit_relationship_touch_candidate,
     submit_value_progress_entry,
     update_agent_delegation_decision,
@@ -239,6 +241,7 @@ def build_employee_loop_materials(store: TuoguanStore, *, identity: UserIdentity
     events = query_business_events(store, identity=identity, limit=20)
     executions = query_action_executions(store, identity=identity, limit=20)
     institution_understanding = query_institution_understanding(store, identity=identity)
+    institution_work = query_institution_work(store, identity=identity, include_closed=False, limit=10)
     proactive_radar = query_proactive_work_radar(store, identity=identity, limit=12)
     employee_scorecard = query_hermes_employee_scorecard(store, identity=identity, limit=10)
     industry_learning = query_industry_learning_candidates(store, identity=identity, limit=10)
@@ -337,6 +340,7 @@ def build_employee_loop_materials(store: TuoguanStore, *, identity: UserIdentity
         "business_events": _compact_for_model(events),
         "action_executions": _compact_for_model(executions),
         "institution_understanding_state": _compact_for_model(institution_understanding),
+        "institution_work": _compact_for_model(institution_work, max_chars=7000),
         "proactive_work_radar": _compact_for_model(proactive_radar, max_chars=9000),
         "employee_scorecard": _compact_for_model(employee_scorecard),
         "industry_learning_candidates": _compact_for_model(industry_learning),
@@ -357,7 +361,7 @@ def build_employee_loop_materials(store: TuoguanStore, *, identity: UserIdentity
         "deferred_items": _compact_for_model(deferred_items),
         "new_term_readiness": _compact_for_model(new_term_readiness),
         "patrol_counts": _compact_for_model(patrol_counts),
-        "allowed_internal_outputs": ["observations", "work_item_updates", "questions_to_humans", "boss_attention_candidates", "relationship_touch_candidates", "relationship_touch_executions", "goal_action_submissions", "goal_action_decisions", "institution_fact_gaps", "value_progress_entries", "agent_delegation_decisions", "project_opportunity_assessments", "evolution_candidates", "self_review", "stop_or_wait_reason"],
+        "allowed_internal_outputs": ["observations", "work_item_updates", "institution_work_discoveries", "questions_to_humans", "boss_attention_candidates", "relationship_touch_candidates", "relationship_touch_executions", "goal_action_submissions", "goal_action_decisions", "institution_fact_gaps", "value_progress_entries", "agent_delegation_decisions", "project_opportunity_assessments", "evolution_candidates", "self_review", "stop_or_wait_reason"],
         "forbidden_external_outputs": sorted(_FORBIDDEN_EFFECT_KEYS),
     }
     base_onboarding = onboarding.get("data") or onboarding if isinstance(onboarding, dict) else {}
@@ -372,6 +376,7 @@ def build_employee_loop_materials(store: TuoguanStore, *, identity: UserIdentity
         "business_event_count": int(events.get("event_count") or 0),
         "result_unknown_action_count": int(executions.get("result_unknown_count") or 0),
         "institution_gap_count": int(((institution_understanding.get("audit") or {}).get("gap_count") or 0)) if isinstance(institution_understanding, dict) else 0,
+        "institution_work_count": int(institution_work.get("work_item_count") or 0) if isinstance(institution_work, dict) else 0,
         "proactive_radar_gap_count": int(proactive_radar.get("priority_gaps") and len(proactive_radar.get("priority_gaps") or []) or 0) if isinstance(proactive_radar, dict) else 0,
         "proactive_radar_question_candidate_count": int(proactive_radar.get("question_candidates") and len(proactive_radar.get("question_candidates") or []) or 0) if isinstance(proactive_radar, dict) else 0,
         "employee_self_review_count": int(employee_scorecard.get("review_count") or 0) if isinstance(employee_scorecard, dict) else 0,
@@ -637,6 +642,7 @@ def validate_employee_decision(raw: dict[str, Any]) -> dict[str, Any]:
         "goal_progress_view": _limit(cleaned.get("goal_progress_view"), 800),
         "observations": _list_of_dicts(cleaned.get("observations"), 8),
         "work_item_updates": _list_of_dicts(cleaned.get("work_item_updates"), 8),
+        "institution_work_discoveries": _list_of_dicts(cleaned.get("institution_work_discoveries"), 2),
         "questions_to_humans": _list_of_dicts(cleaned.get("questions_to_humans"), 8),
         "boss_attention_candidates": _list_of_dicts(cleaned.get("boss_attention_candidates"), 4),
         "relationship_touch_candidates": _list_of_dicts(cleaned.get("relationship_touch_candidates"), 6),
@@ -682,6 +688,22 @@ def validate_employee_decision(raw: dict[str, Any]) -> dict[str, Any]:
         item["ask_role"] = _limit(item.get("ask_role") or "boss", 80)
         item["target_time"] = _limit(item.get("target_time"), 80)
         item["urgency"] = _limit(item.get("urgency") or "normal", 40)
+    discoveries: list[dict[str, Any]] = []
+    for item in decision["institution_work_discoveries"]:
+        focus_key = _limit(item.get("focus_key"), 160)
+        title = _limit(item.get("title"), 160)
+        summary = _truthful_internal_text(item.get("summary") or item.get("reason"), 800)
+        evidence_text = _truthful_internal_text(item.get("evidence_summary") or item.get("evidence"), 700)
+        if not focus_key.startswith("institution:") or not title or not summary or not evidence_text:
+            continue
+        discoveries.append({
+            "focus_key": focus_key,
+            "title": title,
+            "summary": summary,
+            "evidence": [{"source_kind": "model_judgment", "summary": evidence_text}],
+            "source_text": _truthful_internal_text(item.get("source_text") or summary, 800),
+        })
+    decision["institution_work_discoveries"] = discoveries[:1]
     for item in decision["value_progress_entries"]:
         item["subject"] = _limit(item.get("subject"), 160)
         item["discovered"] = _limit(item.get("discovered"), 1000)
@@ -1340,6 +1362,20 @@ def materialize_employee_decision(
                 source_message_id=f"autonomous_employee_loop:{timestamp.strftime('%Y%m%d%H%M%S')}",
             )
             writes.append(_write_result("fact_gap_candidate", res))
+        for idx, discovery in enumerate(decision.get("institution_work_discoveries") or []):
+            res = advance_institution_work(
+                store,
+                identity=identity,
+                action="discover",
+                operation_id=f"{op_prefix}:institution_work:{idx}",
+                focus_key=_limit(discovery.get("focus_key"), 160),
+                title=_limit(discovery.get("title"), 160),
+                summary=_limit(discovery.get("summary"), 800),
+                evidence=_list_of_dicts(discovery.get("evidence"), 4),
+                source_text=_limit(discovery.get("source_text"), 800),
+                source_message_id=f"autonomous_employee_loop:{timestamp.strftime('%Y%m%d%H%M%S')}",
+            )
+            writes.append(_write_result("institution_work_discovery", res))
         for idx, update in enumerate(decision.get("work_item_updates") or []):
             if service_relations_deferred:
                 _apply_deferred_service_relation_boundary(update)
@@ -1593,6 +1629,7 @@ def _call_model_for_decision(materials: dict[str, Any]) -> dict[str, Any]:
         for key in (
             "timestamp", "identity", "mission", "principles", "materials_summary", "work_cadence",
             "onboarding", "goals", "work", "institution_understanding_state", "proactive_work_radar",
+            "institution_work",
             "trusted_staff_identities", "recent_owner_messages", "operating_evidence", "term_state", "deferred_items",
         )
     }
@@ -1685,6 +1722,7 @@ def _call_model_for_decision(materials: dict[str, Any]) -> dict[str, Any]:
         "goal_progress_view": diagnosis.get("goal_progress_view") or "",
         "observations": diagnosis.get("observations") or [],
         "institution_fact_gaps": diagnosis.get("institution_fact_gaps") or [],
+        "institution_work_discoveries": diagnosis.get("institution_work_discoveries") or [],
         "questions_to_humans": diagnosis.get("questions_to_humans") or [],
         "work_item_updates": actions.get("work_item_updates") or [],
         "boss_attention_candidates": actions.get("boss_attention_candidates") or [],
@@ -1770,8 +1808,8 @@ _DIAGNOSIS_PROMPT = """你是托管机构数字员工小优，本轮只做事实
 employee_summary 必须保持身份为“小优，优益托管机构数字员工”；不得自称 Sapiens、Agnes、Hermes 助手、模型厂商或通用 AI 助手。
 不得声称已经外发、写入或完成动作；不得联系家长；不得把历史名单当作新学期事实；没有变化是有效结论。
 人员身份只认 trusted_staff_identities：称呼、别名、企业微信显示名和 user_id 不能推导真实全名；没有 full_name_confirmed=true 时必须写“全名未确认”，不得自行补全姓名。历史工作项只作审计，不能覆盖当前可信目录或复活旧卡点。
-只返回一个精简 JSON 对象，字段固定为 employee_summary、institution_understanding、goal_progress_view、observations、institution_fact_gaps、questions_to_humans。
-observations 最多2条，institution_fact_gaps 最多2条，questions_to_humans 最多2条。不要复制学生名单或长段历史。"""
+只返回一个精简 JSON 对象，字段固定为 employee_summary、institution_understanding、goal_progress_view、observations、institution_fact_gaps、institution_work_discoveries、questions_to_humans。
+ institution_work_discoveries 最多1条：仅当当前内部材料足以说明一个制度/流程缺口时才给出 focus_key（必须以 institution: 开头）、title、summary、evidence_summary 和 source_text。它只建立待调查工作事项，不是制度、不派任务、不外发。observations 最多2条，institution_fact_gaps 最多2条，questions_to_humans 最多2条。不要复制学生名单或长段历史。"""
 
 _ACTIONS_PROMPT = """你是托管机构数字员工小优，本轮只根据已给诊断选择行动。
 你可以继续、等待、更新一个工作事项、提出一个老板关注问题、创建一个新主动候选、执行一个已有候选、为已确认目标保存一个新的低风险下一行动，或对一个到期目标行动选择 execute/wait/adjust/stop/escalate。

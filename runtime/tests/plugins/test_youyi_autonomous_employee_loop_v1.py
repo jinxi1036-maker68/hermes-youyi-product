@@ -121,6 +121,40 @@ def test_daytime_employee_loop_queues_owner_attention_only(tmp_path):
     assert item["value_progress_note"]
 
 
+def test_employee_loop_can_discover_one_evidence_bound_institution_work_item_without_outreach(tmp_path):
+    from plugins.tuoguan_core.autonomous_employee_loop import run_autonomous_employee_loop
+    from plugins.tuoguan_core.digital_employee_state import query_institution_work
+    from plugins.tuoguan_core.models import UserIdentity
+
+    store = _seed_store(tmp_path)
+
+    def discovery_decision(_materials: dict) -> dict:
+        return {
+            "employee_summary": "接送安全流程存在待整理缺口。",
+            "institution_understanding": "现有接送做法需要沉淀为可审核的内部草案。",
+            "goal_progress_view": "先建立待调查事项，不派发执行任务。",
+            "institution_work_discoveries": [{
+                "focus_key": "institution:pickup_safety_process",
+                "title": "接送安全流程",
+                "summary": "需要整理现有接送做法并核验缺失环节。",
+                "evidence_summary": "当前机构材料存在接送做法，但还没有版本化流程成果。",
+                "source_text": "自主巡检发现的内部流程缺口。",
+            }],
+            "external_actions": [],
+        }
+
+    now = datetime(2026, 7, 28, 21, 0, tzinfo=timezone(timedelta(hours=8)))
+    result = run_autonomous_employee_loop(store, now=now, decision_provider=discovery_decision)
+
+    identity = UserIdentity("system", "boss1", "boss1", "金总", "boss", "approved")
+    items = query_institution_work(store, identity=identity, focus_key="institution:pickup_safety_process")["items"]
+    assert result["ok"] is True
+    assert any(row["kind"] == "institution_work_discovery" and row["ok"] for row in result["writes"])
+    assert len(items) == 1 and items[0]["institution_stage"] == "discovered"
+    assert json.loads((tmp_path / "notification_outbox.json").read_text(encoding="utf-8")) == []
+    assert json.loads((tmp_path / "tasks.json").read_text(encoding="utf-8")) == []
+
+
 def test_evening_employee_loop_defers_owner_attention(tmp_path):
     from plugins.tuoguan_core.autonomous_employee_loop import run_autonomous_employee_loop
 

@@ -1248,6 +1248,24 @@ def submit_gray_optimization_decision(
 _AUTONOMOUS_FORBIDDEN_KEYS = {"model_intent", "next_tool", "workflow_step", "expected_reply"}
 _WORK_ITEM_STATUSES = {"active", "waiting", "blocked", "closed", "superseded"}
 _WORK_ITEM_OPEN_STATUSES = {"active", "waiting", "blocked"}
+_INSTITUTION_WORK_STAGES = {
+    "discovered", "investigating", "drafting", "awaiting_content_approval",
+    "content_approved", "awaiting_implementation_authorization", "implementing",
+    "effective", "verifying", "closed",
+}
+_INSTITUTION_WORK_TERMINAL_STAGES = {"closed"}
+_INSTITUTION_WORK_EXCEPTION_STAGES = {"deferred", "rejected", "failed", "superseded"}
+_INSTITUTION_WORK_ACTIONS = {
+    "discover", "record_evidence", "save_draft", "submit_for_review", "review_content",
+    "authorize_implementation", "link_execution", "verify", "defer", "close",
+}
+_INSTITUTION_EVIDENCE_KINDS = {
+    "internal_confirmed", "internal_record", "external_primary", "model_judgment",
+    "pending_hypothesis", "unsupported",
+}
+_INSTITUTION_ARTIFACT_STATUSES = {
+    "draft", "awaiting_review", "content_approved", "effective", "superseded",
+}
 _WAKEUP_STATUSES = {"pending", "handled", "ignored", "superseded"}
 _ACTION_EXECUTION_STATUSES = {
     "not_started",
@@ -4056,6 +4074,7 @@ def hermes_work_item_is_semantically_retired(item: dict[str, Any]) -> bool:
 def _fold_hermes_work_items(store: TuoguanStore) -> dict[str, dict[str, Any]]:
     result: dict[str, dict[str, Any]] = {}
     updates: dict[str, list[dict[str, Any]]] = {}
+    institution_events: dict[str, list[dict[str, Any]]] = {}
     verified_human_contact_times = {
         str(row.get("occurred_at") or "")
         for row in _read_jsonl(store, BUSINESS_EVENTS_FILE)
@@ -4070,6 +4089,12 @@ def _fold_hermes_work_items(store: TuoguanStore) -> dict[str, dict[str, Any]]:
             continue
         if record_type == "work_item_update":
             updates.setdefault(work_item_id, []).append(deepcopy(row))
+            continue
+        if record_type in {
+            "work_item_evidence", "work_item_artifact_version", "work_item_owner_decision",
+            "work_item_execution_link", "work_item_verification",
+        }:
+            institution_events.setdefault(work_item_id, []).append(deepcopy(row))
             continue
         if record_type not in {"", "work_item"} or work_item_id in result:
             continue
@@ -4139,6 +4164,70 @@ def _fold_hermes_work_items(store: TuoguanStore) -> dict[str, dict[str, Any]]:
         latest = rows[-1]
         result[work_item_id]["updated_at"] = str(latest.get("created_at") or result[work_item_id].get("updated_at") or "")
         result[work_item_id]["latest_update_text"] = str(latest.get("update_text") or "")
+    for work_item_id, rows in institution_events.items():
+        if work_item_id not in result:
+            continue
+        item = result[work_item_id]
+        if str(item.get("work_kind") or "") != "institution_change":
+            # Historical non-institution work must never acquire an institution
+            # workflow merely because a malformed event referenced its id.
+            continue
+        rows.sort(key=lambda value: str(value.get("created_at") or ""))
+        item["institution_events"] = rows
+        evidence = list(item.get("evidence") or [])
+        artifacts = list(item.get("artifacts") or [])
+        decisions = list(item.get("owner_decisions") or [])
+        execution_links = list(item.get("execution_links") or [])
+        verifications = list(item.get("verifications") or [])
+        for event in rows:
+            record_type = str(event.get("record_type") or "")
+            if record_type == "work_item_evidence":
+                known_ids = {str(row.get("evidence_id") or "") for row in evidence}
+                for row in event.get("evidence") or []:
+                    if isinstance(row, dict) and str(row.get("evidence_id") or "") not in known_ids:
+                        evidence.append(deepcopy(row))
+                        known_ids.add(str(row.get("evidence_id") or ""))
+            elif record_type == "work_item_artifact_version":
+                artifact = event.get("artifact") if isinstance(event.get("artifact"), dict) else {}
+                version_id = str(artifact.get("version_id") or "")
+                existing_index = next((index for index, row in enumerate(artifacts) if str(row.get("version_id") or "") == version_id), -1)
+                if version_id and existing_index < 0:
+                    artifacts.append(deepcopy(artifact))
+                    item["current_artifact_version_id"] = version_id
+                    item["current_artifact_id"] = str(artifact.get("artifact_id") or "")
+                elif version_id:
+                    artifacts[existing_index] = {**artifacts[existing_index], **deepcopy(artifact)}
+            elif record_type == "work_item_owner_decision":
+                decision = event.get("decision") if isinstance(event.get("decision"), dict) else {}
+                decision_id = str(decision.get("decision_id") or "")
+                if decision_id and not any(str(row.get("decision_id") or "") == decision_id for row in decisions):
+                    decisions.append(deepcopy(decision))
+                for artifact in artifacts:
+                    if str(artifact.get("version_id") or "") == str(decision.get("artifact_version_id") or ""):
+                        if str(decision.get("decision_type") or "") == "content_approval" and str(decision.get("decision") or "") == "approved":
+                            artifact["status"] = "content_approved"
+                        elif str(decision.get("decision") or "") in {"rejected", "superseded"}:
+                            artifact["status"] = "superseded"
+            elif record_type == "work_item_execution_link":
+                link = event.get("execution_link") if isinstance(event.get("execution_link"), dict) else {}
+                link_id = str(link.get("execution_link_id") or "")
+                if link_id and not any(str(row.get("execution_link_id") or "") == link_id for row in execution_links):
+                    execution_links.append(deepcopy(link))
+            elif record_type == "work_item_verification":
+                verification = event.get("verification") if isinstance(event.get("verification"), dict) else {}
+                verification_id = str(verification.get("verification_id") or "")
+                if verification_id and not any(str(row.get("verification_id") or "") == verification_id for row in verifications):
+                    verifications.append(deepcopy(verification))
+            patch = event.get("institution_patch") if isinstance(event.get("institution_patch"), dict) else {}
+            for key in ("institution_stage", "status", "current_waiting", "next_actions", "next_attention_at", "stop_reason", "closed_at"):
+                if key in patch:
+                    item[key] = deepcopy(patch[key])
+            item["updated_at"] = str(event.get("created_at") or item.get("updated_at") or "")
+        item["evidence"] = evidence
+        item["artifacts"] = artifacts
+        item["owner_decisions"] = decisions
+        item["execution_links"] = execution_links
+        item["verifications"] = verifications
     return result
 
 
@@ -4532,6 +4621,349 @@ def update_hermes_work_item(
         "state_changed": True,
         "rendered_text": "已更新 Hermes 自主工作事项；更新只保存状态和证据，不自动执行外部动作。",
     }
+
+
+def _institution_item_visible(identity: UserIdentity, item: dict[str, Any]) -> bool:
+    """Institutional drafts and owner decisions are boss-only until effective.
+
+    An execution task is the employee-facing projection.  It is deliberately
+    not exposed by this query, otherwise an unfinished policy draft would leak
+    into a teacher or manager work context.
+    """
+
+    if str(identity.role or "") in {"boss", "system"}:
+        return True
+    # A version remains internal while its rollout is merely being checked.
+    # Teachers and managers receive only formal material that has completed a
+    # recorded effectiveness check, never a draft or an in-progress rollout.
+    return str(item.get("institution_stage") or "") in {"effective", "closed"}
+
+
+def _institution_event_by_operation(store: TuoguanStore, *, work_item_id: str, operation_id: str) -> dict[str, Any] | None:
+    if not operation_id:
+        return None
+    for row in _read_jsonl(store, HERMES_WORK_ITEMS_FILE):
+        if (
+            str(row.get("work_item_id") or "") == str(work_item_id)
+            and str((row.get("source") or {}).get("operation_id") or "") == str(operation_id)
+            and str(row.get("record_type") or "").startswith("work_item_")
+        ):
+            return row
+    return None
+
+
+def _normalize_institution_evidence(rows: list[Any] | None, *, source_message_id: str) -> tuple[list[dict[str, Any]], str]:
+    normalized: list[dict[str, Any]] = []
+    for raw in rows or []:
+        if not isinstance(raw, dict):
+            return [], "institution_evidence_must_be_objects"
+        source_kind = str(raw.get("source_kind") or "").strip()
+        if source_kind not in _INSTITUTION_EVIDENCE_KINDS:
+            return [], "invalid_institution_evidence_kind"
+        summary = _limit_text(str(raw.get("summary") or raw.get("text") or ""), 800)
+        if not summary:
+            return [], "institution_evidence_requires_summary"
+        if source_kind == "external_primary":
+            required = ("source_url", "publisher", "published_at")
+            if any(not str(raw.get(key) or "").strip() for key in required):
+                return [], "external_primary_requires_source_metadata"
+        record = {
+            "evidence_id": str(raw.get("evidence_id") or _new_id("institution_evidence")),
+            "source_kind": source_kind,
+            "summary": summary,
+            "source_message_id": str(raw.get("source_message_id") or source_message_id or ""),
+            "source_url": str(raw.get("source_url") or "").strip(),
+            "source_title": _limit_text(str(raw.get("source_title") or ""), 300),
+            "publisher": _limit_text(str(raw.get("publisher") or ""), 200),
+            "applicable_region": _limit_text(str(raw.get("applicable_region") or ""), 120),
+            "published_at": str(raw.get("published_at") or "").strip(),
+            "collected_at": str(raw.get("collected_at") or now_iso()).strip(),
+            "content_hash": str(raw.get("content_hash") or "").strip(),
+            "related_object_refs": _strip_forbidden(raw.get("related_object_refs") or []),
+        }
+        normalized.append(record)
+    return normalized, ""
+
+
+def _institution_artifact(item: dict[str, Any], version_id: str = "") -> dict[str, Any] | None:
+    expected = str(version_id or item.get("current_artifact_version_id") or "")
+    for artifact in item.get("artifacts") or []:
+        if isinstance(artifact, dict) and str(artifact.get("version_id") or "") == expected:
+            return artifact
+    return None
+
+
+def _append_institution_event(
+    store: TuoguanStore,
+    *,
+    item: dict[str, Any],
+    identity: UserIdentity,
+    record_type: str,
+    operation_id: str,
+    source_message_id: str,
+    source_text: str,
+    payload: dict[str, Any],
+    patch: dict[str, Any],
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    now = now_iso()
+    event = {
+        "record_type": record_type,
+        "event_id": _new_id("institution_work_event"),
+        "work_item_id": str(item.get("work_item_id") or ""),
+        "tenant_id": current_tenant_id(),
+        "focus_key": str(item.get("focus_key") or ""),
+        **_strip_forbidden(payload),
+        "institution_patch": _strip_forbidden(patch),
+        "source_text": _limit_text(source_text),
+        "source": _autonomous_source(identity, operation_id, source_message_id),
+        "created_at": now,
+        "auto_effects": {
+            "sends_parent_messages": False,
+            "sends_teacher_messages": False,
+            "creates_teacher_tasks": False,
+            "changes_salary": False,
+            "changes_permissions": False,
+            "forces_next_action": False,
+        },
+    }
+    _append_jsonl(store, HERMES_WORK_ITEMS_FILE, event)
+    folded = _fold_hermes_work_items(store).get(str(item.get("work_item_id") or ""), {})
+    verified = any(
+        str(row.get("event_id") or "") == str(event.get("event_id") or "")
+        for row in folded.get("institution_events") or []
+    )
+    return event, folded if verified else {}
+
+
+def query_institution_work(
+    store: TuoguanStore,
+    *,
+    identity: UserIdentity,
+    focus_key: str = "",
+    institution_stage: str = "",
+    include_closed: bool = False,
+    limit: int = 20,
+) -> dict[str, Any]:
+    rows: list[dict[str, Any]] = []
+    for item in _fold_hermes_work_items(store).values():
+        if str(item.get("work_kind") or "") != "institution_change":
+            continue
+        if focus_key and str(item.get("focus_key") or "") != str(focus_key):
+            continue
+        stage = str(item.get("institution_stage") or "")
+        if institution_stage and stage != str(institution_stage):
+            continue
+        if not include_closed and (stage in _INSTITUTION_WORK_TERMINAL_STAGES or stage in _INSTITUTION_WORK_EXCEPTION_STAGES):
+            continue
+        if not _institution_item_visible(identity, item):
+            continue
+        rows.append(_compact_work_item_view(item, update_count=len(item.get("updates") or [])))
+    rows.sort(key=lambda row: str(row.get("updated_at") or row.get("created_at") or ""), reverse=True)
+    rows = rows[:max(1, min(int(limit or 20), 100))]
+    awaiting = [
+        row for row in rows
+        if str(row.get("institution_stage") or "") in {"awaiting_content_approval", "awaiting_implementation_authorization"}
+    ]
+    return {
+        "ok": True,
+        "work_item_count": len(rows),
+        "awaiting_owner_decision_count": len(awaiting),
+        "items": rows,
+        "rendered_text": f"查到 {len(rows)} 条机构工作事项，其中 {len(awaiting)} 条正在等待老板决定。草案、决定与执行回执均以同一工作事项为准。",
+        "render_verified": True,
+    }
+
+
+def advance_institution_work(
+    store: TuoguanStore,
+    *,
+    identity: UserIdentity,
+    action: str,
+    operation_id: str,
+    focus_key: str = "",
+    work_item_id: str = "",
+    title: str = "",
+    summary: str = "",
+    evidence: list[Any] | None = None,
+    artifact_title: str = "",
+    artifact_content: str = "",
+    artifact_version_id: str = "",
+    evidence_ids: list[Any] | None = None,
+    pending_items: list[Any] | None = None,
+    decision: str = "",
+    implementation_scope: dict[str, Any] | None = None,
+    execution_link: dict[str, Any] | None = None,
+    verification: dict[str, Any] | None = None,
+    source_text: str = "",
+    source_message_id: str = "",
+) -> dict[str, Any]:
+    """Advance an institutional improvement with one append-only, verified event.
+
+    The function intentionally never creates a task, sends a message or turns a
+    draft into a policy by itself.  It records the model's selected action and
+    the owner evidence required for the next stage.
+    """
+
+    normalized_action = str(action or "").strip()
+    if normalized_action not in _INSTITUTION_WORK_ACTIONS:
+        return {"ok": False, "error": "invalid_institution_work_action", "message": "机构工作 action 不受支持，本轮没有写入。"}
+    if not operation_id:
+        return {"ok": False, "error": "institution_work_requires_operation_id", "message": "机构工作写入必须带 operation_id。"}
+    if normalized_action == "discover":
+        if str(identity.role or "") not in {"boss", "manager", "system"}:
+            return {"ok": False, "error": "permission_denied", "message": "只有老板、店长或小优内部工作可以登记机构改进事项。"}
+        normalized_focus = str(focus_key or "").strip()
+        if not normalized_focus or not str(title or "").strip() or not str(summary or "").strip():
+            return {"ok": False, "error": "institution_discovery_requires_focus", "message": "发现机构缺口必须包含稳定焦点、标题和事实摘要。"}
+        existing = _find_open_work_item_by_focus(store, normalized_focus)
+        if existing and str(existing.get("work_kind") or "") == "institution_change":
+            return {
+                "ok": True, "work_item": _compact_work_item_view(existing), "writeback_verified": True,
+                "state_changed": False, "idempotent_replay": True,
+                "rendered_text": "这个机构焦点已经有进行中的工作事项，本轮没有重复建档。",
+            }
+        normalized_evidence, error = _normalize_institution_evidence(evidence, source_message_id=source_message_id)
+        if error:
+            return {"ok": False, "error": error, "message": "机构证据格式不完整，本轮没有写入。"}
+        now = now_iso()
+        row = {
+            "record_type": "work_item",
+            "work_item_id": _new_id("hermes_work"),
+            "tenant_id": current_tenant_id(),
+            "work_kind": "institution_change",
+            "institution_stage": "discovered",
+            "focus_key": normalized_focus,
+            "title": _limit_text(title, 200),
+            "focus_summary": _limit_text(summary),
+            "status": "active",
+            "evidence": normalized_evidence,
+            "artifacts": [], "owner_decisions": [], "execution_links": [], "verifications": [],
+            "current_waiting": {},
+            "source_text": _limit_text(source_text or summary),
+            "source": _autonomous_source(identity, operation_id, source_message_id),
+            "created_at": now, "updated_at": now,
+            "auto_effects": {"sends_parent_messages": False, "sends_teacher_messages": False, "creates_teacher_tasks": False, "changes_salary": False, "changes_permissions": False, "forces_next_action": False},
+        }
+        _append_jsonl(store, HERMES_WORK_ITEMS_FILE, row)
+        found = _fold_hermes_work_items(store).get(str(row.get("work_item_id") or ""), {})
+        return {
+            "ok": bool(found), "work_item": _compact_work_item_view(found or row), "writeback_verified": bool(found),
+            "rendered_text": "已记录机构改进事项和现有依据；它仍是发现阶段，没有自动形成制度、任务或外发。",
+        }
+
+    items = _fold_hermes_work_items(store)
+    item = items.get(str(work_item_id or ""))
+    if item is None and focus_key:
+        item = _find_open_work_item_by_focus(store, str(focus_key))
+    if item is None or str(item.get("work_kind") or "") != "institution_change":
+        return {"ok": False, "error": "institution_work_not_found", "message": "没有找到要推进的机构工作事项。"}
+    if not _institution_item_visible(identity, item) and str(identity.role or "") != "system":
+        return {"ok": False, "error": "permission_denied", "message": "当前账号无权查看或推进这个机构工作事项。"}
+    replay = _institution_event_by_operation(store, work_item_id=str(item.get("work_item_id") or ""), operation_id=operation_id)
+    if replay:
+        folded = _fold_hermes_work_items(store).get(str(item.get("work_item_id") or ""), item)
+        return {"ok": True, "work_item": _compact_work_item_view(folded), "writeback_verified": True, "state_changed": False, "idempotent_replay": True, "rendered_text": "这个机构工作操作已经写入过，已按幂等回放返回当前状态。"}
+    stage = str(item.get("institution_stage") or "discovered")
+    if stage in _INSTITUTION_WORK_TERMINAL_STAGES | _INSTITUTION_WORK_EXCEPTION_STAGES and normalized_action not in {"close", "defer"}:
+        return {"ok": False, "error": "institution_work_not_active", "message": "该机构工作事项已经收口或停止，不能继续推进。"}
+    normalized_evidence, evidence_error = _normalize_institution_evidence(evidence, source_message_id=source_message_id)
+    if evidence_error:
+        return {"ok": False, "error": evidence_error, "message": "机构证据格式不完整，本轮没有写入。"}
+    if normalized_action == "record_evidence":
+        if not normalized_evidence:
+            return {"ok": False, "error": "institution_evidence_required", "message": "补充依据必须至少提供一条分类明确的证据。"}
+        event, folded = _append_institution_event(store, item=item, identity=identity, record_type="work_item_evidence", operation_id=operation_id, source_message_id=source_message_id, source_text=source_text, payload={"evidence": normalized_evidence}, patch={"institution_stage": "investigating", "status": "active"})
+        return {"ok": bool(folded), "work_item": _compact_work_item_view(folded or item), "event": event, "writeback_verified": bool(folded), "rendered_text": "已保存可追溯依据，当前仍在核实阶段。"}
+    if normalized_action == "save_draft":
+        if not str(artifact_title or "").strip() or not str(artifact_content or "").strip():
+            return {"ok": False, "error": "institution_artifact_requires_content", "message": "保存草案必须包含标题和完整内容。"}
+        known_evidence = {str(row.get("evidence_id") or "") for row in item.get("evidence") or []}
+        refs = [str(value) for value in evidence_ids or [] if str(value or "").strip()]
+        if refs and not set(refs).issubset(known_evidence):
+            return {"ok": False, "error": "artifact_evidence_not_found", "message": "草案引用了不存在的证据，本轮没有保存。"}
+        text = str(artifact_content or "")
+        unsafe_terms = ("48小时", "125克", "30分钟", "免责", "垫付医疗")
+        pending = [str(value) for value in pending_items or [] if str(value or "").strip()]
+        if any(term in text for term in unsafe_terms) and not pending:
+            return {"ok": False, "error": "unsupported_claims_require_pending_items", "message": "草案含待核验的责任或标准内容，必须显式列入待核验项，不能作为正式结论保存。"}
+        artifact_id = str(item.get("current_artifact_id") or _new_id("institution_artifact"))
+        artifact = {
+            "artifact_id": artifact_id,
+            "version_id": _new_id("institution_version"),
+            "title": _limit_text(artifact_title, 200),
+            "content": _limit_text(text, 12000),
+            "evidence_ids": refs,
+            "pending_items": pending,
+            "risk_items": _strip_forbidden(pending_items or []),
+            "status": "draft", "generated_at": now_iso(),
+        }
+        event, folded = _append_institution_event(store, item=item, identity=identity, record_type="work_item_artifact_version", operation_id=operation_id, source_message_id=source_message_id, source_text=source_text, payload={"artifact": artifact}, patch={"institution_stage": "drafting", "status": "active"})
+        return {"ok": bool(folded), "work_item": _compact_work_item_view(folded or item), "artifact": artifact, "event": event, "writeback_verified": bool(folded), "rendered_text": "已保存待审核草案版本；没有老板内容确认前，它不是生效制度。"}
+    artifact = _institution_artifact(item, artifact_version_id)
+    if normalized_action in {"submit_for_review", "review_content", "authorize_implementation", "link_execution", "verify"} and artifact is None:
+        return {"ok": False, "error": "institution_artifact_not_found", "message": "当前操作必须关联已保存的成果版本。"}
+    if normalized_action == "submit_for_review":
+        if str(artifact.get("status") or "") not in {"draft", "awaiting_review"}:
+            return {"ok": False, "error": "artifact_not_reviewable", "message": "这个版本不在可提交内容审核的状态。"}
+        artifact_patch = {**artifact, "status": "awaiting_review"}
+        event, folded = _append_institution_event(store, item=item, identity=identity, record_type="work_item_artifact_version", operation_id=operation_id, source_message_id=source_message_id, source_text=source_text, payload={"artifact": artifact_patch}, patch={"institution_stage": "awaiting_content_approval", "status": "waiting", "current_waiting": {"decision_type": "content_approval", "artifact_version_id": artifact.get("version_id"), "reason": "等待老板确认这一版内容，不代表授权落实。"}})
+        return {"ok": bool(folded), "work_item": _compact_work_item_view(folded or item), "event": event, "writeback_verified": bool(folded), "rendered_text": "该版本已提交内容审核；下一步只等待内容确认，不会自动派任务或落实。"}
+    if normalized_action == "review_content":
+        if str(identity.role or "") != "boss":
+            return {"ok": False, "error": "owner_content_approval_required", "message": "制度或流程内容只能由老板确认。"}
+        normalized_decision = str(decision or "approved").strip()
+        if normalized_decision not in {"approved", "changes_requested", "rejected"}:
+            return {"ok": False, "error": "invalid_content_decision", "message": "内容决定必须是 approved、changes_requested 或 rejected。"}
+        if str(artifact.get("status") or "") != "awaiting_review":
+            return {"ok": False, "error": "artifact_not_awaiting_content_approval", "message": "这个版本尚未处于待内容确认状态。"}
+        decision_row = {"decision_id": _new_id("institution_decision"), "decision_type": "content_approval", "decision": normalized_decision, "artifact_version_id": str(artifact.get("version_id") or ""), "owner_user_id": str(identity.canonical_user_id or ""), "source_message_id": str(source_message_id or operation_id), "decided_at": now_iso()}
+        if normalized_decision == "approved":
+            patch = {"institution_stage": "awaiting_implementation_authorization", "status": "waiting", "current_waiting": {"decision_type": "implementation_authorization", "artifact_version_id": artifact.get("version_id"), "reason": "内容已确认；仍需老板单独授权后才可落实。"}}
+        elif normalized_decision == "changes_requested":
+            patch = {"institution_stage": "drafting", "status": "active", "current_waiting": {}}
+        else:
+            patch = {"institution_stage": "rejected", "status": "superseded", "stop_reason": "老板未确认该草案版本。", "closed_at": now_iso()}
+        event, folded = _append_institution_event(store, item=item, identity=identity, record_type="work_item_owner_decision", operation_id=operation_id, source_message_id=source_message_id, source_text=source_text, payload={"decision": decision_row}, patch=patch)
+        return {"ok": bool(folded), "work_item": _compact_work_item_view(folded or item), "decision": decision_row, "event": event, "writeback_verified": bool(folded), "rendered_text": "已记录本版本的内容决定；内容确认不等于已经落实。"}
+    if normalized_action == "authorize_implementation":
+        if str(identity.role or "") != "boss":
+            return {"ok": False, "error": "owner_implementation_authorization_required", "message": "制度或流程落实必须由老板单独授权。"}
+        approvals = [row for row in item.get("owner_decisions") or [] if isinstance(row, dict) and str(row.get("decision_type") or "") == "content_approval" and str(row.get("decision") or "") == "approved" and str(row.get("artifact_version_id") or "") == str(artifact.get("version_id") or "")]
+        if not approvals:
+            return {"ok": False, "error": "content_approval_required", "message": "必须先由老板确认同一成果版本的内容，才能授权落实。"}
+        content_decision = approvals[-1]
+        decision_source = str(content_decision.get("source_message_id") or "")
+        authorization_source = str(source_message_id or operation_id)
+        if decision_source and decision_source == authorization_source:
+            return {"ok": False, "error": "separate_owner_authorization_required", "message": "内容确认与落实授权必须来自两次不同的老板决定。"}
+        scope = _strip_forbidden(implementation_scope or {})
+        decision_row = {"decision_id": _new_id("institution_decision"), "decision_type": "implementation_authorization", "decision": "authorized", "artifact_version_id": str(artifact.get("version_id") or ""), "owner_user_id": str(identity.canonical_user_id or ""), "source_message_id": authorization_source, "implementation_scope": scope, "decided_at": now_iso()}
+        event, folded = _append_institution_event(store, item=item, identity=identity, record_type="work_item_owner_decision", operation_id=operation_id, source_message_id=source_message_id, source_text=source_text, payload={"decision": decision_row}, patch={"institution_stage": "implementing", "status": "active", "current_waiting": {}})
+        return {"ok": bool(folded), "work_item": _compact_work_item_view(folded or item), "decision": decision_row, "event": event, "writeback_verified": bool(folded), "rendered_text": "已记录落实授权；下一步仍需建立真实执行关联和回执，不能直接声称已经通知或生效。"}
+    if normalized_action == "link_execution":
+        authorizations = [row for row in item.get("owner_decisions") or [] if isinstance(row, dict) and str(row.get("decision_type") or "") == "implementation_authorization" and str(row.get("decision") or "") == "authorized" and str(row.get("artifact_version_id") or "") == str(artifact.get("version_id") or "")]
+        if not authorizations:
+            return {"ok": False, "error": "implementation_authorization_required", "message": "没有同版本的老板落实授权，不能创建执行关联。"}
+        raw_link = _strip_forbidden(execution_link or {})
+        if not raw_link:
+            return {"ok": False, "error": "execution_link_required", "message": "落实关联必须说明任务、周期安排或真实回执引用。"}
+        link = {"execution_link_id": _new_id("institution_execution"), "artifact_version_id": str(artifact.get("version_id") or ""), "linked_at": now_iso(), **raw_link}
+        event, folded = _append_institution_event(store, item=item, identity=identity, record_type="work_item_execution_link", operation_id=operation_id, source_message_id=source_message_id, source_text=source_text, payload={"execution_link": link}, patch={"institution_stage": "implementing", "status": "active"})
+        return {"ok": bool(folded), "work_item": _compact_work_item_view(folded or item), "execution_link": link, "event": event, "writeback_verified": bool(folded), "rendered_text": "已关联真实执行材料；只有收到发送或任务回执后才可说已通知或已落实。"}
+    if normalized_action == "verify":
+        raw_verification = _strip_forbidden(verification or {})
+        if not raw_verification:
+            return {"ok": False, "error": "verification_required", "message": "核验必须带真实结果、证据或待修订说明。"}
+        check = {"verification_id": _new_id("institution_verification"), "artifact_version_id": str(artifact.get("version_id") or ""), "verified_at": now_iso(), **raw_verification}
+        effective = bool(check.get("effective"))
+        event, folded = _append_institution_event(store, item=item, identity=identity, record_type="work_item_verification", operation_id=operation_id, source_message_id=source_message_id, source_text=source_text, payload={"verification": check}, patch={"institution_stage": "effective" if effective else "verifying", "status": "active"})
+        return {"ok": bool(folded), "work_item": _compact_work_item_view(folded or item), "verification": check, "event": event, "writeback_verified": bool(folded), "rendered_text": "已保存落实核验结果；未通过的内容仍会留在验证阶段，不会写成完成。"}
+    if normalized_action in {"defer", "close"}:
+        terminal = "deferred" if normalized_action == "defer" else "closed"
+        status = "waiting" if terminal == "deferred" else "closed"
+        event, folded = _append_institution_event(store, item=item, identity=identity, record_type="work_item_verification", operation_id=operation_id, source_message_id=source_message_id, source_text=source_text, payload={"verification": {"verification_id": _new_id("institution_verification"), "result": terminal, "reason": _limit_text(summary or source_text), "verified_at": now_iso()}}, patch={"institution_stage": terminal, "status": status, "stop_reason": _limit_text(summary or source_text), "closed_at": now_iso() if terminal == "closed" else ""})
+        return {"ok": bool(folded), "work_item": _compact_work_item_view(folded or item), "event": event, "writeback_verified": bool(folded), "rendered_text": "已按可审计方式收口机构工作事项。"}
+    return {"ok": False, "error": "unsupported_institution_action", "message": "本轮没有执行该机构工作操作。"}
 
 
 def _fold_wakeup_requests(store: TuoguanStore) -> dict[str, dict[str, Any]]:

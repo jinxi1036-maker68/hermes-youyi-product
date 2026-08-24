@@ -10,6 +10,7 @@ from copy import deepcopy
 from datetime import datetime
 import hashlib
 import json
+import re
 import uuid
 from typing import Any
 
@@ -42,6 +43,7 @@ WORKSTYLE_DIMENSIONS = {
     "detail",
     "avoidance",
     "followup_method",
+    "interaction_pacing",
     "other",
 }
 
@@ -193,6 +195,8 @@ def _semantic_fingerprint(
 def _dimension_for_preference(preference_type: str, scope: str, *texts: Any) -> str:
     compact = "".join(str(text or "") for text in texts)
     compact = "".join(compact.split()).lower()
+    if any(term in compact for term in ("一项一项", "一次一项", "一次不要说太多", "一个章节", "一个问题", "不要一下说完")):
+        return "interaction_pacing"
     if str(preference_type or "") == "report_length":
         return "length"
     if any(term in compact for term in ("段落", "留空行", "空一行", "一条一行", "不要拥挤", "不拥挤", "别挤", "堆叠", "不堆")):
@@ -830,6 +834,7 @@ def _output_constraints_from_preferences(preferences: list[dict[str, Any]]) -> d
         "detail_notes": [],
         "avoidance_notes": [],
         "followup_notes": [],
+        "interaction_pacing_notes": [],
     }
     for pref in preferences:
         dimension = str(pref.get("dimension_key") or _dimension_for_row(pref))
@@ -859,6 +864,8 @@ def _output_constraints_from_preferences(preferences: list[dict[str, Any]]) -> d
             constraints["avoidance_notes"].append(_limit_text(text, 120))
         elif dimension == "followup_method":
             constraints["followup_notes"].append(_limit_text(text, 120))
+        elif dimension == "interaction_pacing":
+            constraints["interaction_pacing_notes"].append(_limit_text(text, 120))
     return constraints
 
 
@@ -886,6 +893,8 @@ def _render_resolved_workstyle(profile: dict[str, Any], constraints: dict[str, A
             lines.append(f"- {_scope_label(str(item.get('scope') or 'all_communication'))}/{_dimension_label(str(item.get('dimension_key') or _dimension_for_row(item)))}：{_limit_text(item.get('normalized_rule') or item.get('preference_text'), 80)}")
     if constraints.get("max_items"):
         lines.append(f"- 输出上限：约 {constraints.get('max_items')} 条重点。")
+    if constraints.get("interaction_pacing_notes"):
+        lines.append("- 节奏要求：制度、流程或方案讨论一次只推进一个章节，并且最多问一个关键问题。")
     return "\n".join(lines)
 
 
@@ -904,6 +913,13 @@ def _check_reply_compliance(final_reply: str, preferences: list[dict[str, Any]])
             if term and term in text:
                 failures.append(f"avoidance_term_present:{term}")
                 break
+    if constraints.get("interaction_pacing_notes"):
+        questions = len(re.findall(r"[？?]", text))
+        headings = len(re.findall(r"(?m)^\s*(?:第[一二三四五六七八九十\d]+[章节]|[一二三四五六七八九十\d]+[、.．])", text))
+        if questions > 1:
+            failures.append("interaction_pacing_multiple_questions")
+        if headings > 1:
+            failures.append("interaction_pacing_multiple_sections")
     return {"ok": not failures, "failures": failures, "checked_at": now_iso()}
 
 
@@ -946,6 +962,8 @@ def _classify_feedback_for_autosave(raw_text: str) -> dict[str, Any]:
         preference_type = "tone"
     elif any(term in compact for term in ("几点", "五点", "早上", "晚上", "下午")):
         preference_type = "reminder_time"
+    elif any(term in compact for term in ("一项一项", "一次一项", "一次不要说太多", "一个章节", "一个问题", "不要一下说完")):
+        preference_type = "other_low_risk"
     elif any(term in compact for term in ("跟进", "提醒", "方案")):
         preference_type = "followup_style"
     elif any(term in compact for term in ("细节", "详细", "展开", "过程")):
@@ -970,7 +988,7 @@ def _is_explicit_feedback(text: str) -> bool:
     compact = "".join(str(text or "").split())
     return any(term in compact for term in ("以后", "从现在开始", "下次", "别再", "不要再", "改成", "你要", "必须", "应该", "注意")) and any(
         term in compact
-        for term in ("汇报", "回复", "提醒", "跟进", "语气", "格式", "工作方式", "服务", "沟通", "先说结论", "只说重点", "少说", "简单")
+        for term in ("汇报", "回复", "提醒", "跟进", "语气", "格式", "工作方式", "服务", "沟通", "先说结论", "只说重点", "少说", "简单", "一项一项", "一次一项", "一次不要说太多", "一个章节", "一个问题")
     )
 
 
@@ -1243,6 +1261,7 @@ def _dimension_label(value: str) -> str:
         "detail": "细节",
         "avoidance": "禁忌",
         "followup_method": "跟进方式",
+        "interaction_pacing": "互动节奏",
         "other": "其他",
     }.get(value, value or "其他")
 

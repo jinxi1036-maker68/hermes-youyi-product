@@ -7,7 +7,7 @@ import json
 from typing import Any, Callable
 
 
-CAPABILITY_MANIFEST_VERSION = "xiaoyou-capabilities-v1.2-23"
+CAPABILITY_MANIFEST_VERSION = "xiaoyou-capabilities-v1.3-23"
 
 
 DOMAIN_OPERATIONS: dict[str, tuple[str, ...]] = {
@@ -48,7 +48,7 @@ DOMAIN_OPERATIONS: dict[str, tuple[str, ...]] = {
         "query_institution_onboarding_gaps", "query_operational_facts", "submit_operational_fact",
         "confirm_operational_fact", "submit_information_request_record", "query_information_requests",
         "submit_information_request_update", "query_employee_work_map", "query_fact_gap_candidates",
-        "submit_fact_gap_candidate",
+        "submit_fact_gap_candidate", "query_institution_work", "advance_institution_work",
     ),
     "workstyle": (
         "query_person_workstyle_profile", "submit_person_workstyle_preference",
@@ -201,6 +201,11 @@ def _domain_schema(domain: str, legacy: dict[str, tuple[dict[str, Any], Callable
             "query_industry_learning_candidates，并明确说明无关内容已隔离、不生成教培趋势。老板询问内部运营中是否发现"
             "数学提升、阅读、书写、习惯等新服务项目时用 query_project_opportunities；只有老板明确批准验证、暂缓、驳回或"
             "重新打开某个候选时才用 review_project_opportunity。机会候选不等于正式立项。"
+        ),
+        "institution": (
+            "选择提示：机构发现的制度、流程或内部改进先用 query_institution_work 查看同一工作事项的事实、草案、版本与老板决定；"
+            "推进时使用 advance_institution_work，并明确 action。制度内容确认与落实授权是两次不同的老板决定："
+            "内容确认后只能等待授权，不得自动派任务、通知员工或声称已经落实。"
         ),
     }.get(domain, "")
     return {

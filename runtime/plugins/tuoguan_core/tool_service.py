@@ -96,6 +96,7 @@ from .digital_employee_state import (
     generate_autonomous_recovery_report,
     query_action_executions,
     query_autonomous_work_brief,
+    query_institution_work,
     query_business_events,
     query_hermes_work_items,
     query_wakeup_requests,
@@ -131,6 +132,7 @@ from .digital_employee_state import (
     submit_staff_voice_signal,
     submit_goal_evidence,
     submit_hermes_work_item,
+    advance_institution_work,
     submit_gray_optimization_decision,
     submit_gray_observation,
     submit_gray_rollout_decision,
@@ -1485,6 +1487,8 @@ class TuoguanToolService:
         student_name: str = "",
         goal_id: str = "",
         goal_action_id: str = "",
+        parent_work_item_id: str = "",
+        artifact_version_id: str = "",
         evidence_requirement: str = "",
     ) -> dict[str, Any]:
         denied = self._approved()
@@ -1494,6 +1498,38 @@ class TuoguanToolService:
             return self._error("permission_denied", "只有老板或店长可以创建并分配任务。")
         if staff_is_offboarded(self.store, assignee_user_id):
             return self._error("target_staff_inactive", "该员工已经离职停用，不能再分配任务或发送提醒。")
+        responsibility: dict[str, Any] = {"evidence": []}
+        institutional_item: dict[str, Any] = {}
+        assignee_role = ""
+        if parent_work_item_id:
+            institutional_item = query_institution_work(
+                self.store,
+                identity=self.identity,
+                include_closed=True,
+                limit=100,
+            )
+            institutional_item = next(
+                (
+                    row for row in institutional_item.get("items") or []
+                    if str(row.get("work_item_id") or "") == str(parent_work_item_id)
+                ),
+                {},
+            )
+            if not institutional_item:
+                return self._error("institution_work_not_found", "没有找到要关联的机构工作事项。")
+            if str(institutional_item.get("institution_stage") or "") not in {"implementing", "effective", "verifying"}:
+                return self._error("implementation_authorization_required", "机构草案必须经过内容确认和单独落实授权后，才能创建执行任务。")
+            if artifact_version_id and str(institutional_item.get("current_artifact_version_id") or "") != str(artifact_version_id):
+                return self._error("artifact_version_mismatch", "任务必须关联当前已授权的成果版本。")
+            # This rollout deliberately keeps institutional execution inside the
+            # approved boss/test-teacher sandbox until the owner expands it.
+            if str(assignee_user_id) not in {"JinWenJie", "CeShi"}:
+                return self._error("institution_rollout_target_not_authorized", "当前机构制度落实灰度只允许金总和李老师测试号。")
+            from .staff_directory import _build_entries
+            entry = next((row for row in _build_entries(self.store) if str(row.get("user_id") or "") == str(assignee_user_id)), {})
+            assignee_role = str(entry.get("role") or "")
+            if not assignee_role or assignee_role == "boss":
+                return self._error("institution_task_responsible_role_invalid", "机构落实任务必须由可信目录中的实际执行人承担，不能把老板误写成老师或执行人。")
         if goal_id:
             from .goal_operator import find_active_goal
             from .proactive_work import GOAL_TASK_HIGH_RISK_TERMS, effective_proactive_permission, verify_goal_task_responsibility
@@ -1567,11 +1603,12 @@ class TuoguanToolService:
                 created_by_role=self.identity.role,
                 created_by_name=self.identity.person_name,
                 business_goal=str(title or "").strip(),
+                assignee_role=assignee_role,
             )
             if result.get("ok") and not result.get("already_applied"):
                 task = result.get("task") if isinstance(result.get("task"), dict) else {}
                 task_id = str(result.get("task_id") or task.get("id") or "")
-                if goal_id and task_id:
+                if (goal_id or parent_work_item_id) and task_id:
                     persisted = self.store.update_task(
                         task_id,
                         lambda current: {
@@ -1580,15 +1617,17 @@ class TuoguanToolService:
                             "goal_action_id": str(goal_action_id or ""),
                             "evidence_requirement": str(evidence_requirement or "").strip(),
                             "responsibility_evidence": responsibility.get("evidence") or [],
-                            "created_autonomously_within_goal": True,
+                            "created_autonomously_within_goal": bool(goal_id),
+                            "parent_work_item_id": str(parent_work_item_id or ""),
+                            "artifact_version_id": str(artifact_version_id or institutional_item.get("current_artifact_version_id") or ""),
                         },
                     )
                     if isinstance(persisted, dict):
                         task = persisted
                         result["task"] = deepcopy(persisted)
                         result["writeback_verified"] = (
-                            str(persisted.get("goal_id") or "") == str(goal_id)
-                            and str(persisted.get("goal_action_id") or "") == str(goal_action_id or "")
+                            (not goal_id or (str(persisted.get("goal_id") or "") == str(goal_id) and str(persisted.get("goal_action_id") or "") == str(goal_action_id or "")))
+                            and (not parent_work_item_id or (str(persisted.get("parent_work_item_id") or "") == str(parent_work_item_id) and str(persisted.get("artifact_version_id") or "") == str(artifact_version_id or institutional_item.get("current_artifact_version_id") or "")))
                         )
                 task_contract = task.get("task_contract") if isinstance(task.get("task_contract"), dict) else {}
                 criteria = [str(value) for value in task_contract.get("success_criteria") or [] if str(value)]
@@ -3728,6 +3767,84 @@ class TuoguanToolService:
             return denied
         result = query_hermes_work_items(self.store, identity=self.identity, status=status, focus_key=focus_key, include_closed=include_closed, limit=limit)
         return self._ok("query_hermes_work_items", data=result, message=str(result.get("rendered_text") or ""))
+
+    def query_institution_work(
+        self,
+        *,
+        focus_key: str = "",
+        institution_stage: str = "",
+        include_closed: bool = False,
+        limit: int = 20,
+    ) -> dict[str, Any]:
+        denied = self._approved()
+        if denied:
+            return denied
+        result = query_institution_work(
+            self.store,
+            identity=self.identity,
+            focus_key=focus_key,
+            institution_stage=institution_stage,
+            include_closed=include_closed,
+            limit=limit,
+        )
+        return self._ok("query_institution_work", data=result, message=str(result.get("rendered_text") or ""))
+
+    def advance_institution_work(
+        self,
+        *,
+        action: str,
+        operation_id: str,
+        focus_key: str = "",
+        work_item_id: str = "",
+        title: str = "",
+        summary: str = "",
+        evidence: list[Any] | None = None,
+        artifact_title: str = "",
+        artifact_content: str = "",
+        artifact_version_id: str = "",
+        evidence_ids: list[Any] | None = None,
+        pending_items: list[Any] | None = None,
+        decision: str = "",
+        implementation_scope: dict[str, Any] | None = None,
+        execution_link: dict[str, Any] | None = None,
+        verification: dict[str, Any] | None = None,
+        source_text: str = "",
+        source_message_id: str = "",
+    ) -> dict[str, Any]:
+        denied = self._approved()
+        if denied:
+            return denied
+
+        def execute() -> dict[str, Any]:
+            result = advance_institution_work(
+                self.store,
+                identity=self.identity,
+                action=action,
+                operation_id=operation_id,
+                focus_key=focus_key,
+                work_item_id=work_item_id,
+                title=title,
+                summary=summary,
+                evidence=evidence,
+                artifact_title=artifact_title,
+                artifact_content=artifact_content,
+                artifact_version_id=artifact_version_id,
+                evidence_ids=evidence_ids,
+                pending_items=pending_items,
+                decision=decision,
+                implementation_scope=implementation_scope,
+                execution_link=execution_link,
+                verification=verification,
+                source_text=source_text,
+                source_message_id=source_message_id,
+            )
+            return result if not result.get("ok") else self._ok(
+                "advance_institution_work",
+                data=result,
+                message=str(result.get("rendered_text") or ""),
+            )
+
+        return self._operation(operation_id, "advance_institution_work", execute)
 
     def submit_hermes_work_item(
         self,

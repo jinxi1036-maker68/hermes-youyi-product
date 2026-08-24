@@ -289,6 +289,8 @@ TUOGUAN_CREATE_TASK_SCHEMA = _schema(
         "student_name": {"type": "string"},
         "goal_id": {"type": "string", "description": "可选；小优自主创建目标内低风险子任务时必须填写已确认目标 id。"},
         "goal_action_id": {"type": "string", "description": "可选；关联持久目标行动。"},
+        "parent_work_item_id": {"type": "string", "description": "可选：已获落实授权的机构工作事项 id。没有此关联不得把制度草案下发为员工任务。"},
+        "artifact_version_id": {"type": "string", "description": "可选：机构执行任务关联的已授权成果版本。"},
         "evidence_requirement": {"type": "string", "description": "可选；任务闭环必须拿到的真实证据。"},
         "operation_id": {"type": "string"},
     }),
@@ -491,7 +493,7 @@ TUOGUAN_SUBMIT_PERSON_WORKSTYLE_PREFERENCE_SCHEMA = _schema(
         "preference_text": {"type": "string", "description": "用户明确表达的偏好内容，保留原意。"},
         "preference": {"type": "string", "description": "可选兼容字段；等同于 preference_text，仍只允许低风险工作方式偏好。"},
         "normalized_rule": {"type": "string", "description": "可选，将偏好整理成简短规则；不得加入用户没有表达的事实。"},
-        "dimension_key": {"type": "string", "enum": ["", "length", "layout", "structure", "tone", "timing", "detail", "avoidance", "followup_method", "other"], "default": "", "description": "可选，偏好影响的工作方式维度；留空由系统按文本推断。"},
+        "dimension_key": {"type": "string", "enum": ["", "length", "layout", "structure", "tone", "timing", "detail", "avoidance", "followup_method", "interaction_pacing", "other"], "default": "", "description": "可选，偏好影响的工作方式维度；留空由系统按文本推断。"},
         "confidence": {"type": "number", "default": 1.0, "description": "模型对这条低风险工作方式偏好的置信度，0-1。"},
         "source_turn_id": {"type": "string", "description": "可选，当前会话轮次 id。"},
         "target_user_id": {"type": "string", "description": "可选，默认保存到当前会话人员。"},
@@ -945,6 +947,42 @@ TUOGUAN_QUERY_HERMES_WORK_ITEMS_SCHEMA = _schema(
         "limit": {"type": "integer", "description": "最多返回条数。"},
     }),
     ["user_id"],
+)
+
+TUOGUAN_QUERY_INSTITUTION_WORK_SCHEMA = _schema(
+    "查询机构制度、流程和内部改进工作事项。草案、老板内容确认、落实授权、执行关联和核验都以同一工作事项为准；老师和店长不能看到未生效草案或老板决定。",
+    _identity_props({
+        "focus_key": {"type": "string", "description": "可选稳定焦点，例如 institution:safety_management_policy。"},
+        "institution_stage": {"type": "string", "description": "可选阶段筛选。"},
+        "include_closed": {"type": "boolean", "default": False, "description": "是否包含已关闭或停止事项。"},
+        "limit": {"type": "integer", "default": 20, "description": "最多返回条数。"},
+    }),
+    ["user_id"],
+)
+
+TUOGUAN_ADVANCE_INSTITUTION_WORK_SCHEMA = _schema(
+    "推进一个已存在的机构制度、流程或内部改进工作事项。模型必须显式选择 action；系统只保存证据、版本、老板决定、执行关联和核验，不根据自然语言偷偷派任务或外发。内容确认与落实授权必须是两次不同的老板决定；没有回执不得说已保存、已确认、已通知或已落实。",
+    _identity_props({
+        "action": {"type": "string", "enum": ["discover", "record_evidence", "save_draft", "submit_for_review", "review_content", "authorize_implementation", "link_execution", "verify", "defer", "close"], "description": "本轮唯一的机构工作动作。"},
+        "operation_id": {"type": "string", "description": "本次写入幂等操作 id。"},
+        "focus_key": {"type": "string", "description": "发现或查询时使用的稳定焦点键。"},
+        "work_item_id": {"type": "string", "description": "已有机构工作事项 id；发现动作可留空。"},
+        "title": {"type": "string", "description": "发现机构缺口时的标题。"},
+        "summary": {"type": "string", "description": "发现、暂缓、关闭或验证的事实摘要。"},
+        "evidence": {"type": "array", "items": {"type": "object"}, "description": "证据列表。每条须含 source_kind=internal_confirmed/internal_record/external_primary/model_judgment/pending_hypothesis/unsupported 和 summary；external_primary 还须 source_url、publisher、published_at。"},
+        "artifact_title": {"type": "string", "description": "草案版本标题。"},
+        "artifact_content": {"type": "string", "description": "草案完整内容。待专业核验的结论须同时列入 pending_items，不能写成生效事实。"},
+        "artifact_version_id": {"type": "string", "description": "要审核、授权、关联或核验的成果版本；默认当前版本。"},
+        "evidence_ids": {"type": "array", "items": {"type": "string"}, "description": "草案引用的已保存证据 id。"},
+        "pending_items": {"type": "array", "items": {}, "description": "尚待核验的法律、标准、责任或业务假设。"},
+        "decision": {"type": "string", "enum": ["approved", "changes_requested", "rejected"], "description": "review_content 时老板的内容决定。"},
+        "implementation_scope": {"type": "object", "description": "老板单独授权落实时的范围、对象和边界；授权本身不自动发消息或派任务。"},
+        "execution_link": {"type": "object", "description": "真实任务、周期安排或发送回执关联；仅同版本落实授权后可保存。"},
+        "verification": {"type": "object", "description": "落实后的真实检查结果和证据；effective=true 只表示本次核验有效。"},
+        "source_text": {"type": "string", "description": "来源原话或简洁摘要。"},
+        "source_message_id": {"type": "string", "description": "老板决定来源消息 id；内容确认和落实授权不能引用同一条消息。"},
+    }),
+    ["user_id", "action", "operation_id"],
 )
 
 TUOGUAN_SUBMIT_HERMES_WORK_ITEM_SCHEMA = _schema(
@@ -1533,6 +1571,8 @@ TOOLS = (
     ("tuoguan_submit_performance_evidence_response", TUOGUAN_SUBMIT_PERFORMANCE_EVIDENCE_RESPONSE_SCHEMA, _handler("submit_performance_evidence_response")),
     ("tuoguan_submit_value_ledger_entry", TUOGUAN_SUBMIT_VALUE_LEDGER_ENTRY_SCHEMA, _handler("submit_value_ledger_entry")),
     ("tuoguan_query_hermes_work_items", TUOGUAN_QUERY_HERMES_WORK_ITEMS_SCHEMA, _handler("query_hermes_work_items")),
+    ("tuoguan_query_institution_work", TUOGUAN_QUERY_INSTITUTION_WORK_SCHEMA, _handler("query_institution_work")),
+    ("tuoguan_advance_institution_work", TUOGUAN_ADVANCE_INSTITUTION_WORK_SCHEMA, _handler("advance_institution_work")),
     ("tuoguan_submit_hermes_work_item", TUOGUAN_SUBMIT_HERMES_WORK_ITEM_SCHEMA, _handler("submit_hermes_work_item")),
     ("tuoguan_update_hermes_work_item", TUOGUAN_UPDATE_HERMES_WORK_ITEM_SCHEMA, _handler("update_hermes_work_item")),
     ("tuoguan_query_wakeup_requests", TUOGUAN_QUERY_WAKEUP_REQUESTS_SCHEMA, _handler("query_wakeup_requests")),

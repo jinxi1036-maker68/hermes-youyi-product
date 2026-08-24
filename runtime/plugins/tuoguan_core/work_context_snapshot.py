@@ -36,6 +36,7 @@ _AUTHORITATIVE_CONTEXT_SOURCES = {
     "relationship_touch": ("relationship_touch", "relationship_touch_candidates.jsonl"),
     "goal_action": ("goal_action", "goal_actions.jsonl"),
     "social_market_research": ("market_evidence", "social_market_research_candidates.jsonl"),
+    "institution_work": ("institution_work_item", "hermes_work_items.jsonl"),
 }
 
 
@@ -135,6 +136,35 @@ def build_work_context_snapshot(
         normalized = _normalize_candidate(item, identity=identity, now=current)
         if normalized:
             candidates.append(normalized)
+    if str(identity.role or "") == "boss":
+        # An owner short reply such as "确认" must be able to bind to the
+        # current artifact decision.  This is evidence-only context, not a
+        # hidden router: a model still decides whether the reply is related.
+        from .digital_employee_state import query_institution_work
+
+        institution = query_institution_work(store, identity=identity, include_closed=False, limit=5)
+        for item in institution.get("items") or []:
+            if not isinstance(item, dict):
+                continue
+            stage = str(item.get("institution_stage") or "")
+            if stage not in {"awaiting_content_approval", "awaiting_implementation_authorization", "drafting", "implementing", "verifying"}:
+                continue
+            artifact_id = str(item.get("current_artifact_version_id") or "")
+            candidates.append({
+                "context_type": "institution_work",
+                "context_id": str(item.get("work_item_id") or ""),
+                "summary": str(item.get("title") or item.get("focus_summary") or "")[:180],
+                "status": stage,
+                "updated_at": str(item.get("updated_at") or item.get("created_at") or ""),
+                "freshness": "current",
+                "confidence": 1.0,
+                "evidence_source": "hermes_work_items.jsonl",
+                "authoritative_object_type": "institution_work_item",
+                "authoritative_source": "hermes_work_items.jsonl",
+                "participant_ids": [str(identity.canonical_user_id or "")],
+                "artifact_version_id": artifact_id,
+                "decision_type": str((item.get("current_waiting") or {}).get("decision_type") or ""),
+            })
     candidates.sort(key=lambda item: str(item.get("updated_at") or ""), reverse=True)
     candidates = candidates[:maximum]
     if not candidates:

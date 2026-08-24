@@ -14,6 +14,7 @@ from .digital_employee_state import (
     AUTONOMOUS_WORK_ITEM_FRESHNESS_HOURS,
     query_attention_threads,
     query_hermes_work_items,
+    query_institution_work,
 )
 from .knowledge import list_pending_learning_candidates
 from .operations_focus import active_operations_focus
@@ -1388,7 +1389,8 @@ def _short_text(value: Any, limit: int = 120) -> str:
 def _work_item_card(item: dict[str, Any]) -> dict[str, Any]:
     current_waiting = _as_dict(item.get("current_waiting"))
     phase = _as_dict(item.get("current_phase"))
-    return {
+    card = {
+        "work_item_id": str(item.get("work_item_id") or ""),
         "focus_key": str(item.get("focus_key") or ""),
         "title": str(item.get("title") or item.get("focus_summary") or item.get("focus_key") or "小优工作事项"),
         "status": str(item.get("status") or "active"),
@@ -1397,6 +1399,21 @@ def _work_item_card(item: dict[str, Any]) -> dict[str, Any]:
         "next_attention_at": str(item.get("next_attention_at") or item.get("next_contact_after") or ""),
         "next_action": _short_text(_first_string(item.get("next_actions"))),
     }
+    if str(item.get("work_kind") or "") == "institution_change":
+        artifacts = _as_list(item.get("artifacts"))
+        current_version = str(item.get("current_artifact_version_id") or "")
+        artifact = next((row for row in artifacts if isinstance(row, dict) and str(row.get("version_id") or "") == current_version), {})
+        card.update({
+            "work_kind": "institution_change",
+            "institution_stage": str(item.get("institution_stage") or "discovered"),
+            "artifact_version_id": current_version,
+            "artifact_title": _short_text(_as_dict(artifact).get("title") or ""),
+            "artifact_status": str(_as_dict(artifact).get("status") or ""),
+            "evidence_count": len(_as_list(item.get("evidence"))),
+            "pending_items": _as_list(_as_dict(artifact).get("pending_items"))[:3],
+            "decision_type": str(current_waiting.get("decision_type") or ""),
+        })
+    return card
 
 
 def _boss_focus_title(card: dict[str, Any]) -> str:
@@ -1538,6 +1555,16 @@ def _hermes_employee_snapshot(
         row for row in _as_list(work_result.get("items"))
         if isinstance(row, dict) and _current_state_row(row, now=now)
     ]
+    institution_result = query_institution_work(
+        store,
+        identity=dashboard_identity,
+        include_closed=False,
+        limit=20,
+    )
+    institution_rows = [
+        row for row in _as_list(institution_result.get("items"))
+        if isinstance(row, dict) and _current_state_row(row, now=now)
+    ]
     attention_rows: list[dict[str, Any]] = []
     if role in {"boss", "manager"}:
         attention_result = query_attention_threads(
@@ -1554,6 +1581,7 @@ def _hermes_employee_snapshot(
     action_rows = _read_jsonl(store, "action_executions.jsonl")
     today_actions = [row for row in action_rows if _row_today(row, now)]
     work_items = [_work_item_card(item) for item in reversed(_latest_rows(work_rows, limit=5))]
+    institution_items = [_work_item_card(item) for item in institution_rows[:3]] if role == "boss" else []
     current = work_items[0] if work_items else {}
     open_questions = [
         {
@@ -1564,6 +1592,24 @@ def _hermes_employee_snapshot(
         for row in reversed(_latest_rows(attention_rows, limit=3))
         if role == "boss" or str(row.get("target_user_id") or "") == user_id
     ][:3]
+    institution_decisions = [
+        {
+            "question": _short_text(
+                f"确认《{row.get('artifact_title') or row.get('title') or '机构方案'}》"
+                if str(row.get("institution_stage") or "") == "awaiting_content_approval"
+                else f"是否授权落实《{row.get('artifact_title') or row.get('title') or '机构方案'}》"
+            ),
+            "status": str(row.get("institution_stage") or ""),
+            "focus_key": str(row.get("focus_key") or ""),
+            "work_item_id": str(row.get("work_item_id") or ""),
+            "artifact_version_id": str(row.get("artifact_version_id") or ""),
+            "decision_type": str(row.get("decision_type") or ""),
+        }
+        for row in institution_items
+        if str(row.get("institution_stage") or "") in {"awaiting_content_approval", "awaiting_implementation_authorization"}
+    ]
+    if role == "boss":
+        open_questions = (institution_decisions + open_questions)[:3]
     report_status = _daily_report_status(store, now)
     relationship_touch = _relationship_touch_snapshot(store, now=now, role=role, user_id=user_id, limit=4)
     decision_count = len(open_questions)
@@ -1620,6 +1666,7 @@ def _hermes_employee_snapshot(
         "current_focus": current,
         "work_items": work_items[:3],
         "other_work_count": max(0, len(work_items) - 3),
+        "institution_work_items": institution_items,
         "open_questions": open_questions,
         "value_entries": [
             {

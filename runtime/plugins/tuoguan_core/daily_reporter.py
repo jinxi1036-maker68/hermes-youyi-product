@@ -773,6 +773,17 @@ def _work_item_lines(items: list[dict[str, Any]], *, purpose: str) -> list[str]:
     lines: list[str] = []
     for item in items[:4]:
         title = _pick_text(item, "title", "focus_summary", "focus_key")
+        institution_stage = _pick_text(item, "institution_stage")
+        if str(item.get("work_kind") or "") == "institution_change":
+            if institution_stage == "awaiting_content_approval":
+                lines.append(f"机构改进：{title}已形成待审核版本，需要你确认内容；尚未授权落实。")
+            elif institution_stage == "awaiting_implementation_authorization":
+                lines.append(f"机构改进：{title}内容已确认，等待你单独授权是否落实。")
+            elif institution_stage in {"implementing", "verifying"}:
+                lines.append(f"机构改进：{title}正在{('核验效果' if institution_stage == 'verifying' else '落实')}，我只按真实回执汇报。")
+            # A daily report only needs the one owner-relevant line. Drafts and
+            # discovery signals stay in the work item/H5 until they mature.
+            continue
         status = _public_status_label(_pick_text(item, "status") or "active")
         phase = _public_phase_text(item.get("current_phase"))
         next_action = _first_text(item.get("next_actions"))

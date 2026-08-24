@@ -10,10 +10,10 @@ def test_facade_manifest_covers_every_legacy_operation_once():
     legacy = {name.removeprefix("tuoguan_") for name, _schema, _handler in LEGACY_TOOLS}
     assigned = [operation for values in DOMAIN_OPERATIONS.values() for operation in values]
     assert len(DOMAIN_OPERATIONS) == 12
-    assert len(assigned) == len(set(assigned)) == len(legacy) == 107
+    assert len(assigned) == len(set(assigned)) == len(legacy) == 109
     assert set(assigned) == legacy
     manifest = operation_manifest()
-    assert manifest["manifest_version"] == "xiaoyou-capabilities-v1.2-23"
+    assert manifest["manifest_version"] == "xiaoyou-capabilities-v1.3-23"
     assert manifest["frozen"] is True
     assert manifest["model_visible_tool_count"] == 23
     assert len(manifest["fast_paths"]) == 11
@@ -39,7 +39,7 @@ def test_default_model_surface_has_compact_facades_and_routine_fast_paths(monkey
     assert "tuoguan_submit_relationship_touch_candidate" in visible
     assert "tuoguan_context" not in visible
     assert size["estimated_tokens"] < 8000
-    assert "xiaoyou-capabilities-v1.2-23" in __import__(
+    assert "xiaoyou-capabilities-v1.3-23" in __import__(
         "plugins.tuoguan_core.capability_facades", fromlist=["render_facade_instruction"]
     ).render_facade_instruction()
 
@@ -49,7 +49,7 @@ def test_legacy_surface_remains_available_only_as_explicit_rollback(monkeypatch)
 
     monkeypatch.setenv("HERMES_TUOGUAN_TOOL_SURFACE", "legacy")
     assert model_tools() is LEGACY_TOOLS
-    assert len(model_tools()) == 107
+    assert len(model_tools()) == 109
 
 
 def test_task_facade_executes_explicit_operation_and_preserves_effective_tool(monkeypatch):
