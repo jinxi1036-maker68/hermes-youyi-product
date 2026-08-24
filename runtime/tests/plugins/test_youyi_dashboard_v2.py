@@ -116,6 +116,62 @@ def test_dashboard_v2_adds_hermes_role_blocks(tmp_path):
     assert "Hermes" not in public_payload
 
 
+def test_dashboard_v2_uses_folded_latest_state_and_never_resurrects_old_events(tmp_path):
+    from plugins.tuoguan_core.dashboard_builder import build_dashboard_snapshot
+
+    store = _seed_dashboard_store(tmp_path)
+    _append_jsonl(tmp_path, "hermes_work_items.jsonl", [
+        {
+            "record_type": "work_item",
+            "work_item_id": "work1",
+            "focus_key": "goal:sept_renewal",
+            "title": "目标推进：九月份续费率更稳",
+            "status": "active",
+            "focus_summary": "旧等待条件",
+            "created_at": "2026-07-30T09:00:00+08:00",
+        },
+        {
+            "record_type": "work_item_update",
+            "work_item_id": "work1",
+            "focus_key": "goal:sept_renewal",
+            "status": "superseded",
+            "stop_reason": "事实已确认",
+            "created_at": "2026-07-30T20:55:00+08:00",
+        },
+    ])
+    _append_jsonl(tmp_path, "attention_threads.jsonl", [
+        {
+            "record_type": "attention_thread",
+            "attention_id": "att1",
+            "focus_key": "goal:sept_renewal",
+            "target_user_id": "JinWenJie",
+            "question_text": "请确认李老师全名。",
+            "status": "queued",
+            "created_at": "2026-07-30T11:00:00+08:00",
+        },
+        {
+            "record_type": "attention_thread_update",
+            "attention_id": "att1",
+            "status": "resolved",
+            "resolution_note": "老板已经回答并写入事实。",
+            "created_at": "2026-07-30T20:56:00+08:00",
+        },
+    ])
+
+    boss = build_dashboard_snapshot(store, now=datetime(2026, 7, 30, 21, 5))["boss_dashboard"]
+    assert boss["hermes_employee"]["open_questions"] == []
+    assert boss["hermes_employee"]["current_focus"] == {}
+
+
+def test_dashboard_v2_hides_open_decisions_and_work_after_freshness_window(tmp_path):
+    from plugins.tuoguan_core.dashboard_builder import build_dashboard_snapshot
+
+    store = _seed_dashboard_store(tmp_path)
+    boss = build_dashboard_snapshot(store, now=datetime(2026, 8, 2, 12, 0))["boss_dashboard"]
+    assert boss["hermes_employee"]["open_questions"] == []
+    assert boss["hermes_employee"]["current_focus"] == {}
+
+
 def test_dashboard_v2_frontend_uses_frozen_workbench_v1():
     from plugins.tuoguan_core.dashboard_http import _DASHBOARD_HTML
 

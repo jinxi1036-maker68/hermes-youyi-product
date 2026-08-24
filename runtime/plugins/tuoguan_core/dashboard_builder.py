@@ -10,6 +10,11 @@ import uuid
 from typing import Any
 
 from .analytics import build_business_overview
+from .digital_employee_state import (
+    AUTONOMOUS_WORK_ITEM_FRESHNESS_HOURS,
+    query_attention_threads,
+    query_hermes_work_items,
+)
 from .knowledge import list_pending_learning_candidates
 from .operations_focus import active_operations_focus
 from .payroll import build_payroll_snapshot, load_payroll_rules
@@ -1324,8 +1329,12 @@ def _latest_rows(rows: list[dict[str, Any]], *, limit: int = 3) -> list[dict[str
     return sorted(rows, key=lambda item: str(item.get("updated_at") or item.get("created_at") or item.get("timestamp") or ""))[-limit:]
 
 
-def _open_status(value: Any) -> bool:
-    return str(value or "").strip() in {"active", "waiting", "blocked", "candidate", "queued", "sent", "replied", "failed"}
+def _current_state_row(row: dict[str, Any], *, now: datetime) -> bool:
+    updated_at = _parse_dt(row.get("updated_at") or row.get("created_at"))
+    if updated_at is None:
+        return False
+    reference = _business_naive(now)
+    return updated_at >= reference - timedelta(hours=AUTONOMOUS_WORK_ITEM_FRESHNESS_HOURS)
 
 
 def _short_text(value: Any, limit: int = 120) -> str:
@@ -1468,14 +1477,36 @@ def _hermes_employee_snapshot(
     teacher_execution: list[dict[str, Any]],
     value_limit: int = 3,
 ) -> dict[str, Any]:
+    dashboard_identity = UserIdentity(
+        "dashboard",
+        user_id,
+        user_id,
+        user_id,
+        role,
+        "approved",
+    )
+    work_result = query_hermes_work_items(
+        store,
+        identity=dashboard_identity,
+        include_closed=False,
+        limit=100,
+    )
     work_rows = [
-        row for row in _read_jsonl(store, "hermes_work_items.jsonl")
-        if _open_status(row.get("status") or "active")
+        row for row in _as_list(work_result.get("items"))
+        if isinstance(row, dict) and _current_state_row(row, now=now)
     ]
-    attention_rows = [
-        row for row in _read_jsonl(store, "attention_threads.jsonl")
-        if _open_status(row.get("status"))
-    ]
+    attention_rows: list[dict[str, Any]] = []
+    if role in {"boss", "manager"}:
+        attention_result = query_attention_threads(
+            store,
+            identity=dashboard_identity,
+            include_closed=False,
+            limit=100,
+        )
+        attention_rows = [
+            row for row in _as_list(attention_result.get("attention_threads"))
+            if isinstance(row, dict) and _current_state_row(row, now=now)
+        ]
     values = list(reversed(_latest_rows(_read_jsonl(store, "value_progress_ledger.jsonl"), limit=value_limit)))
     action_rows = _read_jsonl(store, "action_executions.jsonl")
     today_actions = [row for row in action_rows if _row_today(row, now)]
