@@ -106,3 +106,33 @@ def test_verified_task_dashboard_repair_is_dry_run_first_and_append_only(tmp_pat
     assert {folded[item_id]["status"] for item_id in STALE_TOUCH_IDS} == {"superseded"}
     assert (tmp_path / "dashboard_cache.json").exists()
     assert len((tmp_path / "relationship_touch_candidates.jsonl").read_text(encoding="utf-8").splitlines()) == 4
+
+
+def test_repair_accepts_an_already_superseded_touch_but_closes_a_sent_stale_thread(tmp_path):
+    from plugins.tuoguan_core.digital_employee_state import _fold_relationship_touch_candidates
+    from plugins.tuoguan_core.store import TuoguanStore
+    from scripts.repair_task_dashboard_state_v1 import (
+        DUPLICATE_RENEWAL_TASK_ID,
+        OWNER_CONTACT_TASK_ID,
+        PRIMARY_RENEWAL_TASK_ID,
+        STALE_TOUCH_IDS,
+        repair,
+    )
+
+    _write_json(tmp_path, "write_guard_config.json", {"enabled": True})
+    _write_json(tmp_path, "tasks.json", [
+        {"id": PRIMARY_RENEWAL_TASK_ID, "status": "waiting_confirmation"},
+        {"id": DUPLICATE_RENEWAL_TASK_ID, "status": "superseded"},
+        {"id": OWNER_CONTACT_TASK_ID, "status": "pending"},
+    ])
+    _write_jsonl(tmp_path, "relationship_touch_candidates.jsonl", [
+        {"record_type": "relationship_touch_candidate", "candidate_id": STALE_TOUCH_IDS[0], "target_role": "teacher", "target_user_id": "CeShi", "message": "李老师，旧问题。", "status": "candidate", "created_at": "2026-08-13T15:09:00+08:00"},
+        {"record_type": "relationship_touch_update", "candidate_id": STALE_TOUCH_IDS[0], "status": "superseded", "created_at": "2026-08-20T15:00:00+08:00"},
+        {"record_type": "relationship_touch_candidate", "candidate_id": STALE_TOUCH_IDS[1], "target_role": "teacher", "target_user_id": "CeShi", "message": "崔老师您好，旧问题。", "status": "sent", "created_at": "2026-08-20T15:09:00+08:00"},
+    ])
+
+    result = repair(tmp_path, apply=False, now=datetime.fromisoformat("2026-08-24T18:00:00+08:00"))
+
+    assert result["ok"] is True
+    assert [row["candidate_id"] for row in result["plan"]["touch_targets"]] == [STALE_TOUCH_IDS[1]]
+    assert _fold_relationship_touch_candidates(TuoguanStore(tmp_path))[STALE_TOUCH_IDS[1]]["status"] == "sent"

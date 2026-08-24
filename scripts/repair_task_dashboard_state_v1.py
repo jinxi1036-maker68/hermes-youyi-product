@@ -77,7 +77,12 @@ def build_plan(store: TuoguanStore) -> dict[str, Any]:
         actual = str((row or {}).get("status") or "")
         if row is None:
             mismatches.append({"candidate_id": candidate_id, "expected_status": "candidate_or_queued", "actual_status": "missing"})
-        elif actual not in {"candidate", "authorized", "queued", "retry_pending", "result_unknown"}:
+        elif actual == "superseded":
+            # A prior controlled repair already removed this old thread.  It
+            # remains historical evidence but must not make this repair fail
+            # or cause a second update event.
+            continue
+        elif actual not in {"candidate", "authorized", "queued", "sending", "sent", "retry_pending", "result_unknown"}:
             mismatches.append({"candidate_id": candidate_id, "expected_status": "candidate_or_queued", "actual_status": actual})
         else:
             touch_targets.append({
