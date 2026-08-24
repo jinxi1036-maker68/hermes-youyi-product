@@ -116,20 +116,27 @@ def test_dashboard_v2_adds_hermes_role_blocks(tmp_path):
     assert "Hermes" not in public_payload
 
 
-def test_dashboard_v2_frontend_contains_new_default_tabs():
+def test_dashboard_v2_frontend_uses_frozen_workbench_v1():
     from plugins.tuoguan_core.dashboard_http import _DASHBOARD_HTML
 
-    assert "小优数字员工工作台" in _DASHBOARD_HTML
-    assert "小优店长助手" in _DASHBOARD_HTML
-    assert "小优老师成长助手" in _DASHBOARD_HTML
-    assert "小优助手" in _DASHBOARD_HTML
-    assert "正在读取小优看板数据" in _DASHBOARD_HTML
-    assert 'replace(/Hermes/g, "小优")' in _DASHBOARD_HTML
-    assert "Hermes 数字员工工作台" not in _DASHBOARD_HTML
-    assert "Hermes 店长助手" not in _DASHBOARD_HTML
-    assert "Hermes 老师成长助手" not in _DASHBOARD_HTML
-    assert "Hermes助手" not in _DASHBOARD_HTML
-    assert "boss-brief" in _DASHBOARD_HTML
-    assert "需要我拍板" in _DASHBOARD_HTML
-    assert "后台跟进事项" in _DASHBOARD_HTML
-    assert "绩效树" in _DASHBOARD_HTML
+    assert "<title>小优工作台</title>" in _DASHBOARD_HTML
+    assert "正在读取小优工作台数据" in _DASHBOARD_HTML
+    assert "我的教学与服务工作" in _DASHBOARD_HTML
+    assert "门店运营与协作" in _DASHBOARD_HTML
+    assert "经营决策与小优进展" in _DASHBOARD_HTML
+    for label in ("今日", "学生", "我的积累", "今日现场", "团队", "任务", "决策", "经营", "小优"):
+        assert label in _DASHBOARD_HTML
+    assert "新项目机会" in _DASHBOARD_HTML
+    assert "当前没有达到展示门槛的新项目机会" in _DASHBOARD_HTML
+    assert "复制问题，回企业微信问小优" in _DASHBOARD_HTML
+    assert "/tuoguan/api/me" in _DASHBOARD_HTML
+    assert "/tuoguan/api/teacher" in _DASHBOARD_HTML
+    assert "/tuoguan/api/boss" in _DASHBOARD_HTML
+    assert 'summer_2026:"暑假项目"' in _DASHBOARD_HTML
+    assert 'value="summer_2026"' in _DASHBOARD_HTML
+    assert "summer_care_2026" not in _DASHBOARD_HTML
+    assert "托管 AI 看板" not in _DASHBOARD_HTML
+    assert "小优老师成长助手" not in _DASHBOARD_HTML
+    assert "绩效树" not in _DASHBOARD_HTML
+    assert "工资估算" not in _DASHBOARD_HTML
+    assert "href=" not in _DASHBOARD_HTML

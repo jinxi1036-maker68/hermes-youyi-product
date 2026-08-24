@@ -14,6 +14,7 @@ from .dashboard_auth import (
     verify_parent_report_token,
 )
 from .dashboard_builder import load_dashboard_cache, refresh_dashboard_cache
+from .dashboard_workbench_v1 import DASHBOARD_WORKBENCH_V1_HTML
 from .growth_reports import (
     growth_report_by_id,
     parent_report_payload,
@@ -206,7 +207,7 @@ def register_wecom_callback_routes(app: web.Application, adapter: Any | None = N
     return True
 
 
-_DASHBOARD_HTML = """<!doctype html>
+_LEGACY_DASHBOARD_HTML = """<!doctype html>
 <html lang="zh-CN">
 <head>
   <meta charset="utf-8">
@@ -654,6 +655,9 @@ _DASHBOARD_HTML = """<!doctype html>
   </script>
 </body>
 </html>"""
+
+
+_DASHBOARD_HTML = DASHBOARD_WORKBENCH_V1_HTML
 
 
 _PARENT_REPORT_HTML = """<!doctype html>
