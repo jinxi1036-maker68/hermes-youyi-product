@@ -167,6 +167,34 @@ def test_institution_drafts_are_hidden_from_teacher_until_effective(tmp_path):
     assert query_institution_work(store, identity=teacher)["items"] == []
 
 
+def test_institution_drafts_do_not_leak_through_generic_work_or_manager_dashboard(tmp_path):
+    from plugins.tuoguan_core.dashboard_builder import build_dashboard_snapshot
+    from plugins.tuoguan_core.digital_employee_state import query_hermes_work_items
+    from plugins.tuoguan_core.models import UserIdentity
+
+    store = _store(tmp_path)
+    _safety_chain(store)
+    _json(tmp_path, "staff.json", {
+        "JinWenJie": {"name": "金总", "role": "boss", "status": "active"},
+        "CeShi": {"name": "李老师", "role": "teacher", "status": "active"},
+        "manager1": {"name": "崔老师", "role": "manager", "status": "active"},
+    })
+    manager = UserIdentity("test", "manager1", "manager1", "崔老师", "manager", "approved")
+
+    assert query_hermes_work_items(store, identity=_boss())["items"] == []
+    assert query_hermes_work_items(store, identity=manager)["items"] == []
+
+    snapshot = build_dashboard_snapshot(store)
+    assert "manager1" in snapshot["manager_dashboards"]
+    manager_text = json.dumps(snapshot["manager_dashboards"].get("manager1", {}), ensure_ascii=False)
+    teacher_text = json.dumps(snapshot["teacher_dashboards"].get("CeShi", {}), ensure_ascii=False)
+    boss_text = json.dumps(snapshot["boss_dashboard"], ensure_ascii=False)
+
+    assert "优益托管安全管理制度 V0.1" not in manager_text
+    assert "优益托管安全管理制度 V0.1" not in teacher_text
+    assert "优益托管安全管理制度 V0.1" in boss_text
+
+
 def test_interaction_pacing_is_its_own_workstyle_dimension():
     from plugins.tuoguan_core.workstyle_profiles import _check_reply_compliance, _dimension_for_preference
 

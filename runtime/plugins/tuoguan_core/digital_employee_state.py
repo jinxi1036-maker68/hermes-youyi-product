@@ -4298,6 +4298,11 @@ def query_hermes_work_items(
     normalized_focus = str(focus_key or "").strip()
     items = []
     for item in _fold_hermes_work_items(store).values():
+        # Institution changes have their own version, owner-decision and
+        # effectiveness boundary.  Never let the generic autonomous-work
+        # projection bypass that boundary in a manager or teacher dashboard.
+        if str(item.get("work_kind") or "") == "institution_change":
+            continue
         item_status = str(item.get("status") or "active")
         if normalized_status and item_status != normalized_status:
             continue
