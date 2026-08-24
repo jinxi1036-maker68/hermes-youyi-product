@@ -34,6 +34,30 @@ def test_execution_receipt_reports_real_failure_layer():
     assert receipt["writeback_verified"] is False
 
 
+def test_no_write_task_result_is_a_clarification_receipt_not_a_fake_completion():
+    from plugins.tuoguan_core.execution_receipts import build_execution_receipt
+
+    result = build_execution_receipt(
+        {
+            "ok": True,
+            "data": {
+                "result_action": "clarification_needed",
+                "task_id": "task-should-not-be-claimed",
+                "writeback_verified": True,
+                "no_write_performed": True,
+            },
+        },
+        operation_id="message-no-write",
+        operation="update_task",
+    )
+
+    receipt = result["execution_receipt"]
+    assert receipt["status"] == "clarification_required"
+    assert receipt["object_id"] == ""
+    assert receipt["writeback_verified"] is False
+    assert receipt["idempotency_result"] == "not_applied"
+
+
 def test_write_operation_exception_is_closed_as_failed_receipt(tmp_path, monkeypatch):
     from plugins.tuoguan_core.models import UserIdentity
     from plugins.tuoguan_core.store import TuoguanStore

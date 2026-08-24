@@ -193,7 +193,7 @@ def test_active_task_result_cannot_create_duplicate_record_task(tmp_path, monkey
     assert store.read_json("records.json", []) == []
 
 
-def test_renewal_reply_requires_reason_and_teacher_response_before_closure(tmp_path):
+def test_ordinary_renewal_contact_closes_with_parent_response_and_next_condition(tmp_path):
     from plugins.tuoguan_core.tool_service import TuoguanToolService
 
     store = _seed_store(tmp_path)
@@ -212,25 +212,9 @@ def test_renewal_reply_requires_reason_and_teacher_response_before_closure(tmp_p
         operation_id="op-renewal-evidence-1",
     )
     assert first["ok"] is True
-    assert first["data"]["task"]["status"] == "waiting_confirmation"
-    assert first["data"]["missing_fields"] == ["renewal_reason", "teacher_response"]
-    assert "为什么" in first["message"]
-
-    second = teacher.update_task(
-        task_id=created["task_id"],
-        reply="家长没有说原因，我当时也没有继续追问。",
-        operation_id="op-renewal-evidence-2",
-    )
-    assert second["data"]["task"]["status"] == "waiting_confirmation"
-    assert second["data"]["missing_fields"] == ["teacher_response"]
-
-    third = teacher.update_task(
-        task_id=created["task_id"],
-        reply="我回复家长说开学前我再联系一次，把孩子近期表现和安排一起说明。",
-        operation_id="op-renewal-evidence-3",
-    )
-    assert third["ok"] is True
-    assert third["data"]["task"]["status"] == "completed"
+    assert first["data"]["task"]["status"] == "completed"
+    assert first["data"]["missing_fields"] == []
+    assert "任务已完成" in first["message"]
 
 
 def test_task_update_uses_live_teacher_words_not_model_enrichment(tmp_path, monkeypatch):
@@ -255,7 +239,7 @@ def test_task_update_uses_live_teacher_words_not_model_enrichment(tmp_path, monk
     )
 
     assert result["ok"] is True
-    assert result["data"]["task"]["status"] == "waiting_confirmation"
+    assert result["data"]["task"]["status"] == "completed"
     assert result["data"]["task"]["evidence_summary"] == teacher_words
     assert "态度中立" not in result["data"]["task"]["evidence_summary"]
 
@@ -333,9 +317,53 @@ def test_update_task_refuses_cancel_intent_and_points_to_cancel_tool(tmp_path):
     assert result["data"]["result_action"] == "wrong_tool_for_cancel_intent"
     assert result["data"]["suggested_tool"] == "tuoguan_cancel_task"
     assert result["data"]["no_write_performed"] is True
+    assert result["data"]["writeback_verified"] is False
+    assert result["execution_receipt"]["status"] == "clarification_required"
     saved = store.load_tasks()[0]
     assert saved["status"] == "pending"
     assert "cancelled_at" not in saved
+
+
+def test_teacher_completion_uses_active_context_before_expired_model_focus(tmp_path):
+    from plugins.tuoguan_core.tool_service import TuoguanToolService
+
+    store = _seed_store(tmp_path)
+    boss = TuoguanToolService(store=store, platform="wecom_callback", user_id="boss1", user_name="金总", chat_id="boss1", session_key="boss1")
+    contact = boss.create_task(
+        title="下午4点联系金总",
+        assignee_user_id="teacher1",
+        operation_id="op-active-contact",
+        due_at="2026-08-24T16:00:00+08:00",
+    )
+    old = boss.create_task(
+        title="旧任务，不应被完成",
+        assignee_user_id="teacher1",
+        operation_id="op-old-focus",
+        due_at="2026-08-20T16:00:00+08:00",
+    )
+    _write_json(tmp_path, "active_task_context.json", {
+        "teacher1": {
+            "task_id": contact["task_id"],
+            "expires_at": "2026-08-25T18:00:00+08:00",
+        },
+    })
+    _write_json(tmp_path, "model_focus.json", {
+        "wecom_callback:teacher1": {
+            "task_id": old["task_id"],
+            "focus_source": "task_created",
+            "focus_expires_at": "2026-08-20T18:00:00+08:00",
+        },
+    })
+    teacher = TuoguanToolService(store=store, platform="wecom_callback", user_id="teacher1", user_name="李老师", chat_id="teacher1", session_key="wecom_callback:teacher1")
+
+    result = teacher.update_task(reply="完成了", operation_id="op-complete-active")
+
+    tasks = {item["id"]: item for item in store.load_tasks()}
+    assert result["ok"] is True
+    assert result["data"]["task_id"] == contact["task_id"]
+    assert result["data"]["task"]["status"] == "completed"
+    assert tasks[contact["task_id"]]["status"] == "completed"
+    assert tasks[old["task_id"]]["status"] == "pending"
 
 
 def test_parent_communication_manual_assignment_closes_from_natural_teacher_evidence(tmp_path):

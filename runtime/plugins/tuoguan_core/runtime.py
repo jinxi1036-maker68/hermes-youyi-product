@@ -14,9 +14,10 @@ from .reports import build_role_report
 from .store import TuoguanStore
 from .analytics import refresh_student_business_signals
 from .analytics import build_business_overview
+from .tasks import CLOSED_TASK_STATUSES
 
 
-_CLOSED_STATUSES = {"completed", "cancelled", "closed", "done", "closed_by_admin", "completed_by_admin"}
+_CLOSED_STATUSES = CLOSED_TASK_STATUSES
 
 
 def build_business_snapshot(

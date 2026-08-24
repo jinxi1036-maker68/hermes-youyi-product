@@ -140,8 +140,14 @@ from .staff_config import (
     select_staff_candidate,
     staff_roster_reply,
 )
-from .tasks import apply_task_reply, current_task_for_user
-from .tasks import build_task_contract, classify_task_reply, closure_missing_fields
+from .tasks import (
+    CLOSED_TASK_STATUSES,
+    apply_task_reply,
+    build_task_contract,
+    classify_task_reply,
+    closure_missing_fields,
+    current_task_for_user,
+)
 from .temporal_grounding import parse_business_due_at
 
 
@@ -156,7 +162,7 @@ _SENSITIVE_TERMS = (
     "终端",
 )
 
-_CLOSED_STATUSES = {"completed", "cancelled", "closed", "done", "closed_by_admin", "completed_by_admin"}
+_CLOSED_STATUSES = CLOSED_TASK_STATUSES
 _ACTIVE_TASK_CONTEXT_FILE = "active_task_context.json"
 _ADMIN_TASK_CLOSE_FILE = "task_admin_closure_events.json"
 _PENDING_CLOSE_TASK_FILE = "pending_close_task_context.json"

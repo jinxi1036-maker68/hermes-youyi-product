@@ -18,6 +18,7 @@ from typing import Any
 from .models import UserIdentity
 from .store import TuoguanStore
 from .tenant_context import current_tenant_id
+from .tasks import CLOSED_TASK_STATUSES
 from .responsibility_resolver import (
     REGULAR_PROGRAM_ID,
     regular_manager_names,
@@ -32,7 +33,7 @@ PROGRAM_SUMMER = "summer_2026"
 PROGRAM_REGULAR = REGULAR_PROGRAM_ID
 
 
-_CLOSED_TASK_STATUSES = {"completed", "cancelled", "closed", "done", "closed_by_admin", "completed_by_admin"}
+_CLOSED_TASK_STATUSES = CLOSED_TASK_STATUSES
 
 
 def now_iso() -> str:

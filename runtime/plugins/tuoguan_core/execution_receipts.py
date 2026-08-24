@@ -64,6 +64,19 @@ def _object_identity(result: dict[str, Any], operation: str) -> tuple[str, str]:
         value = _first(data, key) or _first(result, key)
         if value:
             return object_type, value
+    # Most update tools return the verified object as a nested payload.  Its
+    # stable ``id`` is still a real object reference and must be reflected in
+    # the receipt, otherwise a completed write has no auditable target.
+    for nested_key, object_type in (
+        ("task", "task"),
+        ("goal", "goal"),
+        ("action", "goal_action"),
+        ("candidate", "candidate"),
+        ("attention_thread", "attention_thread"),
+    ):
+        nested = data.get(nested_key)
+        if isinstance(nested, dict) and nested.get("id") not in (None, ""):
+            return object_type, str(nested["id"])
     normalized = str(operation or "business_object").removeprefix("submit_").removeprefix("update_")
     return normalized, ""
 
@@ -115,6 +128,7 @@ def build_execution_receipt(
 ) -> dict[str, Any]:
     payload = deepcopy(result) if isinstance(result, dict) else {"ok": False, "error": "invalid_operation_result"}
     data = _data(payload)
+    no_write_performed = bool(data.get("no_write_performed"))
     explicit_writeback = payload.get("writeback_verified")
     if explicit_writeback is None:
         explicit_writeback = data.get("writeback_verified")
@@ -122,12 +136,21 @@ def build_execution_receipt(
         data.get("delivery_status") or payload.get("delivery_status") or ""
     )
     error_code = str(payload.get("error") or "")
+    result_action = str(data.get("result_action") or "")
     status = "completed" if payload.get("ok") and explicit_writeback is True else "failed"
-    if idempotency_result == "in_progress":
+    if no_write_performed:
+        status = "clarification_required" if result_action in {
+            "clarification_needed", "wrong_tool_for_cancel_intent",
+        } else "noop"
+        explicit_writeback = False
+        idempotency_result = "not_applied"
+    elif idempotency_result == "in_progress":
         status = "in_progress"
     elif idempotency_result == "replayed" and payload.get("ok"):
         status = "completed"
     object_type, object_id = _object_identity(payload, operation)
+    if no_write_performed:
+        object_id = ""
     receipt = ExecutionReceipt(
         receipt_id=f"receipt_{uuid.uuid4().hex}",
         operation_id=str(operation_id or ""),

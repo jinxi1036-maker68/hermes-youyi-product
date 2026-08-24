@@ -89,6 +89,33 @@ def test_snapshot_excludes_stale_transient_context_but_keeps_open_task(tmp_path)
     assert "old-notice" not in ids
 
 
+def test_active_context_excludes_old_relationship_touch_candidate(tmp_path):
+    from plugins.tuoguan_core.active_work_context import query_active_work_context
+    from plugins.tuoguan_core.store import TuoguanStore
+
+    now = datetime(2026, 8, 24, 18, 0, tzinfo=BEIJING)
+    old = now - timedelta(days=5)
+    (tmp_path / "relationship_touch_candidates.jsonl").write_text(
+        json.dumps({
+            "record_type": "relationship_touch_candidate",
+            "candidate_id": "old-touch",
+            "target_role": "teacher",
+            "target_user_id": "teacher-1",
+            "message": "李老师，请回复一条旧问题。",
+            "status": "candidate",
+            "created_at": old.isoformat(),
+            "updated_at": old.isoformat(),
+        }, ensure_ascii=False) + "\n",
+        encoding="utf-8",
+    )
+
+    result = query_active_work_context(
+        TuoguanStore(tmp_path), identity=_identity("teacher-1"), now=now,
+    )
+
+    assert all(item["context_id"] != "old-touch" for item in result["contexts"])
+
+
 def test_recent_tool_context_does_not_repeat_chat_text(tmp_path):
     from plugins.tuoguan_core.active_work_context import query_active_work_context
     from plugins.tuoguan_core.store import TuoguanStore

@@ -7,9 +7,10 @@ from datetime import datetime, timedelta
 from typing import Any, Iterable
 
 from .store import TuoguanStore
+from .tasks import CLOSED_TASK_STATUSES
 
 
-_CLOSED_STATUSES = {"completed", "cancelled", "closed", "done", "closed_by_admin", "completed_by_admin"}
+_CLOSED_STATUSES = CLOSED_TASK_STATUSES
 _RISK_ORDER = {"high": 0, "medium": 1, "low": 2, "unknown": 3}
 
 

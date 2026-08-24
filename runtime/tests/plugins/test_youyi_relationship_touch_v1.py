@@ -49,6 +49,39 @@ def test_relationship_touch_candidate_is_internal_for_teacher(tmp_path):
     assert visible["candidate_count"] == 1
 
 
+def test_relationship_touch_rejects_a_salutation_for_the_wrong_wecom_target(tmp_path):
+    from plugins.tuoguan_core.digital_employee_state import submit_relationship_touch_candidate
+    from plugins.tuoguan_core.models import UserIdentity
+    from plugins.tuoguan_core.store import TuoguanStore
+    from plugins.tuoguan_core.write_guard import authorized_system_write
+
+    _write_json(tmp_path, "write_guard_config.json", {"enabled": True})
+    _write_json(tmp_path, "teacher_wecom_map.json", {"李老师": "teacher1", "崔老师": "manager1"})
+    _write_json(tmp_path, "staff.json", {
+        "teacher1": {"user_id": "teacher1", "name": "李老师", "role": "teacher"},
+        "manager1": {"user_id": "manager1", "name": "崔老师", "role": "manager"},
+    })
+    store = TuoguanStore(tmp_path)
+    identity = UserIdentity("system", "autonomous", "autonomous", "小优", "boss", "approved")
+
+    with authorized_system_write(store.data_dir, job_name="relationship_touch_name_guard", allowed_files={"relationship_touch_candidates.jsonl"}):
+        result = submit_relationship_touch_candidate(
+            store,
+            identity=identity,
+            target_role="teacher",
+            target_user_id="teacher1",
+            target_name="李老师",
+            touch_type="record_relief",
+            message="崔老师，麻烦你确认一下今天的任务结果。",
+            reason="测试称呼和企业微信目标必须一致。",
+            work_related=True,
+            operation_id="system:wrong-salutation",
+        )
+
+    assert result["ok"] is False
+    assert result["error"] == "relationship_touch_target_salutation_mismatch"
+
+
 def test_autonomous_loop_can_queue_boss_presence_but_not_teacher(tmp_path):
     from plugins.tuoguan_core.autonomous_employee_loop import run_autonomous_employee_loop
     from plugins.tuoguan_core.store import TuoguanStore

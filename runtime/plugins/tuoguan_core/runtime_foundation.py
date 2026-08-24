@@ -86,6 +86,12 @@ WRITE_TOOLS = {
     "tuoguan_review_project_opportunity",
 }
 
+OUTREACH_TOOLS = {
+    "tuoguan_submit_relationship_touch_candidate",
+    "tuoguan_execute_relationship_touch",
+    "tuoguan_update_relationship_touch",
+}
+
 MODEL_SELECTED_READ_TOOLS = {
     "tuoguan_context",
     "tuoguan_query_tasks",
@@ -217,9 +223,15 @@ def _sanitize_external_reply(
     actor_role: str = "",
     actor_name: str = "",
     outreach_state: str = "",
+    outreach_guard_applies: bool | None = None,
     identity_query: bool = False,
 ) -> str:
     value = str(text or "")
+    # Direct callers that explicitly supply an outreach state are testing an
+    # outbound claim, while the normal final-response path passes an explicit
+    # boolean based on the tools actually used in this turn.
+    if outreach_guard_applies is None:
+        outreach_guard_applies = bool(outreach_state)
     technical_refs: list[str] = []
 
     def preserve_technical_name(match: re.Match[str]) -> str:
@@ -282,11 +294,11 @@ def _sanitize_external_reply(
         "已发送", "已经发送", "发送成功", "对方已收到", "对方已经收到",
     )
     queued_claim_terms = ("我现在就去找", "我这就去找", "我马上去问", "现在去问", "已安排发送", "已经安排发送")
-    if any(term in value for term in sent_claim_terms) and outreach_state != "sent":
+    if outreach_guard_applies and any(term in value for term in sent_claim_terms) and outreach_state != "sent":
         if outreach_state == "queued":
             return "这条消息已经安排发送，但目前只有入队回执，是否送达还没有确认。"
         return "我已经形成了主动联系候选，但还没有真实发送回执，不能说已经通知对方。"
-    if any(term in value for term in queued_claim_terms) and outreach_state not in {"queued", "sent"}:
+    if outreach_guard_applies and any(term in value for term in queued_claim_terms) and outreach_state not in {"queued", "sent"}:
         return "我已经形成了主动联系候选，但它尚未进入发送队列；我不能把候选说成已经在执行。"
     if str(actor_role or "") in {"teacher", "manager"}:
         staff_side_leak_terms = (
@@ -1643,6 +1655,7 @@ def transform_final_response(*, store: TuoguanStore, session_id: str, response_t
     actor_role = ""
     actor_name = ""
     outreach_state = ""
+    outreach_guard_applies = False
     identity_query = False
     with _LOCK:
         item = _TURN_BY_SESSION.get(str(session_id or "")) or {}
@@ -1651,12 +1664,16 @@ def transform_final_response(*, store: TuoguanStore, session_id: str, response_t
         for tool_name in (call.get("tool") for call in (item.get("tool_calls") or []) if isinstance(call, dict)):
             if str(tool_name or "").startswith("tuoguan_"):
                 used_trusted_tool = True
+            if str(tool_name or "") in OUTREACH_TOOLS:
+                outreach_guard_applies = True
             if str(tool_name or "") in WRITE_TOOLS:
                 verified_state_change = _tool_results_have_verified_write(item.get("tool_results") or [])
                 if verified_state_change:
                     break
         outreach_state = _tool_results_outreach_state(item.get("tool_results") or [])
         raw = _compact(item.get("raw_text") or "")
+        if any(term in raw for term in ("主动联系", "主动找", "去问老师", "去问店长", "去问老板")):
+            outreach_guard_applies = True
         identity_query = any(term in raw for term in ("我是谁", "认得我", "识别到的身份", "什么身份", "我的身份"))
         authoritative_reply = _authoritative_task_write_reply(item) or _authoritative_read_reply(item)
     if authoritative_reply:
@@ -1668,6 +1685,7 @@ def transform_final_response(*, store: TuoguanStore, session_id: str, response_t
         actor_role=actor_role,
         actor_name=actor_name,
         outreach_state=outreach_state,
+        outreach_guard_applies=outreach_guard_applies,
         identity_query=identity_query,
     )
 

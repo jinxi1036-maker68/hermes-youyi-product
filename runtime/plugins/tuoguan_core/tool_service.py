@@ -30,7 +30,14 @@ from .records import analyze_teacher_record, save_analysis
 from .summer_records import save_summer_lesson_record
 from .store import JSON_NO_CHANGE, TuoguanStore, TuoguanStoreError
 from .summer_points import change_points, query_points_ranking, query_student_points
-from .tasks import apply_task_reply, cancel_task as cancel_task_state, closure_missing_fields, current_task_for_user
+from .tasks import (
+    CLOSED_TASK_STATUSES,
+    apply_task_reply,
+    cancel_task as cancel_task_state,
+    closure_missing_fields,
+    current_task_for_user,
+    task_is_closed,
+)
 from .temporal_grounding import parse_business_due_at
 from .youyi_batch_capabilities import (
     create_assigned_task,
@@ -142,10 +149,7 @@ from .digital_employee_state import (
 )
 
 
-_CLOSED_STATUSES = {
-    "completed", "cancelled", "closed", "done", "closed_by_admin", "completed_by_admin",
-    "superseded", "expired",
-}
+_CLOSED_STATUSES = CLOSED_TASK_STATUSES
 
 _MISSING_FIELD_LABELS = {
     "parent_attitude": "家长的反馈或态度",
@@ -526,6 +530,24 @@ class TuoguanToolService:
                 return deepcopy(by_id[task_id])
         current = current_task_for_user(visible, self.identity.canonical_user_id)
         return deepcopy(current) if isinstance(current, dict) else None
+
+    def _active_context_open_task(self) -> dict[str, Any] | None:
+        """Return only the durable, in-scope task anchor for this person."""
+
+        active = self.store.read_json("active_task_context.json", {})
+        item = active.get(self.identity.canonical_user_id, {}) if isinstance(active, dict) else {}
+        if not isinstance(item, dict):
+            return None
+        expires_at = _parse_iso(item.get("expires_at"))
+        if expires_at is not None and expires_at < datetime.now().astimezone():
+            return None
+        task_id = str(item.get("task_id") or "")
+        if not task_id:
+            return None
+        for task in self._visible_tasks():
+            if str(task.get("id") or "") == task_id and not task_is_closed(task):
+                return deepcopy(task)
+        return None
 
     def _write_focus(self, **updates: Any) -> None:
         focus_key = self._focus_key()
@@ -1034,17 +1056,22 @@ class TuoguanToolService:
                 "本轮操作在执行阶段失败，未确认成功；失败状态已经记录，可按同一操作编号安全复查。",
             )
             result["diagnostic_type"] = type(exc).__name__
+        result_data = result.get("data") if isinstance(result.get("data"), dict) else {}
+        no_write_performed = bool(result_data.get("no_write_performed"))
         explicit_writeback = result.get("writeback_verified")
         if explicit_writeback is None and isinstance(result.get("data"), dict):
             explicit_writeback = result["data"].get("writeback_verified")
-        if result.get("ok") and explicit_writeback is not True:
+        if result.get("ok") and not no_write_performed and explicit_writeback is not True:
             result["ok"] = False
             result["error"] = "writeback_consistency_failed"
             result["message"] = "已理解并执行该操作，但写入反查没有完全通过，暂时不能确认成功。"
         if result.get("ok"):
             result["already_applied"] = False
         result = build_execution_receipt(
-            result, operation_id=key, operation=operation, idempotency_result="applied"
+            result,
+            operation_id=key,
+            operation=operation,
+            idempotency_result="not_applied" if no_write_performed else "applied",
         )
         def finish_receipt(receipts: Any) -> dict[str, Any]:
             receipts = receipts if isinstance(receipts, dict) else {}
@@ -1052,7 +1079,7 @@ class TuoguanToolService:
                 "actor": self.identity.canonical_user_id,
                 "operation": operation,
                 "operation_id": key,
-                "status": "completed" if result.get("ok") else "failed",
+                "status": str(result.get("execution_receipt", {}).get("status") or ("completed" if result.get("ok") else "failed")),
                 "created_at": datetime.now().astimezone().isoformat(timespec="seconds"),
                 "result": deepcopy(result),
             }
@@ -1901,6 +1928,8 @@ class TuoguanToolService:
                 ]
 
             supplied_task_id = str(task_id or "").strip()
+            active_context_task = self._active_context_open_task()
+            active_context_task_id = str(active_context_task.get("id") or "") if active_context_task else ""
             target: dict[str, Any] | None = None
             if supplied_task_id:
                 target = next(
@@ -2352,6 +2381,12 @@ class TuoguanToolService:
             visible_tasks = self._visible_tasks()
             open_visible = [task for task in visible_tasks if task.get("status") not in _CLOSED_STATUSES]
             supplied_task_id = str(task_id or "").strip()
+            # The durable assignee context is authoritative for a natural
+            # completion reply.  A model-provided id may only use this path
+            # when it agrees with that context; it can never select a task
+            # from another person or an old thread by itself.
+            active_context_task = self._active_context_open_task()
+            active_context_task_id = str(active_context_task.get("id") or "") if active_context_task else ""
             if _looks_like_task_cancel_intent(evidence_text):
                 candidates = [
                     {
@@ -2372,8 +2407,8 @@ class TuoguanToolService:
                         "task_id": supplied_task_id,
                         "candidate_task_count": len(open_visible),
                         "candidate_tasks": candidates,
-                        "writeback_verified": True,
-                        "idempotency_verified": True,
+                        "writeback_verified": False,
+                        "idempotency_verified": False,
                         "no_write_performed": True,
                     },
                     message=(
@@ -2447,8 +2482,8 @@ class TuoguanToolService:
                         data={
                             "result_action": "clarification_needed",
                             "reason_code": "ambiguous_task_reference",
-                            "writeback_verified": True,
-                            "idempotency_verified": True,
+                            "writeback_verified": False,
+                            "idempotency_verified": False,
                             "no_write_performed": True,
                             "candidate_task_ids": sorted(unique_ids),
                         },
@@ -2463,6 +2498,10 @@ class TuoguanToolService:
                     ),
                     reverse=True,
                 )[0].get("id") or "")
+            elif supplied_task_id and supplied_task_id == active_context_task_id:
+                resolved_task_id = supplied_task_id
+            elif active_context_task and (generic_complete or ordinary_feedback):
+                resolved_task_id = active_context_task_id
             elif valid_focus:
                 resolved_task_id = focus_task_id
             elif explicit_task_id_in_text:
@@ -2471,6 +2510,8 @@ class TuoguanToolService:
                 # message; conversational references must resolve through the
                 # scoped, non-expired focus above.
                 resolved_task_id = supplied_task_id
+            elif (generic_complete or ordinary_feedback) and len(open_visible) == 1:
+                resolved_task_id = str(open_visible[0].get("id") or "")
             elif generic_complete or ordinary_feedback:
                 reason_code = "focus_task_expired" if focus_task_id and focus_source and not focus_not_expired else "no_focus_task"
                 return self._ok(
@@ -2478,8 +2519,8 @@ class TuoguanToolService:
                     data={
                         "result_action": "clarification_needed",
                         "reason_code": reason_code,
-                        "writeback_verified": True,
-                        "idempotency_verified": True,
+                        "writeback_verified": False,
+                        "idempotency_verified": False,
                         "no_write_performed": True,
                     },
                     message="你说的是哪个任务？请说一下学生姓名或任务内容，比如“位俊丞家长沟通任务完成了”。",
@@ -2491,8 +2532,8 @@ class TuoguanToolService:
                     data={
                         "result_action": "clarification_needed",
                         "reason_code": "no_focus_task",
-                        "writeback_verified": True,
-                        "idempotency_verified": True,
+                        "writeback_verified": False,
+                        "idempotency_verified": False,
                         "no_write_performed": True,
                     },
                     message="你要处理的是哪个任务？请说一下学生姓名或任务内容。",
@@ -2522,8 +2563,8 @@ class TuoguanToolService:
                         "result_action": "task_status",
                         "reason_code": "already_completed" if completed else "task_in_progress",
                         "task": deepcopy(target),
-                        "writeback_verified": True,
-                        "idempotency_verified": True,
+                        "writeback_verified": False,
+                        "idempotency_verified": False,
                         "no_write_performed": True,
                         "missing_fields": closure_missing_fields(target, str(target.get("evidence_summary") or "")),
                     },
@@ -2716,7 +2757,9 @@ class TuoguanToolService:
                 "update_task",
                 data={
                     "result_action": result_action,
+                    "task_id": str(target.get("id") or ""),
                     "task": deepcopy(target),
+                    "updated_at": str(target.get("updated_at") or target.get("completed_at") or ""),
                     "writeback_verified": bool(
                         task_verified
                         and (not goal_action_id or goal_action_update.get("writeback_verified"))

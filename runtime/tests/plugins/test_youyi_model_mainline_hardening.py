@@ -94,6 +94,20 @@ def test_teacher_direct_salutation_cannot_drift_to_owner_name():
     assert legitimate_reference == "这是金总安排的任务，我帮你看一下。"
 
 
+def test_outreach_honesty_guard_does_not_replace_an_ordinary_task_answer():
+    from plugins.tuoguan_core.runtime_foundation import _sanitize_external_reply
+
+    reply = _sanitize_external_reply(
+        "你今天有一项任务：下午4点联系金总，完成后直接告诉我结果就行。",
+        actor_role="teacher",
+        outreach_state="candidate",
+        outreach_guard_applies=False,
+    )
+
+    assert reply.startswith("你今天有一项任务")
+    assert "主动联系候选" not in reply
+
+
 def test_v020_output_and_post_llm_hooks_preserve_honesty_and_audit(tmp_path, monkeypatch):
     import plugins.tuoguan_core as plugin
 

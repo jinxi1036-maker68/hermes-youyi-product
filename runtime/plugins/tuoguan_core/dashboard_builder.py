@@ -36,13 +36,12 @@ from .programs import (
     user_program_ids,
 )
 from .project_opportunities import query_project_opportunities
-from .tasks import build_task_contract, closure_missing_fields
+from .tasks import build_task_contract, closure_missing_fields, task_is_open
 
 
 CACHE_FILE = "dashboard_cache.json"
 RECORD_RULE_VERSION = "record_payroll_v3"
 COUPON_RULE_VERSION = "growth_coupon_v2"
-_CLOSED_STATUSES = {"completed", "cancelled", "closed", "done", "closed_by_admin", "completed_by_admin"}
 _POSITIVE_HINTS = ("进步", "认真", "主动", "完成好", "表扬", "优秀", "专注")
 _ISSUE_HINTS = ("退步", "不认真", "拖拉", "冲突", "哭", "风险", "投诉", "安全")
 _ACTIVE_STUDENT_STATUSES = {"", "active", "enrolled", "serving", "在读", "正常", "服务中"}
@@ -839,7 +838,47 @@ def _profile_completion(profile: dict[str, Any]) -> int:
 
 
 def _task_open(task: dict[str, Any]) -> bool:
-    return str(task.get("status") or "") not in _CLOSED_STATUSES
+    return task_is_open(task)
+
+
+def _task_freshness_state(task: dict[str, Any], now: datetime) -> str:
+    """Classify an open task for display without changing its business status."""
+
+    due_at = _parse_dt(task.get("due_at"))
+    updated_at = _parse_dt(task.get("updated_at") or task.get("created_at"))
+    if due_at is not None and due_at < now and now - due_at > timedelta(hours=36):
+        return "overdue"
+    if due_at is not None and due_at >= now:
+        return "current"
+    if updated_at is not None and now - updated_at <= timedelta(hours=36):
+        return "current"
+    return "stale"
+
+
+def _task_is_today_action(task: dict[str, Any], now: datetime) -> bool:
+    """Limit the teacher's daily prompt to work that is actually current today."""
+
+    due_at = _parse_dt(task.get("due_at"))
+    if due_at is not None:
+        if due_at.date() == now.date():
+            return True
+        if due_at < now and now - due_at <= timedelta(hours=36):
+            return True
+    for key in ("updated_at", "created_at"):
+        when = _parse_dt(task.get(key))
+        if when is not None and when.date() == now.date():
+            return True
+    return False
+
+
+def _task_display_sort_key(task: dict[str, Any], now: datetime) -> tuple[int, int, str, str]:
+    freshness_rank = {"current": 0, "overdue": 1, "stale": 2}
+    return (
+        freshness_rank.get(_task_freshness_state(task, now), 3),
+        _ACTION_PRIORITY_RANK.get(_task_action_priority(task), 9),
+        str(task.get("due_at") or "9999-12-31"),
+        str(task.get("updated_at") or task.get("created_at") or ""),
+    )
 
 
 def _task_action_priority(task: dict[str, Any]) -> str:
@@ -1135,7 +1174,7 @@ def _teacher_record_review(month_records: list[dict[str, Any]]) -> dict[str, Any
     }
 
 
-def _task_card(task: dict[str, Any]) -> dict[str, Any]:
+def _task_card(task: dict[str, Any], *, now: datetime | None = None) -> dict[str, Any]:
     source_type = str(task.get("source_type") or "")
     source_label = str(task.get("source_label") or "")
     if not source_label:
@@ -1144,7 +1183,7 @@ def _task_card(task: dict[str, Any]) -> dict[str, Any]:
             "record_triggered": "记录触发",
             "system_risk": "系统风险",
         }.get(source_type, "系统生成" if source_type else "")
-    return {
+    card = {
         "id": str(task.get("id") or ""),
         "title": str(task.get("title") or task.get("summary") or "未命名任务")[:80],
         "student_name": _task_student(task),
@@ -1157,6 +1196,10 @@ def _task_card(task: dict[str, Any]) -> dict[str, Any]:
         "assigned_by": str(task.get("assigned_by") or ""),
         "assigned_by_name": str(task.get("assigned_by_name") or ""),
     }
+    if now is not None:
+        card["freshness_state"] = _task_freshness_state(task, now)
+        card["today_eligible"] = _task_is_today_action(task, now)
+    return card
 
 
 def _closure_event_card(event: dict[str, Any]) -> dict[str, Any]:
@@ -1775,6 +1818,8 @@ def _teacher_dashboard(
         if _task_open(task)
         and (_task_teacher(task, students) == user_id or _task_student(task) in own_names)
     ]
+    ordered_open_tasks = sorted(open_tasks, key=lambda item: _task_display_sort_key(item, now))
+    today_open_tasks = [task for task in ordered_open_tasks if _task_is_today_action(task, now)]
     week_points = sum(_record_points(record) for record in week_records)
     quality_week_records = [record for record in week_records if _is_quality_record(record)]
     material_records = [_recent_record_card(record) for record in quality_week_records]
@@ -1869,7 +1914,7 @@ def _teacher_dashboard(
         "today_feedback": [_recent_record_card(record) for record in sorted(today_records, key=_record_sort_key, reverse=True)[:8]],
         "record_review": _teacher_record_review(month_records),
         "daily_coach": _teacher_daily_coach(
-            open_tasks=open_tasks,
+            open_tasks=today_open_tasks,
             uncovered_students=suggested_records,
             performance=performance,
         ),
@@ -1906,7 +1951,8 @@ def _teacher_dashboard(
             "quality_records": material_records[:12],
         },
         "record_templates": _record_templates(material_records),
-        "open_tasks": [_task_card(task) for task in sorted(open_tasks, key=lambda item: (str(item.get("level") or "C"), str(item.get("due_at") or "")))[:12]],
+        "today_tasks": [_task_card(task, now=now) for task in today_open_tasks[:12]],
+        "open_tasks": [_task_card(task, now=now) for task in ordered_open_tasks[:12]],
         "student_completion": sorted(completion_items, key=lambda item: item["completion"])[:20],
         "readonly_hint": "记录请回企业微信直接说",
     }
@@ -2298,7 +2344,7 @@ def _boss_dashboard(
     open_by_level = Counter(str(task.get("level") or "C") for task in scoped_tasks)
     open_by_status = Counter(str(task.get("status") or "") for task in scoped_tasks)
     safety_tasks = [
-        _task_card(task)
+        _task_card(task, now=now)
         for task in scoped_tasks
         if str(task.get("level") or "") == "S" or str(task.get("type") or "") == "safety_incident"
     ][:12]

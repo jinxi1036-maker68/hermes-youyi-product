@@ -16,7 +16,7 @@ from .tenant_context import current_tenant_id
 
 BEIJING = timezone(timedelta(hours=8), "Asia/Shanghai")
 _TRANSIENT_CONTEXT_TYPES = {
-    "recent_outbound", "daily_report", "recent_tool_result", "owner_attention", "social_market_research",
+    "recent_outbound", "daily_report", "recent_tool_result", "owner_attention", "relationship_touch", "social_market_research",
 }
 _SOURCE_CONFIDENCE = {
     "tasks.json": 1.0,

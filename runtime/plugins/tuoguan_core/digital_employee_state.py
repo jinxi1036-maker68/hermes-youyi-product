@@ -17,6 +17,7 @@ from typing import Any
 from .models import UserIdentity
 from .store import TuoguanStore
 from .tenant_context import current_tenant_id, read_institution_operating_model
+from .tasks import CLOSED_TASK_STATUSES
 
 
 SERVICE_RELATIONS_FILE = "service_relations.json"
@@ -54,7 +55,7 @@ STAFF_VOICE_SIGNALS_FILE = "staff_voice_signals.jsonl"
 AUTONOMOUS_WORK_ITEM_FRESHNESS_HOURS = 36
 
 _CLOSED_STUDENT_STATUSES = {"inactive", "cancelled", "left", "deleted", "graduated"}
-_CLOSED_TASK_STATUSES = {"completed", "cancelled", "closed", "done", "closed_by_admin", "completed_by_admin"}
+_CLOSED_TASK_STATUSES = CLOSED_TASK_STATUSES
 _PARENT_COMM_TERMS = ("家长", "妈妈", "爸爸", "沟通", "反馈", "续费", "转化", "回访")
 _ATTENTION_STATUSES = {"candidate", "queued", "sent", "replied", "resolved", "failed", "superseded"}
 _OPEN_ATTENTION_STATUSES = {"candidate", "queued", "sent", "replied", "failed"}
@@ -3238,6 +3239,46 @@ def query_relationship_touch_candidates(
     }
 
 
+def _relationship_target_profile(store: TuoguanStore, target_user_id: str) -> dict[str, Any]:
+    """Resolve a candidate target from the read-only staff directory."""
+
+    target = str(target_user_id or "").strip()
+    if not target:
+        return {}
+    try:
+        from .staff_directory import query_staff_directory
+
+        directory = query_staff_directory(store, query=target, include_inactive=True, limit=5)
+    except Exception:
+        return {}
+    for item in directory.get("staff") or []:
+        if isinstance(item, dict) and str(item.get("user_id") or "") == target:
+            return item
+    return {}
+
+
+def _relationship_salutation_matches_target(message: str, profile: dict[str, Any]) -> bool:
+    match = re.match(r"^\s*([^，,。！!]{1,24}(?:老师|总))(?=[，,。！!])", str(message or ""))
+    if not match or not profile:
+        return True
+    spoken = str(match.group(1) or "").strip()
+    aliases = [
+        str(profile.get("business_name") or ""),
+        str(profile.get("staff_name") or ""),
+        str(profile.get("directory_name") or ""),
+        *[str(item) for item in profile.get("known_aliases") or []],
+    ]
+    accepted = set()
+    for alias in aliases:
+        alias = alias.strip()
+        if not alias:
+            continue
+        accepted.add(alias)
+        if not alias.endswith(("老师", "总")):
+            accepted.add(alias + "老师")
+    return spoken in accepted
+
+
 def submit_relationship_touch_candidate(
     store: TuoguanStore,
     *,
@@ -3277,6 +3318,26 @@ def submit_relationship_touch_candidate(
     clean_reason = _limit_text(reason, 500)
     if not clean_message or not clean_reason:
         return {"ok": False, "error": "relationship_touch_requires_message", "message": "关系经营候选必须有自然内容和原因。"}
+    target_profile = _relationship_target_profile(store, str(target_user_id or ""))
+    # A verified operation may carry a human label before the read-only
+    # directory has been fully repaired.  Treat that label as an additional
+    # candidate alias for validation, never as a reason to rewrite the roster.
+    if str(target_name or "").strip():
+        target_profile = deepcopy(target_profile)
+        aliases = list(target_profile.get("known_aliases") or [])
+        if str(target_name).strip() not in aliases:
+            aliases.append(str(target_name).strip())
+        target_profile["known_aliases"] = aliases
+    if not _relationship_salutation_matches_target(clean_message, target_profile):
+        return {
+            "ok": False,
+            "error": "relationship_touch_target_salutation_mismatch",
+            "message": "候选称呼与企业微信目标人不一致，本轮没有保存或发送。",
+        }
+    resolved_target_name = _limit_text(
+        target_name or target_profile.get("business_name") or target_profile.get("staff_name") or "",
+        80,
+    )
     policy = relationship_touch_policy(store)
     role_policy = policy.get(role) if isinstance(policy.get(role), dict) else {}
     if role != "boss" and str(role_policy.get("mode") or "candidate") != "direct":
@@ -3307,7 +3368,7 @@ def submit_relationship_touch_candidate(
         "tenant_id": current_tenant_id(),
         "target_role": role,
         "target_user_id": str(target_user_id or "").strip(),
-        "target_name": _limit_text(target_name, 80),
+        "target_name": resolved_target_name,
         "touch_type": touch,
         "message": clean_message,
         "reason": clean_reason,

@@ -9,10 +9,12 @@ from typing import Any
 from .models import TaskReplyResult
 
 
-_CLOSED_STATUSES = {
+CLOSED_TASK_STATUSES = frozenset({
     "completed", "cancelled", "closed", "done", "closed_by_admin", "completed_by_admin",
     "superseded", "expired",
-}
+})
+# Kept as a private alias while older helpers migrate to the shared contract.
+_CLOSED_STATUSES = CLOSED_TASK_STATUSES
 _LEVEL_ORDER = {"S": 0, "A": 1, "B": 2, "C": 3}
 
 
@@ -23,6 +25,20 @@ def _parse_datetime(value: Any) -> datetime:
         return datetime.fromisoformat(str(value or ""))
     except ValueError:
         return datetime.max
+
+
+def task_is_closed(task_or_status: dict[str, Any] | str | None) -> bool:
+    """Return the one canonical terminal-state decision for task projections."""
+
+    if isinstance(task_or_status, dict):
+        status = str(task_or_status.get("status") or "")
+    else:
+        status = str(task_or_status or "")
+    return status.strip().lower() in CLOSED_TASK_STATUSES
+
+
+def task_is_open(task_or_status: dict[str, Any] | str | None) -> bool:
+    return not task_is_closed(task_or_status)
 
 
 def _queue_key(task: dict[str, Any]) -> tuple:
@@ -449,7 +465,16 @@ def closure_missing_fields(task: dict[str, Any], evidence: str) -> list[str]:
             ),
         ):
             missing.append("parent_attitude")
-        if _is_renewal_task(task) and not _contains_any(
+        # A normal contact task is complete once the contact, the parent's
+        # response, and the next condition are known.  Why the parent hesitated
+        # and the exact teacher wording are useful learning facts, but they are
+        # not allowed to keep a finished conversation task open forever.
+        contract = _as_dict(task.get("task_contract"))
+        requires_renewal_detail = bool(
+            task.get("requires_renewal_detail")
+            or contract.get("requires_renewal_detail")
+        )
+        if _is_renewal_task(task) and requires_renewal_detail and not _contains_any(
             text,
             (
                 "原因", "因为", "主要是", "顾虑", "担心", "价格", "费用", "距离", "接送",
@@ -458,7 +483,7 @@ def closure_missing_fields(task: dict[str, Any], evidence: str) -> list[str]:
             ),
         ):
             missing.append("renewal_reason")
-        if _is_renewal_task(task) and not _contains_any(
+        if _is_renewal_task(task) and requires_renewal_detail and not _contains_any(
             text,
             (
                 "我说", "我回复", "我回应", "我告诉", "我解释", "我建议", "我答复",

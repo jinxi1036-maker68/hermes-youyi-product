@@ -27,10 +27,11 @@ from .digital_employee_state import (
 from .models import UserIdentity
 from .store import TuoguanStore
 from .tenant_context import current_tenant_id
+from .tasks import CLOSED_TASK_STATUSES
 from .write_guard import authorized_system_write
 
 
-_CLOSED_TASK_STATUSES = {"completed", "cancelled", "closed", "done", "closed_by_admin", "completed_by_admin"}
+_CLOSED_TASK_STATUSES = CLOSED_TASK_STATUSES
 TERM_STATE_FILE = "academic_term_state.json"
 
 

@@ -7,7 +7,7 @@ def _write(root, name, value):
     (root / name).write_text(json.dumps(value, ensure_ascii=False), encoding="utf-8")
 
 
-def test_duplicate_task_repair_preserves_history_and_keeps_renewal_open(tmp_path):
+def test_duplicate_task_repair_preserves_history_and_closes_completed_contact(tmp_path):
     from plugins.tuoguan_core.repair_task_companion_state import repair_duplicate_task_pair
     from plugins.tuoguan_core.store import TuoguanStore
 
@@ -30,8 +30,8 @@ def test_duplicate_task_repair_preserves_history_and_keeps_renewal_open(tmp_path
         store, primary_task_id="primary", duplicate_task_id="duplicate", evidence_text=evidence, apply=False,
     )
     assert dry["ok"] is True
-    assert dry["primary_status_after"] == "waiting_confirmation"
-    assert dry["missing_fields"] == ["renewal_reason", "teacher_response"]
+    assert dry["primary_status_after"] == "completed"
+    assert dry["missing_fields"] == []
     assert store.load_tasks()[1]["status"] == "completed"
 
     applied = repair_duplicate_task_pair(
@@ -39,7 +39,7 @@ def test_duplicate_task_repair_preserves_history_and_keeps_renewal_open(tmp_path
     )
     assert applied["writeback_verified"] is True
     saved = {item["id"]: item for item in store.load_tasks()}
-    assert saved["primary"]["status"] == "waiting_confirmation"
+    assert saved["primary"]["status"] == "completed"
     assert evidence in saved["primary"]["evidence_summary"]
     assert saved["duplicate"]["status"] == "superseded"
     assert saved["duplicate"]["status_before_superseded"] == "completed"

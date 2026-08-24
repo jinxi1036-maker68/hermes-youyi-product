@@ -172,6 +172,40 @@ def test_dashboard_v2_hides_open_decisions_and_work_after_freshness_window(tmp_p
     assert boss["hermes_employee"]["current_focus"] == {}
 
 
+def test_all_role_dashboards_share_terminal_task_state_and_teacher_today_freshness(tmp_path):
+    from plugins.tuoguan_core.dashboard_builder import build_dashboard_snapshot
+
+    store = _seed_dashboard_store(tmp_path)
+    _write_json(tmp_path, "staff.json", {
+        "manager1": {"user_id": "manager1", "name": "崔老师", "role": "manager", "campus_ids": ["main"]},
+    })
+    _write_json(tmp_path, "payroll_rules.json", {
+        "people": {
+            "teacher1": {"name": "李老师", "position": "part_time"},
+            "manager1": {"name": "崔老师", "team_teacher_ids": ["teacher1"]},
+        },
+    })
+    _write_json(tmp_path, "tasks.json", [
+        {"id": "done", "title": "已完成", "status": "completed", "assignee_userid": "teacher1", "campus_id": "main", "due_at": "2026-08-13T20:00:00+08:00"},
+        {"id": "superseded", "title": "已作废", "status": "superseded", "assignee_userid": "teacher1", "campus_id": "main", "due_at": "2026-08-13T20:00:00+08:00"},
+        {"id": "expired", "title": "已过期", "status": "expired", "assignee_userid": "teacher1", "campus_id": "main", "due_at": "2026-08-13T20:00:00+08:00"},
+        {"id": "old-open", "title": "真实旧待办", "status": "pending", "assignee_userid": "teacher1", "campus_id": "main", "due_at": "2026-08-13T20:00:00+08:00", "updated_at": "2026-08-13T20:00:00+08:00"},
+        {"id": "today-open", "title": "今天任务", "status": "pending", "assignee_userid": "teacher1", "campus_id": "main", "due_at": "2026-08-24T20:00:00+08:00", "updated_at": "2026-08-24T15:00:00+08:00"},
+    ])
+
+    snapshot = build_dashboard_snapshot(store, now=datetime(2026, 8, 24, 18, 0))
+    teacher = snapshot["teacher_dashboards"]["teacher1"]
+    manager = snapshot["manager_dashboards"]["manager1"]
+    boss = snapshot["boss_dashboard"]
+
+    assert {item["id"] for item in teacher["open_tasks"]} == {"old-open", "today-open"}
+    assert [item["id"] for item in teacher["today_tasks"]] == ["today-open"]
+    old_card = next(item for item in teacher["open_tasks"] if item["id"] == "old-open")
+    assert old_card["freshness_state"] == "overdue"
+    assert manager["summary"]["open_task_count"] == 2
+    assert boss["summary"]["open_task_count"] == 2
+
+
 def test_dashboard_v2_frontend_uses_frozen_workbench_v1():
     from plugins.tuoguan_core.dashboard_http import _DASHBOARD_HTML
 

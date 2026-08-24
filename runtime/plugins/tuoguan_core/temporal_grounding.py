@@ -6,10 +6,10 @@ from datetime import datetime, timedelta
 import re
 from typing import Any
 
-from .tasks import current_task_for_user
+from .tasks import CLOSED_TASK_STATUSES, current_task_for_user
 
 
-_CLOSED_STATUSES = {"completed", "cancelled", "closed", "done", "closed_by_admin", "completed_by_admin"}
+_CLOSED_STATUSES = CLOSED_TASK_STATUSES
 _WEEKDAYS = "一二三四五六日"
 _CN_DIGITS = {
     "零": 0,

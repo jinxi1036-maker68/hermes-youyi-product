@@ -307,6 +307,9 @@ def query_active_work_context(
         limit=maximum,
     )
     for row in reversed(list(touches.get("candidates") or [])):
+        updated_at = _parse_time(str(row.get("updated_at") or row.get("created_at") or ""))
+        if updated_at is None or updated_at < now - timedelta(hours=36):
+            continue
         items.append({
             "context_type": "relationship_touch",
             "context_id": str(row.get("candidate_id") or ""),
