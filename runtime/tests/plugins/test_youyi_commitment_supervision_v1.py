@@ -150,6 +150,23 @@ def test_supervision_accepts_legacy_naive_ledger_timestamps(tmp_path):
     assert any(row["category"] == "commitment_without_receipt" for row in result["findings"])
 
 
+def test_supervision_accepts_legacy_naive_dashboard_timestamp(tmp_path):
+    from plugins.tuoguan_core.supervision_runner import run_supervision_once
+
+    store = _store(tmp_path)
+    _write_json(tmp_path, "dashboard_cache.json", {"generated_at": "2026-08-25T10:00:00"})
+
+    result = run_supervision_once(
+        store,
+        now=datetime(2026, 8, 25, 10, 10, tzinfo=CN_TZ),
+        apply_repairs=False,
+        write_report=False,
+    )
+
+    assert result["ok"] is True
+    assert not any(row["category"] == "dashboard_projection_stale" for row in result["findings"])
+
+
 def test_supervision_council_is_read_only_and_rejects_incomplete_advice(tmp_path):
     from plugins.tuoguan_core.supervision import run_supervision_council
 

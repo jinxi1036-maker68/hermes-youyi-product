@@ -102,9 +102,15 @@ def _parse_time(value: Any) -> datetime | None:
     if not raw:
         return None
     try:
-        return datetime.fromisoformat(raw.replace("Z", "+00:00"))
+        parsed = datetime.fromisoformat(raw.replace("Z", "+00:00"))
     except ValueError:
         return None
+    # Older append-only ledgers predate timezone-aware timestamps.  Production
+    # writes are in the server's local business timezone, so normalize legacy
+    # values at the read boundary before any detector compares them.
+    if parsed.tzinfo is None:
+        return parsed.replace(tzinfo=_now().tzinfo)
+    return parsed
 
 
 def _within(value: Any, *, now: datetime, hours: int) -> bool:
@@ -307,12 +313,12 @@ def _duplicate_unsent_candidate_findings(store: TuoguanStore) -> list[dict[str, 
     return findings
 
 
-def _dashboard_divergence_findings(store: TuoguanStore) -> list[dict[str, Any]]:
+def _dashboard_divergence_findings(store: TuoguanStore, *, now: datetime) -> list[dict[str, Any]]:
     """Detect only stale cache timestamps here; never interpret business data twice."""
 
     cache = store.read_json("dashboard_cache.json", {})
     generated = _parse_time(cache.get("generated_at")) if isinstance(cache, dict) else None
-    if not generated or _now() - generated > timedelta(hours=2):
+    if not generated or now - generated > timedelta(hours=2):
         return [{
             "category": "dashboard_projection_stale",
             "severity": "p1",
@@ -422,7 +428,7 @@ def scan_supervision(
     detected.extend(_workstyle_findings(store, now=timestamp))
     detected.extend(_stale_context_findings(store, now=timestamp))
     detected.extend(_duplicate_unsent_candidate_findings(store))
-    detected.extend(_dashboard_divergence_findings(store))
+    detected.extend(_dashboard_divergence_findings(store, now=timestamp))
     detected.extend(_runtime_findings(store, now=timestamp))
     findings: list[dict[str, Any]] = []
     new_count = 0
