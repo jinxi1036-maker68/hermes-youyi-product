@@ -128,6 +128,28 @@ def test_supervision_repairs_only_derived_state_and_unsent_duplicates(tmp_path):
     assert "rebuild_context_projection" in repairs
 
 
+def test_supervision_accepts_legacy_naive_ledger_timestamps(tmp_path):
+    from plugins.tuoguan_core.supervision_runner import run_supervision_once
+
+    store = _store(tmp_path)
+    _append_jsonl(tmp_path, "reply_ledger.jsonl", [{
+        "tenant_id": "youyi_tuoguan",
+        "message_id": "legacy-reply",
+        "completed_at": "2026-08-25T10:06:00",
+        "workstyle_adaptation": {"unverified_commitment": True},
+    }])
+
+    result = run_supervision_once(
+        store,
+        now=datetime(2026, 8, 25, 10, 10, tzinfo=CN_TZ),
+        apply_repairs=False,
+        write_report=False,
+    )
+
+    assert result["ok"] is True
+    assert any(row["category"] == "commitment_without_receipt" for row in result["findings"])
+
+
 def test_supervision_council_is_read_only_and_rejects_incomplete_advice(tmp_path):
     from plugins.tuoguan_core.supervision import run_supervision_council
 

@@ -109,7 +109,14 @@ def _parse_time(value: Any) -> datetime | None:
 
 def _within(value: Any, *, now: datetime, hours: int) -> bool:
     parsed = _parse_time(value)
-    return bool(parsed and parsed >= now - timedelta(hours=hours))
+    if parsed is None:
+        return False
+    reference = now
+    if parsed.tzinfo is None and reference.tzinfo is not None:
+        parsed = parsed.replace(tzinfo=reference.tzinfo)
+    elif parsed.tzinfo is not None and reference.tzinfo is None:
+        reference = reference.replace(tzinfo=parsed.tzinfo)
+    return parsed >= reference - timedelta(hours=hours)
 
 
 def _fold_findings(store: TuoguanStore) -> dict[str, dict[str, Any]]:
