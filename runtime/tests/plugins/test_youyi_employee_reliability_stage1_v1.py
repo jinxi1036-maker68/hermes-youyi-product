@@ -37,6 +37,22 @@ def test_failed_wecom_receipt_can_be_reclaimed(tmp_path):
     assert second["reclaimed"] is True
     assert store.mark_processed(second["receipt_key"], session_id="chat:CeShi") is True
     assert store.status_counts() == {"processed": 1}
+    health = store.health_snapshot()
+    assert health["received_count"] == 1
+    assert health["replied_count"] == 1
+    assert health["reply_failed_count"] == 0
+
+
+def test_wecom_receipt_exposes_processing_before_final_reply(tmp_path):
+    from plugins.platforms.wecom.inbound_receipts import WecomInboundReceiptStore
+
+    store = WecomInboundReceiptStore(tmp_path / "receipts.sqlite3")
+    receipt = store.claim(app_name="youyi", message_id="msg-processing")
+    assert store.mark_processing(receipt["receipt_key"]) is True
+    health = store.health_snapshot()
+    assert health["processing_count"] == 1
+    assert store.mark_failed(receipt["receipt_key"], "provider_timeout") is True
+    assert store.health_snapshot()["reply_failed_count"] == 1
 
 
 def test_unfinished_wecom_payload_survives_process_restart(tmp_path):

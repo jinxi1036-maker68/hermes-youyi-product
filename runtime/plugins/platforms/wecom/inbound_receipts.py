@@ -54,8 +54,11 @@ class WecomInboundReceiptStore:
                             status TEXT NOT NULL,
                             attempt_count INTEGER NOT NULL DEFAULT 1,
                             claimed_at REAL NOT NULL,
+                            processing_at REAL,
                             processed_at REAL,
+                            replied_at REAL,
                             failed_at REAL,
+                            reply_status TEXT NOT NULL DEFAULT 'received',
                             last_error TEXT NOT NULL DEFAULT '',
                             payload_json TEXT NOT NULL DEFAULT '{}',
                             owner_id TEXT NOT NULL DEFAULT ''
@@ -73,6 +76,14 @@ class WecomInboundReceiptStore:
                     if "owner_id" not in columns:
                         connection.execute(
                             "ALTER TABLE inbound_receipts ADD COLUMN owner_id TEXT NOT NULL DEFAULT ''"
+                        )
+                    if "processing_at" not in columns:
+                        connection.execute("ALTER TABLE inbound_receipts ADD COLUMN processing_at REAL")
+                    if "replied_at" not in columns:
+                        connection.execute("ALTER TABLE inbound_receipts ADD COLUMN replied_at REAL")
+                    if "reply_status" not in columns:
+                        connection.execute(
+                            "ALTER TABLE inbound_receipts ADD COLUMN reply_status TEXT NOT NULL DEFAULT 'received'"
                         )
                 return
             except sqlite3.OperationalError as exc:
@@ -135,7 +146,8 @@ class WecomInboundReceiptStore:
                         UPDATE inbound_receipts
                         SET status = 'claimed', attempt_count = attempt_count + 1,
                             user_id = ?, session_id = ?, claimed_at = ?,
-                            processed_at = NULL, failed_at = NULL, last_error = '',
+                            processing_at = NULL, processed_at = NULL, replied_at = NULL,
+                            failed_at = NULL, reply_status = 'received', last_error = '',
                             payload_json = CASE WHEN ? = '{}' THEN payload_json ELSE ? END,
                             owner_id = ?
                         WHERE receipt_key = ?
@@ -211,16 +223,32 @@ class WecomInboundReceiptStore:
             connection.commit()
         return recovered
 
+    def mark_processing(self, key: str, *, now: float | None = None) -> bool:
+        """Record that a callback left the queue and entered the model turn."""
+
+        timestamp = float(now if now is not None else time.time())
+        with self._connect() as connection:
+            cursor = connection.execute(
+                """
+                UPDATE inbound_receipts
+                SET processing_at = ?, reply_status = 'processing'
+                WHERE receipt_key = ? AND status = 'claimed'
+                """,
+                (timestamp, str(key)),
+            )
+        return cursor.rowcount == 1
+
     def mark_processed(self, key: str, *, session_id: str = "", now: float | None = None) -> bool:
         timestamp = float(now if now is not None else time.time())
         with self._connect() as connection:
             cursor = connection.execute(
                 """
                 UPDATE inbound_receipts
-                SET status = 'processed', processed_at = ?, session_id = ?, last_error = ''
+                SET status = 'processed', processed_at = ?, replied_at = ?, reply_status = 'replied',
+                    session_id = ?, last_error = ''
                 WHERE receipt_key = ? AND status = 'claimed'
                 """,
-                (timestamp, str(session_id), str(key)),
+                (timestamp, timestamp, str(session_id), str(key)),
             )
         return cursor.rowcount == 1
 
@@ -230,7 +258,7 @@ class WecomInboundReceiptStore:
             cursor = connection.execute(
                 """
                 UPDATE inbound_receipts
-                SET status = 'failed', failed_at = ?, last_error = ?
+                SET status = 'failed', failed_at = ?, reply_status = 'reply_failed', last_error = ?
                 WHERE receipt_key = ? AND status = 'claimed'
                 """,
                 (timestamp, str(error or "")[:500], str(key)),
@@ -261,7 +289,10 @@ class WecomInboundReceiptStore:
                 SELECT COUNT(*) AS total,
                        SUM(CASE WHEN attempt_count > 1 THEN 1 ELSE 0 END) AS retried,
                        SUM(CASE WHEN status = 'failed' THEN 1 ELSE 0 END) AS failed,
-                       SUM(CASE WHEN status = 'claimed' THEN 1 ELSE 0 END) AS claimed
+                       SUM(CASE WHEN status = 'claimed' THEN 1 ELSE 0 END) AS claimed,
+                       SUM(CASE WHEN reply_status = 'processing' THEN 1 ELSE 0 END) AS processing,
+                       SUM(CASE WHEN reply_status = 'replied' THEN 1 ELSE 0 END) AS replied,
+                       SUM(CASE WHEN reply_status = 'reply_failed' THEN 1 ELSE 0 END) AS reply_failed
                 FROM inbound_receipts
                 WHERE claimed_at >= ?
                 """,
@@ -272,4 +303,8 @@ class WecomInboundReceiptStore:
             "duplicate_or_retry_count": int(row["retried"] or 0),
             "failed_count": int(row["failed"] or 0),
             "claimed_count": int(row["claimed"] or 0),
+            "received_count": int(row["total"] or 0),
+            "processing_count": int(row["processing"] or 0),
+            "replied_count": int(row["replied"] or 0),
+            "reply_failed_count": int(row["reply_failed"] or 0),
         }

@@ -6,6 +6,7 @@ import asyncio
 import hashlib
 import json
 import logging
+import os
 import uuid
 from copy import deepcopy
 from datetime import datetime, timedelta
@@ -43,10 +44,12 @@ from .turn_trace import (
     begin_turn_trace as _begin_turn_trace,
     finalize_turn_trace as _finalize_turn_trace,
     record_context_sources as _record_trace_context_sources,
+    record_context_budget as _record_trace_context_budget,
     record_guard_event as _record_trace_guard_event,
     record_tool_event as _record_trace_tool_event,
     record_provider_event as _record_trace_provider_event,
 )
+from .model_context_budget import ContextSection, render_bounded_context
 from .turn_fence import (
     bind_session as _bind_turn_fence_session,
     block_reason as _turn_fence_block_reason,
@@ -1485,28 +1488,27 @@ def _on_pre_llm_call(**kwargs: Any) -> dict[str, str] | None:
     except Exception:
         logger.exception("tuoguan_core failed to establish model-led runtime context")
     trace_key = session_id or chat_id or message_id
-    context_parts: list[str] = []
-    context_sources: list[str] = []
+    context_sections: list[ContextSection] = []
 
     def append_context(value: str, source: str, *, first: bool = False) -> None:
         if not value:
             return
-        if first:
-            context_parts.insert(0, value)
-        else:
-            context_parts.append(value)
-        if source not in context_sources:
-            context_sources.append(source)
+        context_sections.append(ContextSection(source=str(source), text=str(value), first=first))
 
     def context_result() -> dict[str, str]:
-        _record_trace_context_sources(trace_key, context_sources)
-        return {"context": "\n\n".join(context_parts)}
+        context, retained_sources, budget = render_bounded_context(
+            context_sections,
+            raw_text=raw_text,
+        )
+        _record_trace_context_sources(trace_key, retained_sources)
+        _record_trace_context_budget(trace_key, **budget)
+        return {"context": context}
 
     if "identity" in locals():
         append_context(_xiaoyou_core_skill_context(identity=identity), "xiaoyou_core_skill")
-        context_sources.append("trusted_gateway_identity")
+        append_context("【可信身份来源】本轮身份仅来自企业微信网关，不能从历史对话推断。", "trusted_gateway_identity")
         if injected:
-            context_sources.append("runtime_foundation")
+            append_context("【运行边界】以本轮可信工具回执为准；没有回执不声称已完成、已保存或已发送。", "runtime_foundation")
         try:
             from .capability_facades import render_facade_instruction
 
@@ -1602,6 +1604,18 @@ def _on_pre_llm_call(**kwargs: Any) -> dict[str, str] | None:
             )
             if workstyle_context:
                 append_context(workstyle_context, "person_workstyle")
+                if "本轮可能包含服务方式反馈" in workstyle_context:
+                    # This is a persistent behavior change, not optional
+                    # explanatory prose.  Keep the commitment guard separate
+                    # from the longer profile so context trimming cannot make
+                    # the model promise a change it did not verify.
+                    append_context(
+                        "【服务方式保存守卫】低风险工作方式反馈可调用 "
+                        "tuoguan_submit_person_workstyle_preference 保存。"
+                        "未看到工具 ok=true 且 writeback_verified=true 前，不得说"
+                        "“已保存、记住了、以后按这个来”。",
+                        "workstyle_feedback_contract",
+                    )
     except Exception:
         logger.exception("tuoguan_core failed to append workstyle context")
     try:
@@ -1743,9 +1757,9 @@ def _on_pre_llm_call(**kwargs: Any) -> dict[str, str] | None:
             "verified_write_contract",
         )
         return context_result()
-    if context_parts:
+    if context_sections:
         return context_result()
-    _record_trace_context_sources(trace_key, context_sources)
+    _record_trace_context_sources(trace_key, [])
     return None
 
 
@@ -1778,6 +1792,11 @@ def _on_pre_api_request(**kwargs: Any) -> None:
         outcome="request_started",
         error_class="",
         circuit_state="",
+        network_egress=(
+            str(os.getenv("HERMES_AGNES_EGRESS_LABEL") or "legacy_local_proxy")
+            if "agnes" in str(kwargs.get("model") or "").lower()
+            else "direct_or_configured_fallback"
+        ),
     )
 
 
@@ -1793,6 +1812,11 @@ def _on_post_api_request(**kwargs: Any) -> None:
         outcome="request_succeeded",
         error_class="",
         circuit_state="",
+        network_egress=(
+            str(os.getenv("HERMES_AGNES_EGRESS_LABEL") or "legacy_local_proxy")
+            if "agnes" in str(kwargs.get("model") or "").lower()
+            else "direct_or_configured_fallback"
+        ),
     )
 
 
@@ -1809,6 +1833,11 @@ def _on_api_request_error(**kwargs: Any) -> None:
         outcome="request_failed",
         error_class=error_type,
         circuit_state="",
+        network_egress=(
+            str(os.getenv("HERMES_AGNES_EGRESS_LABEL") or "legacy_local_proxy")
+            if "agnes" in str(kwargs.get("model") or "").lower()
+            else "direct_or_configured_fallback"
+        ),
     )
 
 

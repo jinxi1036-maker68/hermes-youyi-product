@@ -577,6 +577,12 @@ class WecomCallbackAdapter(BasePlatformAdapter):
     ) -> None:
         """Mark an inbound receipt processed only after gateway handling ends."""
 
+        mark_processing = getattr(self._inbound_receipts, "mark_processing", None)
+        if callable(mark_processing):
+            try:
+                mark_processing(receipt_key)
+            except Exception:
+                logger.exception("[WecomCallback] Failed to mark inbound receipt processing")
         try:
             await self.handle_message(event)
         except asyncio.CancelledError:

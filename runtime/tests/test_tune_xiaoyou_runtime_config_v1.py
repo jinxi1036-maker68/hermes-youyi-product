@@ -49,7 +49,16 @@ def test_runtime_tuning_applies_to_primary_provider_fallback_and_agent(tmp_path:
         assert updated["model"][key] == value
     assert updated["custom_providers"][1]["context_length"] == 999
     assert updated["compression"]["threshold"] == 0.18
-    assert updated["compression"]["hygiene_hard_message_limit"] == 80
+    assert updated["compression"]["threshold_tokens"] == 32000
+    assert updated["compression"]["hygiene_hard_message_limit"] == 40
+    assert updated["providers"]["custom"]["models"]["agnes-2.5-flash"] == {
+        "timeout_seconds": 9,
+        "stale_timeout_seconds": 10,
+    }
+    assert updated["providers"]["custom"]["models"]["deepseek-v4-flash"] == {
+        "timeout_seconds": 20,
+        "stale_timeout_seconds": 22,
+    }
     assert updated["agent"]["api_max_retries"] == 2
     assert updated["agent"]["max_turns"] == 8
     assert updated["agent"]["gateway_timeout"] == 35

@@ -102,7 +102,9 @@ def test_turn_trace_splits_model_and_tool_time_without_storing_content(tmp_path)
         begin_tool_event,
         begin_turn_trace,
         finalize_turn_trace,
+        record_context_budget,
         record_context_sources,
+        record_provider_event,
         record_tool_event,
     )
 
@@ -113,6 +115,20 @@ def test_turn_trace_splits_model_and_tool_time_without_storing_content(tmp_path)
         raw_text="private student sentence", visible_tool_count=23,
     )
     record_context_sources("trace-session", ["trusted_gateway_identity", "work_context_snapshot"])
+    record_context_budget(
+        "trace-session", budget_chars=1800, rendered_chars=1600,
+        request_complexity="simple", source_count=2,
+    )
+    record_provider_event(
+        "trace-session", provider="custom", model="agnes-2.5-flash",
+        outcome="request_started", error_class="", circuit_state="closed",
+        network_egress="dedicated_proxy",
+    )
+    record_provider_event(
+        "trace-session", provider="custom", model="agnes-2.5-flash",
+        outcome="request_failed", error_class="timeout", circuit_state="open",
+        network_egress="dedicated_proxy",
+    )
     begin_tool_event("trace-session", tool_name="tuoguan_query_students")
     record_tool_event(
         "trace-session", tool_name="tuoguan_query_students",
@@ -127,6 +143,9 @@ def test_turn_trace_splits_model_and_tool_time_without_storing_content(tmp_path)
     assert trace["model_segment_count"] == 2
     assert [item["phase"] for item in trace["model_events"]] == ["initial_model", "final_model"]
     assert trace["final_outcome"] == "completed"
+    assert trace["context_budget"]["rendered_chars"] == 1600
+    assert trace["provider_events"][1]["duration_ms"] is not None
+    assert trace["provider_events"][1]["network_egress"] == "dedicated_proxy"
     serialized = __import__("json").dumps(trace, ensure_ascii=False)
     assert "private student sentence" not in serialized
     assert "private result" not in serialized

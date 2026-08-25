@@ -40,8 +40,18 @@ AGENT_TUNING = {
 }
 
 COMPRESSION_TUNING = {
+    # Hermes v0.20 enforces a model-dependent percentage floor.  The absolute
+    # cap is therefore the authority that keeps long WeCom conversations from
+    # quietly growing to the model's full 262k context window.
     "threshold": 0.18,
-    "hygiene_hard_message_limit": 80,
+    "threshold_tokens": 32000,
+    "target_ratio": 0.22,
+    "protect_last_n": 8,
+    "min_tail_user_messages": 2,
+    "proactive_prune_tokens": 24000,
+    "proactive_prune_min_result_chars": 6000,
+    "proactive_prune_min_reclaim_tokens": 2048,
+    "hygiene_hard_message_limit": 40,
 }
 
 
@@ -74,6 +84,40 @@ def _restore_owner(path: Path, expected_owner: tuple[int, int] | None) -> bool:
     return _owner(path) == expected_owner
 
 
+def _tune_v020_provider_models(data: dict[str, object], changed: dict[str, dict[str, object]]) -> bool:
+    """Write the timeout shape Hermes v0.20 resolves at request time."""
+
+    providers = data.setdefault("providers", {})
+    if not isinstance(providers, dict):
+        return False
+    custom = providers.setdefault("custom", {})
+    if not isinstance(custom, dict):
+        return False
+    models = custom.setdefault("models", {})
+    if not isinstance(models, dict):
+        return False
+    for model_name, tuning in (
+        ("agnes-2.5-flash", PRIMARY_TUNING),
+        ("deepseek-v4-flash", FALLBACK_TUNING),
+    ):
+        model_config = models.setdefault(model_name, {})
+        if not isinstance(model_config, dict):
+            return False
+        for key in ("request_timeout_seconds", "stale_timeout_seconds"):
+            # Hermes v0.20 calls these timeout_seconds/stale_timeout_seconds
+            # under providers.custom.models.<model>.
+            configured_key = "timeout_seconds" if key == "request_timeout_seconds" else key
+            value = tuning[key]
+            before = model_config.get(configured_key)
+            if before != value:
+                changed[f"providers.custom.models.{model_name}.{configured_key}"] = {
+                    "before": before,
+                    "after": value,
+                }
+                model_config[configured_key] = value
+    return True
+
+
 def tune(config_file: Path, backup_dir: Path, *, apply: bool) -> dict[str, object]:
     original = config_file.read_bytes()
     original_stat = config_file.stat()
@@ -94,6 +138,8 @@ def tune(config_file: Path, backup_dir: Path, *, apply: bool) -> dict[str, objec
         return {"ok": False, "error": "agnes_provider_match_count", "match_count": len(matches)}
 
     changed: dict[str, dict[str, object]] = {}
+    if not _tune_v020_provider_models(data, changed):
+        return {"ok": False, "error": "v020_provider_models_not_mapping"}
     if matches:
         provider = matches[0]
         for key, value in PRIMARY_TUNING.items():
@@ -203,6 +249,20 @@ def tune(config_file: Path, backup_dir: Path, *, apply: bool) -> dict[str, objec
         if isinstance(item, dict) and str(item.get("model") or "") == "agnes-2.5-flash"
     ]
     verified = len(verified_matches) <= 1
+    verified_providers = verified_data.get("providers")
+    verified_custom = verified_providers.get("custom") if isinstance(verified_providers, dict) else {}
+    verified_v020_models = verified_custom.get("models") if isinstance(verified_custom, dict) else {}
+    verified = verified and isinstance(verified_v020_models, dict)
+    if isinstance(verified_v020_models, dict):
+        for model_name, tuning in (
+            ("agnes-2.5-flash", PRIMARY_TUNING),
+            ("deepseek-v4-flash", FALLBACK_TUNING),
+        ):
+            configured = verified_v020_models.get(model_name)
+            verified = verified and isinstance(configured, dict)
+            if isinstance(configured, dict):
+                verified = verified and configured.get("timeout_seconds") == tuning["request_timeout_seconds"]
+                verified = verified and configured.get("stale_timeout_seconds") == tuning["stale_timeout_seconds"]
     if verified_matches:
         verified = verified and all(verified_matches[0].get(key) == value for key, value in PRIMARY_TUNING.items())
     verified = verified and all(verified_data["model"].get(key) == value for key, value in PRIMARY_TUNING.items())

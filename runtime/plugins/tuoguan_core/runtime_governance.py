@@ -90,7 +90,7 @@ MODULE_OWNERSHIP = (
             "learning_loop.py", "models.py", "notification_outbox_runner.py", "operational_facts.py",
             "operations_daily_report.py", "operations_focus.py", "operations_query.py", "payroll.py",
             "permission_guard.py", "permissions.py", "proactive_work.py", "programs.py", "project_opportunities.py", "queries.py",
-            "provider_resilience.py",
+            "provider_resilience.py", "model_context_budget.py",
             "record_evaluation.py", "record_reply_composer.py", "records.py", "reports.py", "research.py",
             "responsibility_resolver.py", "runtime.py", "runtime_foundation.py", "runtime_governance.py",
             "runtime_performance.py",

@@ -86,6 +86,28 @@ def record_context_sources(session_id: str, sources: list[str] | tuple[str, ...]
         trace.setdefault("model_segment_started_monotonic_ns", now_ns)
 
 
+def record_context_budget(
+    session_id: str,
+    *,
+    budget_chars: int,
+    rendered_chars: int,
+    request_complexity: str,
+    source_count: int,
+) -> None:
+    """Store only aggregate context size and source count, never context text."""
+
+    with _LOCK:
+        trace = _ACTIVE.get(str(session_id or ""))
+        if not trace:
+            return
+        trace["context_budget"] = {
+            "budget_chars": max(0, int(budget_chars or 0)),
+            "rendered_chars": max(0, int(rendered_chars or 0)),
+            "request_complexity": str(request_complexity or "unknown")[:20],
+            "source_count": max(0, int(source_count or 0)),
+        }
+
+
 def _close_model_segment(trace: dict[str, Any], *, finished_ns: int, phase: str) -> None:
     started_ns = int(trace.pop("model_segment_started_monotonic_ns", 0) or 0)
     if not started_ns or finished_ns < started_ns:
@@ -177,6 +199,7 @@ def record_provider_event(
     outcome: str,
     error_class: str,
     circuit_state: str,
+    network_egress: str = "",
 ) -> None:
     """Persist only provider timing/state labels, never URLs, keys or content."""
 
@@ -184,13 +207,31 @@ def record_provider_event(
         trace = _ACTIVE.get(str(session_id or ""))
         if not trace:
             return
-        trace.setdefault("provider_events", []).append({
+        now_ns = time.monotonic_ns()
+        events = trace.setdefault("provider_events", [])
+        event = {
             "provider": str(provider or "")[:80],
             "model": str(model or "")[:120],
             "outcome": str(outcome or "")[:80],
             "error_class": str(error_class or "")[:120] or None,
             "circuit_state": str(circuit_state or "")[:40] or None,
-        })
+            "network_egress": str(network_egress or "")[:40] or None,
+        }
+        if str(outcome) == "request_started":
+            event["started_monotonic_ns"] = now_ns
+        else:
+            for prior in reversed(events):
+                if (
+                    prior.get("outcome") == "request_started"
+                    and prior.get("provider") == event["provider"]
+                    and prior.get("model") == event["model"]
+                    and "duration_ms" not in prior
+                ):
+                    started_ns = int(prior.get("started_monotonic_ns") or 0)
+                    if started_ns:
+                        event["duration_ms"] = round((now_ns - started_ns) / 1_000_000, 3)
+                    break
+        events.append(event)
 
 
 def finalize_turn_trace(
@@ -257,6 +298,9 @@ def finalize_turn_trace(
         "final_outcome": "failed" if failure_type else "completed",
         "failure_type": failure_type,
     })
+    for event in trace.get("provider_events") or []:
+        if isinstance(event, dict):
+            event.pop("started_monotonic_ns", None)
     # The trace never contains message text, reply text, names, tool arguments,
     # tool result payloads, student data, or contact details.
     with authorized_system_write(

@@ -28,23 +28,30 @@ def _candidate_sessions(
     *,
     users: set[str],
     min_messages: int,
+    max_input_tokens: int,
 ) -> list[dict[str, Any]]:
     connection.row_factory = sqlite3.Row
     placeholders = ",".join("?" for _item in users)
     if not placeholders:
         return []
+    session_columns = {
+        str(row["name"])
+        for row in connection.execute("PRAGMA table_info(sessions)").fetchall()
+    }
+    input_tokens_column = "COALESCE(input_tokens, 0)" if "input_tokens" in session_columns else "0"
     rows = connection.execute(
         f"""
-        SELECT id, user_id, session_key, message_count, started_at
+        SELECT id, user_id, session_key, message_count, started_at,
+               {input_tokens_column} AS input_tokens
         FROM sessions
         WHERE source = 'wecom_callback'
           AND user_id IN ({placeholders})
           AND archived = 0
           AND ended_at IS NULL
-          AND message_count >= ?
-        ORDER BY started_at
+          AND (message_count >= ? OR {input_tokens_column} >= ?)
+        ORDER BY input_tokens DESC, message_count DESC, started_at
         """,
-        (*sorted(users), max(1, int(min_messages))),
+        (*sorted(users), max(1, int(min_messages)), max(1, int(max_input_tokens))),
     ).fetchall()
     return [dict(row) for row in rows]
 
@@ -75,14 +82,20 @@ def rotate(
     state_db: Path,
     sessions_json: Path,
     users: set[str],
-    min_messages: int = 80,
+    min_messages: int = 40,
+    max_input_tokens: int = 32000,
     apply: bool = False,
 ) -> dict[str, Any]:
     if not state_db.exists():
         return {"ok": False, "error": "state_db_missing", "state_db": str(state_db)}
     connection = sqlite3.connect(state_db)
     try:
-        candidates = _candidate_sessions(connection, users=users, min_messages=min_messages)
+        candidates = _candidate_sessions(
+            connection,
+            users=users,
+            min_messages=min_messages,
+            max_input_tokens=max_input_tokens,
+        )
         session_ids = {str(row["id"]) for row in candidates}
         routes = _matching_routes(connection, session_ids=session_ids)
         mirror = _load_json(sessions_json)
@@ -101,10 +114,18 @@ def rotate(
                     "session_hash": _digest(str(row["id"])),
                     "user_hash": _digest(str(row["user_id"])),
                     "message_count": int(row["message_count"] or 0),
+                    "input_tokens": int(row.get("input_tokens") or 0),
                 }
                 for row in candidates
             ],
             "history_deleted": False,
+            "trusted_handoff": {
+                "preservation_sources": [
+                    "trusted_gateway_identity", "tasks", "goal_actions",
+                    "workstyle_profiles", "institution_facts", "active_work_context",
+                ],
+                "conversation_body_copied": False,
+            },
             "writeback_verified": not apply,
         }
         if not apply or not candidates:
@@ -123,14 +144,30 @@ def rotate(
 
         ended_at = time.time()
         connection.execute("BEGIN IMMEDIATE")
+        session_columns = {
+            str(row["name"])
+            for row in connection.execute("PRAGMA table_info(sessions)").fetchall()
+        }
+        supports_handoff = {"handoff_state", "handoff_platform"}.issubset(session_columns)
         for session_id in session_ids:
+            handoff_clause = ", handoff_state = ?, handoff_platform = ?" if supports_handoff else ""
+            values: tuple[Any, ...] = (
+                ended_at,
+                "latency_context_rotation_preserved_history",
+            )
+            if supports_handoff:
+                values += (
+                    "trusted_state_projection_ready",
+                    "wecom_callback",
+                )
+            values += (session_id,)
             connection.execute(
-                """
+                f"""
                 UPDATE sessions
-                SET archived = 1, ended_at = ?, end_reason = ?
+                SET archived = 1, ended_at = ?, end_reason = ?{handoff_clause}
                 WHERE id = ? AND archived = 0 AND ended_at IS NULL
                 """,
-                (ended_at, "latency_context_rotation_preserved_history", session_id),
+                values,
             )
         for route in routes:
             connection.execute("DELETE FROM gateway_routing WHERE rowid = ?", (route["rowid"],))
@@ -161,6 +198,7 @@ def rotate(
             "archived_count": len(session_ids),
             "removed_route_count": len(routes),
             "removed_mirror_route_count": len(mirror_keys),
+            "handoff_recorded": supports_handoff,
         })
         return result
     except Exception:
@@ -175,7 +213,8 @@ def main() -> int:
     parser.add_argument("--state-db", required=True, type=Path)
     parser.add_argument("--sessions-json", required=True, type=Path)
     parser.add_argument("--user", action="append", required=True)
-    parser.add_argument("--min-messages", type=int, default=80)
+    parser.add_argument("--min-messages", type=int, default=40)
+    parser.add_argument("--max-input-tokens", type=int, default=32000)
     parser.add_argument("--apply", action="store_true")
     args = parser.parse_args()
     result = rotate(
@@ -183,6 +222,7 @@ def main() -> int:
         sessions_json=args.sessions_json,
         users={str(value).strip() for value in args.user if str(value).strip()},
         min_messages=args.min_messages,
+        max_input_tokens=args.max_input_tokens,
         apply=args.apply,
     )
     print(json.dumps(result, ensure_ascii=False, indent=2))

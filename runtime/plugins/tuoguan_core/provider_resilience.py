@@ -272,6 +272,11 @@ def _record_provider_event(agent: Any, *, outcome: str, error_class: str = "") -
                 outcome=outcome,
                 error_class=error_class,
                 circuit_state=str(circuit_state().get("state") or "closed"),
+                network_egress=(
+                    str(os.getenv("HERMES_AGNES_EGRESS_LABEL") or "legacy_local_proxy")
+                    if _is_wecom_agnes(agent)
+                    else "direct_or_configured_fallback"
+                ),
             )
     except Exception:
         logger.debug("Unable to record provider resilience trace", exc_info=True)
