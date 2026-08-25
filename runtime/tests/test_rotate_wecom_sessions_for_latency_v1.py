@@ -30,7 +30,7 @@ def _seed(state_db: Path, sessions_json: Path) -> None:
     for session_id, session_key in (("boss-long", "key:boss"), ("teacher-long", "key:teacher"), ("teacher-short", "key:short"), ("other-long", "key:other")):
         connection.execute(
             "INSERT INTO gateway_routing VALUES (?,?,?,?)",
-            ("scope", session_key, json.dumps({"session_id": session_id}), 1.0),
+            ("scope", session_key, json.dumps({"session_id": session_id, "last_prompt_tokens": {"boss-long": 34000, "teacher-long": 40000, "teacher-short": 1000, "other-long": 96000}[session_id]}), 1.0),
         )
     connection.commit()
     connection.close()
@@ -95,7 +95,7 @@ def test_rotation_is_dry_run_then_soft_archives_only_target_long_sessions(tmp_pa
     assert set(mirror) == {"key:short", "key:other"}
 
 
-def test_rotation_uses_input_token_threshold_even_before_message_count(tmp_path: Path):
+def test_rotation_uses_live_prompt_threshold_even_before_message_count(tmp_path: Path):
     from scripts.rotate_wecom_sessions_for_latency import rotate
 
     state_db = tmp_path / "state.db"
@@ -111,4 +111,28 @@ def test_rotation_uses_input_token_threshold_even_before_message_count(tmp_path:
     )
 
     assert result["candidate_count"] == 1
-    assert result["candidates"][0]["input_tokens"] == 40000
+    assert result["candidates"][0]["last_prompt_tokens"] == 40000
+
+
+def test_rotation_never_uses_cumulative_input_tokens_as_a_live_context_measure(tmp_path: Path):
+    from scripts.rotate_wecom_sessions_for_latency import rotate
+
+    state_db = tmp_path / "state.db"
+    sessions_json = tmp_path / "sessions.json"
+    _seed(state_db, sessions_json)
+    connection = sqlite3.connect(state_db)
+    connection.execute("UPDATE sessions SET input_tokens = ? WHERE id = ?", (999_999, "teacher-short"))
+    connection.commit()
+    connection.close()
+
+    result = rotate(
+        state_db=state_db,
+        sessions_json=sessions_json,
+        users={"CeShi"},
+        min_messages=999,
+        max_input_tokens=32_000,
+        apply=False,
+    )
+
+    assert result["candidate_count"] == 1
+    assert result["candidates"][0]["last_prompt_tokens"] == 40000

@@ -38,6 +38,9 @@ def _candidate_sessions(
         str(row["name"])
         for row in connection.execute("PRAGMA table_info(sessions)").fetchall()
     }
+    # input_tokens is a cumulative billing/usage counter.  It is not the size
+    # of the live conversation and must never decide whether a session is
+    # rotated.  The current prompt size lives in gateway_routing.entry_json.
     input_tokens_column = "COALESCE(input_tokens, 0)" if "input_tokens" in session_columns else "0"
     rows = connection.execute(
         f"""
@@ -48,12 +51,60 @@ def _candidate_sessions(
           AND user_id IN ({placeholders})
           AND archived = 0
           AND ended_at IS NULL
-          AND (message_count >= ? OR {input_tokens_column} >= ?)
-        ORDER BY input_tokens DESC, message_count DESC, started_at
+          AND message_count >= ?
+        ORDER BY message_count DESC, started_at
         """,
-        (*sorted(users), max(1, int(min_messages)), max(1, int(max_input_tokens))),
+        (*sorted(users), max(1, int(min_messages))),
     ).fetchall()
-    return [dict(row) for row in rows]
+    rows_by_id = {str(row["id"]): dict(row) for row in rows}
+    for row in connection.execute("SELECT rowid, entry_json FROM gateway_routing ORDER BY rowid"):
+        try:
+            entry = json.loads(str(row["entry_json"] or "{}"))
+        except (TypeError, ValueError):
+            continue
+        session_id = str(entry.get("session_id") or "")
+        candidate = rows_by_id.get(session_id)
+        if candidate is None:
+            continue
+        try:
+            candidate["last_prompt_tokens"] = max(
+                int(candidate.get("last_prompt_tokens") or 0),
+                int(entry.get("last_prompt_tokens") or 0),
+            )
+        except (TypeError, ValueError):
+            continue
+    # A short session may still carry an oversized live prompt.  Add it only
+    # when gateway routing has a real current-prompt measurement.
+    for row in connection.execute(
+        f"""
+        SELECT id, user_id, session_key, message_count, started_at,
+               {input_tokens_column} AS input_tokens
+        FROM sessions
+        WHERE source = 'wecom_callback'
+          AND user_id IN ({placeholders})
+          AND archived = 0
+          AND ended_at IS NULL
+        """,
+        tuple(sorted(users)),
+    ).fetchall():
+        candidate = rows_by_id.setdefault(str(row["id"]), dict(row))
+        candidate.setdefault("last_prompt_tokens", 0)
+    # Re-scan routing now all selected users are present.
+    for row in connection.execute("SELECT rowid, entry_json FROM gateway_routing ORDER BY rowid"):
+        try:
+            entry = json.loads(str(row["entry_json"] or "{}"))
+            session_id = str(entry.get("session_id") or "")
+            candidate = rows_by_id.get(session_id)
+            if candidate is not None:
+                candidate["last_prompt_tokens"] = max(int(candidate.get("last_prompt_tokens") or 0), int(entry.get("last_prompt_tokens") or 0))
+        except (TypeError, ValueError):
+            continue
+    candidates = [
+        row for row in rows_by_id.values()
+        if int(row.get("message_count") or 0) >= max(1, int(min_messages))
+        or int(row.get("last_prompt_tokens") or 0) >= max(1, int(max_input_tokens))
+    ]
+    return sorted(candidates, key=lambda row: (int(row.get("last_prompt_tokens") or 0), int(row.get("message_count") or 0)), reverse=True)
 
 
 def _matching_routes(
@@ -114,7 +165,8 @@ def rotate(
                     "session_hash": _digest(str(row["id"])),
                     "user_hash": _digest(str(row["user_id"])),
                     "message_count": int(row["message_count"] or 0),
-                    "input_tokens": int(row.get("input_tokens") or 0),
+                    "last_prompt_tokens": int(row.get("last_prompt_tokens") or 0),
+                    "input_tokens_cumulative": int(row.get("input_tokens") or 0),
                 }
                 for row in candidates
             ],

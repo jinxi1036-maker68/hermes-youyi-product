@@ -51,7 +51,7 @@ def test_runtime_tuning_applies_primary_only_policy_and_agent_limits(tmp_path: P
     assert updated["custom_providers"][1]["context_length"] == 999
     assert updated["compression"]["threshold"] == 0.18
     assert updated["compression"]["threshold_tokens"] == 32000
-    assert updated["compression"]["hygiene_hard_message_limit"] == 40
+    assert updated["compression"]["hygiene_hard_message_limit"] == 5000
     assert updated["providers"]["custom"]["models"]["agnes-2.5-flash"] == {
         "timeout_seconds": 9,
         "stale_timeout_seconds": 10,

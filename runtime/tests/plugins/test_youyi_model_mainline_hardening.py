@@ -47,10 +47,14 @@ def test_tuoguan_core_does_not_register_pre_model_business_decision_hooks():
         from hermes_cli.plugins import VALID_HOOKS
     except Exception:
         VALID_HOOKS = {"post_gateway_response"}
+    expected = ["pre_llm_call", "pre_tool_call", "post_tool_call"]
+    if "transform_tool_result" in VALID_HOOKS:
+        expected.append("transform_tool_result")
     if "post_gateway_response" in VALID_HOOKS:
-        assert names == ["pre_llm_call", "pre_tool_call", "post_tool_call", "post_gateway_response"]
+        expected.append("post_gateway_response")
     else:
-        assert names == ["pre_llm_call", "pre_tool_call", "post_tool_call", "transform_llm_output", "post_llm_call"]
+        expected.extend(["transform_llm_output", "post_llm_call"])
+    assert names == expected
     assert "pre_gateway_dispatch" not in names
     assert [name for name, _fn in middleware] == ["llm_request"]
     assert {tool["name"] for tool in tools}

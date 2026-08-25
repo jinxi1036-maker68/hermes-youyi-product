@@ -4792,6 +4792,7 @@ def advance_institution_work(
     evidence: list[Any] | None = None,
     artifact_title: str = "",
     artifact_content: str = "",
+    submit_for_review: bool = False,
     artifact_version_id: str = "",
     evidence_ids: list[Any] | None = None,
     pending_items: list[Any] | None = None,
@@ -4902,8 +4903,23 @@ def advance_institution_work(
             "risk_items": _strip_forbidden(pending_items or []),
             "status": "draft", "generated_at": now_iso(),
         }
-        event, folded = _append_institution_event(store, item=item, identity=identity, record_type="work_item_artifact_version", operation_id=operation_id, source_message_id=source_message_id, source_text=source_text, payload={"artifact": artifact}, patch={"institution_stage": "drafting", "status": "active"})
-        return {"ok": bool(folded), "work_item": _compact_work_item_view(folded or item), "artifact": artifact, "event": event, "writeback_verified": bool(folded), "rendered_text": "已保存待审核草案版本；没有老板内容确认前，它不是生效制度。"}
+        if bool(submit_for_review):
+            artifact["status"] = "awaiting_review"
+            patch = {
+                "institution_stage": "awaiting_content_approval",
+                "status": "waiting",
+                "current_waiting": {
+                    "decision_type": "content_approval",
+                    "artifact_version_id": artifact["version_id"],
+                    "reason": "等待老板确认这一版内容，不代表授权落实。",
+                },
+            }
+            rendered = "草案已保存并提交内容审核；下一步只等待内容确认，不会自动派任务或落实。"
+        else:
+            patch = {"institution_stage": "drafting", "status": "active"}
+            rendered = "已保存待审核草案版本；没有老板内容确认前，它不是生效制度。"
+        event, folded = _append_institution_event(store, item=item, identity=identity, record_type="work_item_artifact_version", operation_id=operation_id, source_message_id=source_message_id, source_text=source_text, payload={"artifact": artifact}, patch=patch)
+        return {"ok": bool(folded), "work_item": _compact_work_item_view(folded or item), "artifact": artifact, "event": event, "writeback_verified": bool(folded), "rendered_text": rendered}
     artifact = _institution_artifact(item, artifact_version_id)
     if normalized_action in {"submit_for_review", "review_content", "authorize_implementation", "link_execution", "verify"} and artifact is None:
         return {"ok": False, "error": "institution_artifact_not_found", "message": "当前操作必须关联已保存的成果版本。"}
@@ -5069,7 +5085,14 @@ def submit_wakeup_request(
         "auto_effects": {"executes_business_action": False, "forces_next_action": False, "changes_router": False},
     }
     _append_jsonl(store, WAKEUP_REQUESTS_FILE, row)
-    return {"ok": True, "wakeup_request": row, "writeback_verified": True, "rendered_text": "已保存唤醒请求；它只会让 Hermes 重新查看事实，不直接执行业务动作。"}
+    folded = _fold_wakeup_requests(store).get(str(row.get("wakeup_request_id") or ""), {})
+    verified = str(folded.get("wakeup_request_id") or "") == str(row.get("wakeup_request_id") or "")
+    return {
+        "ok": bool(verified),
+        "wakeup_request": folded if verified else row,
+        "writeback_verified": bool(verified),
+        "rendered_text": "已保存唤醒请求；它只会让 Hermes 重新查看事实，不直接执行业务动作。" if verified else "唤醒请求写入后没有完成反查，本轮不能把它说成已保存。",
+    }
 
 
 
@@ -5602,6 +5625,7 @@ def query_xiaoyou_health(
     outbox_health = _xiaoyou_outbox_health(outbox, since_ts)
     autonomous_loop = _xiaoyou_autonomous_loop_health(store, since_ts)
     runtime_learning = _xiaoyou_runtime_learning_health(store, since_ts)
+    runtime_status = _xiaoyou_runtime_status_health(store, since_ts)
     turn_runtime = _xiaoyou_turn_trace_health(store, since_ts)
     try:
         from .provider_resilience import provider_health_snapshot
@@ -5742,6 +5766,7 @@ def query_xiaoyou_health(
         "market_learning": social_market,
         "public_learning": public_learning,
         "runtime_learning": {**runtime_learning, "turn_trace": turn_runtime, "model_providers": provider_health},
+        "runtime_status": runtime_status,
         "task_coaching": teacher_coaching,
         "issues": issues[:12],
         "actions_taken": [],
@@ -5847,6 +5872,26 @@ def _xiaoyou_runtime_learning_health(store: TuoguanStore, since_ts: float) -> di
             if status in {"fixed", "verified", "expired"}
         ),
         "inbound_receipts": receipt_health,
+    }
+
+
+def _xiaoyou_runtime_status_health(store: TuoguanStore, since_ts: float) -> dict[str, Any]:
+    """Report internal-only lifecycle chatter without exposing it in chat."""
+
+    rows = [
+        row
+        for row in _read_jsonl(store, "runtime_status_events.jsonl")
+        if str(row.get("tenant_id") or "") in {"", current_tenant_id()}
+        and _ts(row.get("created_at")) >= since_ts
+    ]
+    suppressed = [
+        row for row in rows
+        if str(row.get("record_type") or "") == "internal_context_status_suppressed"
+    ]
+    return {
+        "internal_context_status_suppressed_count_last_24h": len(suppressed),
+        "technical_status_visible_to_wecom": False,
+        "privacy_preserving": True,
     }
 
 

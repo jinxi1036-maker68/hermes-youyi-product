@@ -13,6 +13,7 @@ Supports multiple self-built apps under one gateway instance, scoped by
 from __future__ import annotations
 
 import asyncio
+from datetime import datetime
 import hashlib
 import importlib
 import logging
@@ -71,6 +72,22 @@ ACCESS_TOKEN_TTL_SECONDS = 7200
 # our writeback/reply guards, not another primary-model retry.
 DEFAULT_MODEL_TURN_TIMEOUT_SECONDS = 38.0
 
+# Hermes may emit lifecycle diagnostics through the gateway status channel.
+# They are useful in logs but are not a work message from 小优 and must never
+# become a standalone Enterprise WeChat message to a teacher or owner.
+_INTERNAL_CONTEXT_STATUS_MARKERS = (
+    "context compaction",
+    "compacting context",
+    "preflight compression",
+    "pre-api compression",
+    "compression complete",
+    "compression blocked",
+    "compression aborted",
+    "压缩上下文",
+    "上下文压缩",
+    "上下文已压缩",
+)
+
 
 def _model_turn_timeout_seconds() -> float:
     raw = str(os.getenv("HERMES_WECOM_MODEL_TURN_TIMEOUT_SECONDS", "") or "").strip()
@@ -110,6 +127,33 @@ def _turn_fence_module():
 def _event_chat_id(event: MessageEvent) -> str:
     source = getattr(event, "source", None)
     return str(getattr(source, "chat_id", "") or "")
+
+
+def _is_internal_context_status(content: str) -> bool:
+    normalized = str(content or "").strip().lower()
+    return bool(normalized) and any(marker in normalized for marker in _INTERNAL_CONTEXT_STATUS_MARKERS)
+
+
+def _record_suppressed_context_status() -> None:
+    """Best-effort, content-free evidence for the owner health query."""
+
+    try:
+        TuoguanStore = _import_tuoguan_module("store").TuoguanStore
+        authorized_system_write = _import_tuoguan_module("write_guard").authorized_system_write
+        store = TuoguanStore()
+        with authorized_system_write(
+            store.data_dir,
+            job_name="wecom_internal_status_suppression",
+            allowed_files={"runtime_status_events.jsonl"},
+        ):
+            store.append_jsonl_verified("runtime_status_events.jsonl", {
+                "record_type": "internal_context_status_suppressed",
+                "platform": "wecom_callback",
+                "created_at": datetime.now().astimezone().isoformat(timespec="seconds"),
+                "contains_user_content": False,
+            })
+    except Exception:
+        logger.debug("[WecomCallback] Failed to record suppressed internal status", exc_info=True)
 
 
 def check_wecom_callback_requirements() -> bool:
@@ -334,6 +378,13 @@ class WecomCallbackAdapter(BasePlatformAdapter):
         reply_to: Optional[str] = None,
         metadata: Optional[Dict[str, Any]] = None,
     ) -> SendResult:
+        if _is_internal_context_status(content):
+            _record_suppressed_context_status()
+            logger.info("[WecomCallback] Suppressed internal context lifecycle status")
+            # A status callback is not a business delivery.  Treating this as
+            # successful prevents the gateway from attempting to re-send the
+            # same technical text while no user-facing message is emitted.
+            return SendResult(success=True, message_id="internal-status-suppressed")
         app = self._resolve_app_for_chat(chat_id)
         if app is None:
             return SendResult(

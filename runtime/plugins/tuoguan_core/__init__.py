@@ -38,9 +38,14 @@ from .runtime_foundation import (
     should_clarify_without_tool as _foundation_should_clarify_without_tool,
     terminal_tool_result_recorded as _foundation_terminal_tool_result_recorded,
     transform_final_response as _foundation_transform_final_response,
+    compact_tool_result_for_model as _foundation_compact_tool_result_for_model,
+    dedupe_external_reply_blocks as _foundation_dedupe_external_reply_blocks,
+    record_work_context_snapshot as _foundation_record_work_context_snapshot,
 )
 from .turn_trace import (
     begin_tool_event as _begin_trace_tool_event,
+    record_response_deduplication as _record_trace_response_deduplication,
+    record_tool_result_projection as _record_trace_tool_result_projection,
     begin_turn_trace as _begin_turn_trace,
     finalize_turn_trace as _finalize_turn_trace,
     record_context_sources as _record_trace_context_sources,
@@ -1660,6 +1665,10 @@ def _on_pre_llm_call(**kwargs: Any) -> dict[str, str] | None:
             active_context = render_work_context_snapshot(work_snapshot)
             has_active_context = bool(work_snapshot.get("candidate_threads"))
             append_context(active_context, "work_context_snapshot")
+            _foundation_record_work_context_snapshot(
+                session_id=turn_key,
+                snapshot=work_snapshot,
+            )
             _record_trace_guard_event(
                 trace_key,
                 guard="work_context_ambiguity",
@@ -1776,6 +1785,30 @@ def _on_post_tool_call(**kwargs: Any) -> None:
     _observe_turn_tool_result(session_id, tool_name=tool_name, result=result)
     _observe_turn_fence_tool_result(session_id=session_id, result=result)
     _record_trace_tool_event(session_id, tool_name=tool_name, result=result)
+
+
+def _on_transform_tool_result(**kwargs: Any) -> str | None:
+    """Keep full tool audit data while bounding only the model-visible copy."""
+
+    replacement = _foundation_compact_tool_result_for_model(
+        tool_name=str(kwargs.get("tool_name") or ""),
+        args=kwargs.get("args"),
+        result=kwargs.get("result"),
+    )
+    session_id = str(kwargs.get("session_id") or "")
+    if replacement is not None:
+        _record_trace_tool_result_projection(
+            session_id,
+            tool_name=str(kwargs.get("tool_name") or ""),
+            original_chars=len(str(kwargs.get("result") or "")),
+            projected_chars=len(replacement),
+        )
+        _record_trace_guard_event(
+            session_id,
+            guard="tool_result_projection",
+            result=f"{len(str(kwargs.get('result') or ''))}->{len(replacement)}",
+        )
+    return replacement
 
 
 def _on_pre_api_request(**kwargs: Any) -> None:
@@ -1925,6 +1958,17 @@ def _on_transform_llm_output(**kwargs: Any) -> str | None:
         session_id=session_id,
         response_text=response_text,
     )
+    _deduped, removed = _foundation_dedupe_external_reply_blocks(response_text)
+    # transform_final_response performs the same deterministic operation before
+    # final claim validation.  This trace records its effect without retaining
+    # either version of the user-facing text.
+    if removed:
+        _record_trace_response_deduplication(session_id, removed_chars=removed)
+        _record_trace_guard_event(
+            session_id,
+            guard="response_duplicate_dedup",
+            result=f"removed_chars:{removed}",
+        )
     _record_trace_guard_event(
         session_id,
         guard="final_reply_claim_guard",
@@ -2098,6 +2142,8 @@ def register(ctx) -> None:
         from hermes_cli.plugins import VALID_HOOKS
     except Exception:
         VALID_HOOKS = {"post_gateway_response"}
+    if "transform_tool_result" in VALID_HOOKS:
+        ctx.register_hook("transform_tool_result", _on_transform_tool_result)
     for hook_name, handler in (
         ("pre_api_request", _on_pre_api_request),
         ("post_api_request", _on_post_api_request),

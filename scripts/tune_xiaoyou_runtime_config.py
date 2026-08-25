@@ -48,7 +48,10 @@ COMPRESSION_TUNING = {
     "proactive_prune_tokens": 24000,
     "proactive_prune_min_result_chars": 6000,
     "proactive_prune_min_reclaim_tokens": 2048,
-    "hygiene_hard_message_limit": 40,
+    # Gateway hygiene is a last-resort guard.  A 40-message cutoff made
+    # ordinary business conversations repeatedly invoke the gateway-side
+    # compressor before the session-aware primary compressor could work.
+    "hygiene_hard_message_limit": 5000,
 }
 
 OFFICIAL_AGNES_BASE_URLS = {

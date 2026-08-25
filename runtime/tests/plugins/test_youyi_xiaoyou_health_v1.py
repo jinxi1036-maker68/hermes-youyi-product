@@ -221,6 +221,16 @@ def _seed_store(tmp_path: Path):
     )
     _append_jsonl(
         tmp_path,
+        "runtime_status_events.jsonl",
+        [{
+            "record_type": "internal_context_status_suppressed",
+            "platform": "wecom_callback",
+            "created_at": "2026-08-09T10:27:00+08:00",
+            "contains_user_content": False,
+        }],
+    )
+    _append_jsonl(
+        tmp_path,
         "teacher_coaching_events.jsonl",
         [{
             "record_type": "teacher_coaching_event",
@@ -298,6 +308,9 @@ def test_xiaoyou_health_summarizes_read_only_operating_signals(tmp_path):
     identity = UserIdentity("wecom_callback", "boss1", "boss1", "金总", "boss", "approved")
 
     result = query_xiaoyou_health(store, identity=identity, now_at="2026-08-09T11:00:00+08:00")
+
+    assert result["runtime_status"]["internal_context_status_suppressed_count_last_24h"] == 1
+    assert result["runtime_status"]["technical_status_visible_to_wecom"] is False
 
     assert result["ok"] is True
     assert result["read_only"] is True

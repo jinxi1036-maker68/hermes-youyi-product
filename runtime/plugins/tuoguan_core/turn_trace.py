@@ -191,6 +191,40 @@ def record_guard_event(session_id: str, *, guard: str, result: str) -> None:
             trace.setdefault("guard_events", []).append({"guard": str(guard), "result": str(result)})
 
 
+def record_tool_result_projection(
+    session_id: str,
+    *,
+    tool_name: str,
+    original_chars: int,
+    projected_chars: int,
+) -> None:
+    """Record aggregate model-context reduction without retaining tool data."""
+
+    with _LOCK:
+        trace = _ACTIVE.get(str(session_id or ""))
+        if not trace:
+            return
+        trace.setdefault("tool_result_projections", []).append({
+            "tool": str(tool_name or "")[:120],
+            "original_chars": max(0, int(original_chars or 0)),
+            "projected_chars": max(0, int(projected_chars or 0)),
+        })
+
+
+def record_response_deduplication(session_id: str, *, removed_chars: int) -> None:
+    """Keep a privacy-preserving signal when the final reply was de-duplicated."""
+
+    if int(removed_chars or 0) <= 0:
+        return
+    with _LOCK:
+        trace = _ACTIVE.get(str(session_id or ""))
+        if trace:
+            trace["response_duplicate_removed_chars"] = max(
+                int(trace.get("response_duplicate_removed_chars") or 0),
+                int(removed_chars),
+            )
+
+
 def record_provider_event(
     session_id: str,
     *,

@@ -192,6 +192,60 @@ def _compact(text: str) -> str:
     return "".join(str(text or "").split()).rstrip("。！？!?；;")
 
 
+def dedupe_external_reply_blocks(text: str) -> tuple[str, int]:
+    """Remove accidental adjacent duplicate response blocks before delivery.
+
+    This is deliberately narrow: it only removes an exact repeated whole reply
+    or an immediately repeated paragraph.  Similar paragraphs can be a real
+    explanation and remain the model's decision.
+    """
+
+    original = str(text or "")
+    value = original.strip()
+    if not value:
+        return original, 0
+    midpoint = len(value) // 2
+    if len(value) % 2 == 0 and midpoint and _compact(value[:midpoint]) == _compact(value[midpoint:]):
+        return value[:midpoint].rstrip(), len(value[midpoint:])
+    blocks = re.split(r"\n\s*\n", value)
+    kept: list[str] = []
+    removed = 0
+    for block in blocks:
+        normalized = _compact(block)
+        if kept and normalized and normalized == _compact(kept[-1]):
+            removed += len(block)
+            continue
+        kept.append(block)
+    return "\n\n".join(kept), removed
+
+
+def record_work_context_snapshot(*, session_id: str, snapshot: Any) -> None:
+    """Keep the authoritative institution stage available to the reply guard.
+
+    The snapshot is evidence supplied to the model, not a hidden action
+    selector.  Persisting only its stage/id metadata in the in-memory turn lets
+    the final guard reject a claim that contradicts the same turn's facts.
+    """
+
+    if not isinstance(snapshot, dict):
+        return
+    candidates = [
+        row for row in (snapshot.get("candidate_threads") or [])
+        if isinstance(row, dict) and str(row.get("context_type") or "") == "institution_work"
+    ]
+    stages = {
+        str(row.get("status") or "")
+        for row in candidates
+        if str(row.get("status") or "")
+    }
+    with _LOCK:
+        item = _TURN_BY_SESSION.get(str(session_id or ""))
+        if not item:
+            return
+        item["institution_snapshot_stage"] = next(iter(stages)) if len(stages) == 1 else ("ambiguous" if stages else "")
+        item["institution_snapshot_count"] = len(candidates)
+
+
 def _looks_like_unverified_success(text: str) -> bool:
     compact = _compact(text)
     success_words = (
@@ -228,6 +282,7 @@ def _sanitize_external_reply(
     outreach_guard_applies: bool | None = None,
     identity_query: bool = False,
     institution_commitment_state: str = "",
+    future_execution_verified: bool = False,
 ) -> str:
     value = str(text or "")
     # Direct callers that explicitly supply an outreach state are testing an
@@ -292,19 +347,27 @@ def _sanitize_external_reply(
     )
     if not verified_state_change and any(term in value for term in unverified_task_claim_terms):
         return "我刚才不能在没有任务工具确认的情况下说任务已闭环。请告诉我具体是哪一个任务或学生，我会按任务记录核验后再确认。"
-    institution_claim_terms = ("制度已确认", "方案已确认", "流程已确认", "已经落实", "已落实", "制度已生效", "流程已生效")
-    if any(term in value for term in institution_claim_terms):
+    institution_claim = _contains_institution_claim(value)
+    if institution_claim:
         replacements = {
             "draft": "草案已保存，仍待老板审核",
+            "drafting": "草案已保存，仍待老板审核",
             "awaiting_content_approval": "草案正在等待内容审核",
+            "content_approved": "内容已确认，仍待单独授权落实",
             "awaiting_implementation_authorization": "内容已确认，仍待单独授权落实",
             "implementing": "已获得落实授权，仍在等待真实执行回执",
             "verifying": "正在核验落实结果",
             "effective": "已记录核验结果，但仍应以当前执行证据为准",
+            "closed": "该工作事项已收口，具体是否生效仍以最终核验记录为准",
         }
         if institution_commitment_state in replacements:
             return replacements[institution_commitment_state] + "。"
         return "我不能在没有机构工作事项回执的情况下说制度已确认或已经落实。"
+    future_claim = bool(re.search(r"(?:8月31日|月底).{0,20}(?:自动|开启|生成|发送|联系)", value)) or any(
+        term in value for term in ("会发给老师", "会通知全体老师", "自动开启续费确认窗口")
+    )
+    if future_claim and not future_execution_verified:
+        return "这件事目前还没有形成可验证的执行安排；我只能先保留为待审核事项，等获得明确授权并建立真实唤醒或执行回执后再推进。"
     sent_claim_terms = (
         "已经发给", "已发给", "已经通知", "已通知", "我刚问了", "我已经问了", "已经联系",
         "已发送", "已经发送", "发送成功", "对方已收到", "对方已经收到",
@@ -391,6 +454,24 @@ def _sanitize_external_reply(
             value = value.replace("系统显示", "当前上下文里提到")
             value = value.replace("查到", "看到")
     return value
+
+
+def _contains_institution_claim(value: str) -> bool:
+    """Detect a completion claim while preserving explicit uncertainty.
+
+    A statement such as ``制度尚未确认`` is an honest boundary, not an
+    assertion that needs to be replaced.  Only a positive completion claim is
+    subject to the institution-work receipt guard.
+    """
+
+    pattern = re.compile(
+        r"(?:制度|方案|流程|规则|学生记录|任务授权|绩效|工资|四项).{0,18}(?:已|已经)?(?:确认|定下|处理|闭环|完成|落实|生效)"
+    )
+    for match in pattern.finditer(str(value or "")):
+        claim = match.group(0)
+        if not re.search(r"(?:未|没有|尚未|待|不能|并非).{0,8}(?:确认|定下|处理|闭环|完成|落实|生效)", claim):
+            return True
+    return any(term in str(value or "") for term in ("四项已完成", "四项制度缺口我们过完了", "不再处理这四项"))
 
 
 def _looks_like_unverified_business_fact(raw_text: str, reply_text: str) -> bool:
@@ -1675,6 +1756,7 @@ def transform_final_response(*, store: TuoguanStore, session_id: str, response_t
     outreach_guard_applies = False
     identity_query = False
     institution_commitment_state = ""
+    future_execution_verified = False
     with _LOCK:
         item = _TURN_BY_SESSION.get(str(session_id or "")) or {}
         actor_role = str(item.get("role") or "")
@@ -1689,7 +1771,8 @@ def transform_final_response(*, store: TuoguanStore, session_id: str, response_t
                 if verified_state_change:
                     break
         outreach_state = _tool_results_outreach_state(item.get("tool_results") or [])
-        institution_commitment_state = _tool_results_institution_stage(item.get("tool_results") or [])
+        institution_commitment_state = _tool_results_institution_stage(item.get("tool_results") or []) or str(item.get("institution_snapshot_stage") or "")
+        future_execution_verified = _tool_results_have_verified_future_execution(item)
         raw = _compact(item.get("raw_text") or "")
         if any(term in raw for term in ("主动联系", "主动找", "去问老师", "去问店长", "去问老板")):
             outreach_guard_applies = True
@@ -1697,8 +1780,9 @@ def transform_final_response(*, store: TuoguanStore, session_id: str, response_t
         authoritative_reply = _authoritative_task_write_reply(item) or _authoritative_read_reply(item)
     if authoritative_reply:
         response_text = authoritative_reply
+    deduplicated, _removed = dedupe_external_reply_blocks(response_text)
     return _sanitize_external_reply(
-        response_text,
+        deduplicated,
         verified_state_change=verified_state_change,
         used_trusted_tool=used_trusted_tool,
         actor_role=actor_role,
@@ -1707,7 +1791,111 @@ def transform_final_response(*, store: TuoguanStore, session_id: str, response_t
         outreach_guard_applies=outreach_guard_applies,
         identity_query=identity_query,
         institution_commitment_state=institution_commitment_state,
+        future_execution_verified=future_execution_verified,
     )
+
+
+def _tool_results_have_verified_future_execution(item: dict[str, Any]) -> bool:
+    calls = item.get("tool_calls") if isinstance(item.get("tool_calls"), list) else []
+    results = item.get("tool_results") if isinstance(item.get("tool_results"), list) else []
+    for call, result in zip(calls, results):
+        if not isinstance(call, dict) or not isinstance(result, dict):
+            continue
+        if str(call.get("tool") or "") != "tuoguan_submit_wakeup_request":
+            continue
+        data = result.get("data") if isinstance(result.get("data"), dict) else result
+        if result.get("ok") is True and isinstance(data, dict) and bool(data.get("writeback_verified")):
+            return True
+    return False
+
+
+def compact_tool_result_for_model(*, tool_name: str, args: Any, result: Any) -> str | None:
+    """Return a bounded, truthful projection for the model-visible tool turn.
+
+    Full results have already been observed by the audit hook.  The model needs
+    a decision-ready summary rather than task closure history or a complete
+    student roster injected into every future turn.
+    """
+
+    if not str(tool_name or "").startswith("tuoguan_") or not isinstance(result, str):
+        return None
+    try:
+        parsed = json.loads(result)
+    except (TypeError, ValueError):
+        return None
+    if not isinstance(parsed, dict):
+        return None
+    data = parsed.get("data") if isinstance(parsed.get("data"), dict) else {}
+    effective_tool = str(data.get("legacy_tool") or parsed.get("legacy_tool") or tool_name)
+    if effective_tool not in {"tuoguan_query_tasks", "tuoguan_query_students"}:
+        return None
+    projected: dict[str, Any] = {"ok": bool(parsed.get("ok"))}
+    if parsed.get("error"):
+        projected["error"] = str(parsed.get("error"))
+    if parsed.get("message"):
+        projected["message"] = str(parsed.get("message"))[:500]
+    if not data:
+        return json.dumps(projected, ensure_ascii=False, separators=(",", ":"))
+    if effective_tool == "tuoguan_query_tasks":
+        requested_task = str((args or {}).get("task_id") or "") if isinstance(args, dict) else ""
+        summaries = [row for row in (data.get("task_summaries") or []) if isinstance(row, dict)]
+        closed = {"completed", "cancelled", "superseded", "expired", "closed", "done"}
+        relevant = summaries if requested_task else [row for row in summaries if str(row.get("status") or "") not in closed]
+        if not relevant and requested_task:
+            relevant = summaries
+        compact_tasks: list[dict[str, Any]] = []
+        for row in relevant[:5]:
+            compact: dict[str, Any] = {}
+            for key in (
+                "task_id", "id", "title", "status", "priority", "due_at",
+                "assignee_user_id", "assignee_userid", "assignee_name", "student_name",
+                "goal_id", "goal_action_id", "freshness_state",
+            ):
+                value = row.get(key)
+                if value is not None and value != "" and value != [] and value != {}:
+                    compact[key] = str(value)[:500] if isinstance(value, str) else value
+            compact_tasks.append(compact)
+        projected["data"] = {
+            "result_scope": data.get("result_scope") or data.get("effective_scope") or "visible_tasks",
+            "total_count": int(data.get("total_count") or data.get("count") or 0),
+            "returned_count": min(len(relevant), 5),
+            "truncated": bool(data.get("truncated")) or len(relevant) > 5,
+            "as_of": str(data.get("as_of") or ""),
+            "status_counts": data.get("status_counts") or {},
+            "tasks": compact_tasks,
+        }
+    else:
+        students = [row for row in (data.get("students") or []) if isinstance(row, dict)]
+        compact_students = []
+        for row in students[:5]:
+            profile = row.get("profile") if isinstance(row.get("profile"), dict) else {}
+            recent = [entry for entry in (row.get("recent_records") or []) if isinstance(entry, dict)][:2]
+            compact_students.append({
+                "name": str(row.get("name") or ""),
+                "profile": {
+                    key: profile.get(key)
+                    for key in ("grade", "campus_id", "status", "teacher_name")
+                    if profile.get(key) not in {None, ""}
+                },
+                "recent_record_count": len(row.get("recent_records") or []),
+                "recent_records": [
+                    {
+                        "recorded_at": entry.get("recorded_at") or entry.get("created_at") or entry.get("date"),
+                        "record_type": entry.get("record_type") or entry.get("type"),
+                    }
+                    for entry in recent
+                ],
+            })
+        projected["data"] = {
+            "result_scope": data.get("result_scope") or data.get("query_scope") or "visible_students",
+            "total_count": int(data.get("total_count") or data.get("count") or 0),
+            "returned_count": min(len(students), 5),
+            "truncated": bool(data.get("truncated")) or len(students) > 5,
+            "as_of": str(data.get("as_of") or ""),
+            "students": compact_students,
+        }
+    rendered = json.dumps(projected, ensure_ascii=False, separators=(",", ":"))
+    return rendered if len(rendered) < len(result) else None
 
 
 def _tool_results_outreach_state(results: Any) -> str:

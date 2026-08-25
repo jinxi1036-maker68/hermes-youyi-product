@@ -357,6 +357,8 @@ def render_facade_instruction() -> str:
     return (
         f"【小优能力面｜{CAPABILITY_MANIFEST_VERSION}｜封版】高频工作优先使用直连工具：" + fast_paths + "。"
         "查正式托管学生使用 tuoguan_query_students(query_scope=regular)；查暑假班才使用 query_scope=summer；"
+        "分析全机构学生记录覆盖、记录质量或记录制度时，优先使用 records 领域的 query_weekly_record_coverage；"
+        "学生样本或前几名名单不能推断全机构结论。"
         "用户要看板链接时直接使用 tuoguan_dashboard_link，不需要先查目标、任务或学生完整度。"
         "其余能力使用12个领域入口：" + domains + "。"
         "员工手册或历史材料中的 tuoguan_query_tasks、tuoguan_cancel_task 等旧名称，"

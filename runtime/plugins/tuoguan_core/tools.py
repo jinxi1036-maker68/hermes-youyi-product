@@ -972,6 +972,7 @@ TUOGUAN_ADVANCE_INSTITUTION_WORK_SCHEMA = _schema(
         "evidence": {"type": "array", "items": {"type": "object"}, "description": "证据列表。每条须含 source_kind=internal_confirmed/internal_record/external_primary/model_judgment/pending_hypothesis/unsupported 和 summary；external_primary 还须 source_url、publisher、published_at。"},
         "artifact_title": {"type": "string", "description": "草案版本标题。"},
         "artifact_content": {"type": "string", "description": "草案完整内容。待专业核验的结论须同时列入 pending_items，不能写成生效事实。"},
+        "submit_for_review": {"type": "boolean", "default": False, "description": "仅 save_draft 使用。true 时在同一原子写入内保存草案并提交内容审核，仍不代表内容确认或落实授权。"},
         "artifact_version_id": {"type": "string", "description": "要审核、授权、关联或核验的成果版本；默认当前版本。"},
         "evidence_ids": {"type": "array", "items": {"type": "string"}, "description": "草案引用的已保存证据 id。"},
         "pending_items": {"type": "array", "items": {}, "description": "尚待核验的法律、标准、责任或业务假设。"},

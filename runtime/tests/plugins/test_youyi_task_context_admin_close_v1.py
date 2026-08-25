@@ -344,7 +344,7 @@ def test_teacher_completion_uses_active_context_before_expired_model_focus(tmp_p
     _write_json(tmp_path, "active_task_context.json", {
         "teacher1": {
             "task_id": contact["task_id"],
-            "expires_at": "2026-08-25T18:00:00+08:00",
+            "expires_at": (datetime.now().astimezone() + timedelta(hours=1)).isoformat(timespec="seconds"),
         },
     })
     _write_json(tmp_path, "model_focus.json", {

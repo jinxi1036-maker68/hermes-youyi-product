@@ -157,6 +157,37 @@ def test_institution_draft_cannot_promote_unsupported_standard_without_pending_m
     assert refused["error"] == "unsupported_claims_require_pending_items"
 
 
+def test_atomic_draft_submission_enters_content_review_without_a_second_write(tmp_path):
+    from plugins.tuoguan_core.digital_employee_state import advance_institution_work
+
+    store = _store(tmp_path)
+    discovered = advance_institution_work(
+        store,
+        identity=_boss(),
+        action="discover",
+        operation_id="discover-record-policy",
+        focus_key="institution:student_record_policy",
+        title="学生记录制度",
+        summary="需要整理学生记录的最小规范。",
+    )
+    drafted = advance_institution_work(
+        store,
+        identity=_boss(),
+        action="save_draft",
+        operation_id="draft-record-policy",
+        work_item_id=discovered["work_item"]["work_item_id"],
+        artifact_title="学生记录制度 V0.1",
+        artifact_content="记录范围和频率待老板审核。",
+        submit_for_review=True,
+        source_message_id="owner-draft-record-policy",
+    )
+
+    assert drafted["ok"] and drafted["writeback_verified"]
+    assert drafted["artifact"]["status"] == "awaiting_review"
+    assert drafted["work_item"]["institution_stage"] == "awaiting_content_approval"
+    assert drafted["work_item"]["current_waiting"]["decision_type"] == "content_approval"
+
+
 def test_institution_drafts_are_hidden_from_teacher_until_effective(tmp_path):
     from plugins.tuoguan_core.digital_employee_state import advance_institution_work, query_institution_work
     from plugins.tuoguan_core.models import UserIdentity
@@ -217,3 +248,13 @@ def test_institution_claim_guard_needs_matching_stage_receipt():
 
     assert "不能" in unrelated_write
     assert awaiting_authorization == "内容已确认，仍待单独授权落实。"
+
+
+def test_institution_claim_guard_preserves_honest_uncertainty_and_blocks_future_promise():
+    from plugins.tuoguan_core.runtime_foundation import _sanitize_external_reply
+
+    honest = _sanitize_external_reply("学生记录制度尚未确认，仍待老板审核。")
+    promised = _sanitize_external_reply("8月31日我会自动开启并发给全体老师。")
+
+    assert honest == "学生记录制度尚未确认，仍待老板审核。"
+    assert "没有形成可验证的执行安排" in promised

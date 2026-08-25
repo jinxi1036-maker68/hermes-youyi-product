@@ -180,6 +180,7 @@ STATE_RESOURCE_OWNERS: dict[str, str] = {
     "hermes_employee_scorecard.jsonl": "health_domain",
     "reply_ledger.jsonl": "runtime_observability_domain",
     "turn_traces.jsonl": "runtime_observability_domain",
+    "runtime_status_events.jsonl": "runtime_observability_domain",
     "tool_operations.json": "execution_receipt_domain",
     "teacher_coaching_events.jsonl": "teacher_coaching_domain",
 }

@@ -1301,8 +1301,12 @@ class TuoguanToolService:
             if scope == "regular" and historical:
                 rendered_text += " 当前处于新学期过渡期，这是上学期历史名单数量，不等于已确认的新学期在读人数。"
         data_version = ""
+        as_of = ""
         try:
-            data_version = str(int((self.store.data_dir / "records.json").stat().st_mtime_ns))
+            records_path = self.store.data_dir / "records.json"
+            stat = records_path.stat()
+            data_version = str(int(stat.st_mtime_ns))
+            as_of = datetime.fromtimestamp(stat.st_mtime).astimezone().isoformat(timespec="seconds")
         except OSError:
             pass
         return self._ok(
@@ -1310,6 +1314,11 @@ class TuoguanToolService:
             data={
                 "count": len(names),
                 "result_count": len(payload),
+                "result_scope": scope or "visible",
+                "total_count": len(names),
+                "returned_count": len(payload),
+                "truncated": len(payload) < len(names),
+                "as_of": as_of,
                 "students": payload,
                 "rendered_text": rendered_text,
                 "render_verified": True,
@@ -1847,6 +1856,10 @@ class TuoguanToolService:
                 str(item.get("due_at") or ""),
             ),
         )
+        status_counts: dict[str, int] = {}
+        for task in tasks:
+            task_status = str(task.get("status") or "pending")
+            status_counts[task_status] = int(status_counts.get(task_status) or 0) + 1
         if write_focus and len(tasks) == 1:
             self._write_focus(
                 task_id=str(tasks[0].get("id") or ""),
@@ -1885,8 +1898,12 @@ class TuoguanToolService:
         if len(tasks) > len(task_summaries):
             lines.append(f"共 {len(tasks)} 条，以上展示前 {len(task_summaries)} 条。")
         data_version = ""
+        as_of = ""
         try:
-            data_version = str(int((self.store.data_dir / "tasks.json").stat().st_mtime_ns))
+            tasks_path = self.store.data_dir / "tasks.json"
+            stat = tasks_path.stat()
+            data_version = str(int(stat.st_mtime_ns))
+            as_of = datetime.fromtimestamp(stat.st_mtime).astimezone().isoformat(timespec="seconds")
         except OSError:
             pass
         return self._ok(
@@ -1894,6 +1911,12 @@ class TuoguanToolService:
             data={
                 "count": len(tasks),
                 "result_count": len(tasks),
+                "result_scope": effective_scope,
+                "total_count": len(tasks),
+                "returned_count": len(visible_tasks),
+                "truncated": len(visible_tasks) < len(tasks),
+                "as_of": as_of,
+                "status_counts": status_counts,
                 "tasks": visible_tasks,
                 "task_ids": [item["task_id"] for item in task_summaries],
                 "task_summaries": task_summaries,
@@ -3801,6 +3824,7 @@ class TuoguanToolService:
         evidence: list[Any] | None = None,
         artifact_title: str = "",
         artifact_content: str = "",
+        submit_for_review: bool = False,
         artifact_version_id: str = "",
         evidence_ids: list[Any] | None = None,
         pending_items: list[Any] | None = None,
@@ -3828,6 +3852,7 @@ class TuoguanToolService:
                 evidence=evidence,
                 artifact_title=artifact_title,
                 artifact_content=artifact_content,
+                submit_for_review=submit_for_review,
                 artifact_version_id=artifact_version_id,
                 evidence_ids=evidence_ids,
                 pending_items=pending_items,

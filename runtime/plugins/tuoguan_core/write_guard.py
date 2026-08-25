@@ -82,6 +82,7 @@ PROTECTED_BUSINESS_FILES = {
     "staff_voice_signals.jsonl",
     "self_evolution_events.jsonl",
     "turn_traces.jsonl",
+    "runtime_status_events.jsonl",
     "tool_operations.json",
     "teacher_coaching_events.jsonl",
     "staff_offboarding_events.jsonl",
