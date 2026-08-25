@@ -49,3 +49,13 @@ def test_secret_file_must_be_owner_only(tmp_path: Path):
             read_secret_file(secret)
     os.chmod(secret, 0o600)
     assert read_secret_file(secret) == "http://proxy.example:8080"
+
+
+def test_systemd_egress_switch_is_loopback_only_and_requires_the_egress_service():
+    root = Path(__file__).resolve().parents[2]
+    text = (root / "systemd" / "hermes-youyi-019.service.d" / "30-agnes-egress.conf").read_text(encoding="utf-8")
+
+    assert "Requires=hermes-youyi-agnes-egress.service" in text
+    assert "After=hermes-youyi-agnes-egress.service" in text
+    assert "http://127.0.0.1:18889" in text
+    assert "HERMES_AGNES_EGRESS_LABEL=agnes_dedicated_upstream" in text
