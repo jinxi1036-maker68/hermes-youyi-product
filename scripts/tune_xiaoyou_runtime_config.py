@@ -49,9 +49,36 @@ def _hash(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()
 
 
+def _owner(path: Path) -> tuple[int, int] | None:
+    """Return POSIX ownership when the platform exposes it."""
+    if not hasattr(os, "chown"):
+        return None
+    stat = path.stat()
+    if not hasattr(stat, "st_uid") or not hasattr(stat, "st_gid"):
+        return None
+    return stat.st_uid, stat.st_gid
+
+
+def _restore_owner(path: Path, expected_owner: tuple[int, int] | None) -> bool:
+    """Keep atomic replacements readable by the existing service account."""
+    if expected_owner is None:
+        return True
+    try:
+        os.chown(path, *expected_owner)
+    except (AttributeError, NotImplementedError):
+        return True
+    except OSError:
+        # A failed chown is only acceptable when the replacement already has
+        # the expected owner. Otherwise the caller must reject the write.
+        return _owner(path) == expected_owner
+    return _owner(path) == expected_owner
+
+
 def tune(config_file: Path, backup_dir: Path, *, apply: bool) -> dict[str, object]:
     original = config_file.read_bytes()
-    original_mode = config_file.stat().st_mode & 0o777
+    original_stat = config_file.stat()
+    original_mode = original_stat.st_mode & 0o777
+    original_owner = _owner(config_file)
     data = yaml.safe_load(original.decode("utf-8"))
     if not isinstance(data, dict):
         return {"ok": False, "error": "config_not_mapping"}
@@ -161,8 +188,15 @@ def tune(config_file: Path, backup_dir: Path, *, apply: bool) -> dict[str, objec
     temporary = config_file.with_name(f".{config_file.name}.{os.getpid()}.tmp")
     temporary.write_bytes(rendered)
     os.chmod(temporary, original_mode or 0o600)
+    if not _restore_owner(temporary, original_owner):
+        return {
+            **result,
+            "error": "temporary_owner_restore_failed",
+            "backup_file": str(backup),
+        }
     os.replace(temporary, config_file)
     os.chmod(config_file, original_mode or 0o600)
+    ownership_preserved = _restore_owner(config_file, original_owner)
     verified_data = yaml.safe_load(config_file.read_text(encoding="utf-8"))
     verified_matches = [
         item for item in (verified_data.get("custom_providers") or [])
@@ -187,12 +221,13 @@ def tune(config_file: Path, backup_dir: Path, *, apply: bool) -> dict[str, objec
     else:
         verified = verified and verified_fallbacks == fallback_value
     permissions_preserved = (config_file.stat().st_mode & 0o777) == (original_mode or 0o600)
-    verified = bool(verified and permissions_preserved)
+    verified = bool(verified and permissions_preserved and ownership_preserved)
     result.update({
         "backup_file": str(backup),
         "updated_sha256": _hash(config_file.read_bytes()),
         "writeback_verified": verified,
         "permissions_preserved": permissions_preserved,
+        "ownership_preserved": ownership_preserved,
         "ok": verified,
     })
     return result

@@ -41,6 +41,7 @@ def test_runtime_tuning_applies_to_primary_provider_fallback_and_agent(tmp_path:
     assert result["ok"] is True
     assert result["writeback_verified"] is True
     assert result["permissions_preserved"] is True
+    assert result["ownership_preserved"] is True
     assert updated["custom_providers"][0]["api_key"] == "secret"
     assert updated["model"]["api_key"] == "primary-secret"
     for key, value in TUNING.items():
