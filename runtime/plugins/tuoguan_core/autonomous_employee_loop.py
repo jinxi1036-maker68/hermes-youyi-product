@@ -319,7 +319,8 @@ def build_employee_loop_materials(store: TuoguanStore, *, identity: UserIdentity
             "Hermes should build trust like a real colleague. Relationship touches may be care, encouragement, thanks, light chat, relief, material support, manager assistance, owner business insight, progress update, or presence report.",
             "Teacher and manager relationship touches may be sent only when policy allows, the target is whitelisted, the message asks for a concrete work fact, and the daily frequency limit is not exceeded. Private emotional support remains candidate-only.",
             "Current trusted staff identity facts override stale work-item wording. A business name, title, alias, WeCom display name, or user_id is not a confirmed legal/full name unless trusted_staff_identities explicitly says full_name_confirmed=true.",
-            "Work items marked historical or stale are audit context only. Revalidate them from current trusted facts before creating a gap, question, reminder, or update.",
+        "Work items marked historical or stale are audit context only. Revalidate them from current trusted facts before creating a gap, question, reminder, or update.",
+        "Conversation commitments are recoverable work: when a current work item has work_kind=conversation_commitment, use its commitment_stage, planned_at, next_action and evidence_requirement. Do not call it completed without new evidence; update the same work item instead of inventing a second promise.",
         ],
         "work_cadence": cadence,
         "owner_attention_policy": {
@@ -336,6 +337,7 @@ def build_employee_loop_materials(store: TuoguanStore, *, identity: UserIdentity
         "active_goal_state": _compact_for_model(active_goals),
         "autonomous_work_items": _compact_for_model(work_items),
         "autonomous_work_brief": _compact_for_model(work_brief),
+        "work_commitments": _compact_for_model(work_items.get("commitments") or [], max_chars=4000),
         "wakeup_requests": _compact_for_model(wakeups),
         "business_events": _compact_for_model(events),
         "action_executions": _compact_for_model(executions),
@@ -369,6 +371,7 @@ def build_employee_loop_materials(store: TuoguanStore, *, identity: UserIdentity
         "onboarding_gap_count": int(base_onboarding.get("gap_count") or 0) if isinstance(base_onboarding, dict) else 0,
         "active_goal_count": int(active_goals.get("goal_count") or 0),
         "work_item_count": int(work_items.get("work_item_count") or 0),
+        "work_commitment_count": int(work_items.get("commitment_count") or 0),
         "waiting_count": int(work_brief.get("waiting_count") or 0),
         "historical_open_work_item_count": int(work_items.get("historical_open_count") or 0),
         "retired_open_work_item_count": int(work_items.get("retired_open_count") or 0),
@@ -433,6 +436,10 @@ def _prepare_current_work_item_materials(raw: dict[str, Any], timestamp: datetim
         current.append(row)
     payload["items"] = current
     payload["work_item_count"] = len(current)
+    payload["commitments"] = [
+        row for row in current if str(row.get("work_kind") or "") == "conversation_commitment"
+    ]
+    payload["commitment_count"] = len(payload["commitments"])
     payload["waiting_count"] = sum(1 for row in current if str(row.get("status") or "") == "waiting")
     payload["historical_open_count"] = len(historical)
     payload["historical_open_items"] = historical
@@ -479,6 +486,7 @@ def _current_work_brief(work_items: dict[str, Any]) -> dict[str, Any]:
         "ok": True,
         "read_only": True,
         "visible_work_item_count": len(rows),
+        "visible_work_commitment_count": int(work_items.get("commitment_count") or 0),
         "active_count": len(active),
         "waiting_count": len(waiting),
         "blocked_count": len(blocked),
@@ -1376,6 +1384,11 @@ def materialize_employee_decision(
                 source_message_id=f"autonomous_employee_loop:{timestamp.strftime('%Y%m%d%H%M%S')}",
             )
             writes.append(_write_result("institution_work_discovery", res))
+        commitment_focuses = {
+            str(item.get("focus_key") or "")
+            for item in (materials or {}).get("work_commitments") or []
+            if isinstance(item, dict) and str(item.get("focus_key") or "")
+        }
         for idx, update in enumerate(decision.get("work_item_updates") or []):
             if service_relations_deferred:
                 _apply_deferred_service_relation_boundary(update)
@@ -1417,6 +1430,11 @@ def materialize_employee_decision(
             ):
                 if field in update:
                     common[field] = _limit(update.get(field), length)
+            if focus_key in commitment_focuses and str(update.get("commitment_stage") or ""):
+                common["commitment_stage"] = _limit(update.get("commitment_stage"), 40)
+                for field, length in (("next_action", 500), ("planned_at", 80), ("evidence_requirement", 500)):
+                    if field in update:
+                        common[field] = _limit(update.get(field), length)
             if "last_human_contact_at" in update:
                 proposed_contact = _limit(update.get("last_human_contact_at"), 80)
                 raw_owner_events = (
@@ -1816,6 +1834,7 @@ _ACTIONS_PROMPT = """你是托管机构数字员工小优，本轮只根据已�
 goal_action_decisions 必须引用材料里的真实 goal_action_id；relationship_touch_executions 必须引用真实 candidate_id。系统会重新校验权限、频率、幂等、在职状态和发送边界。
 goal_action_submissions 必须引用材料里的真实活动 goal_id，说明 action_type、summary 和 evidence_requirement；需要找人时必须写明 target_role/target_user_id，需要给老师建立子任务时还必须带可信 student_names。新行动本轮只保存，不会绕过边界直接执行。
 不要把候选写成已经发送，不要把入队写成已经送达，不要把计划写成已经完成。家长永远不在本轮触达范围。
+对于材料中已有的 work_kind=conversation_commitment，work_item_updates 可以带 commitment_stage 和真实证据；只能更新同一工作事项，不能凭未来计划标成 completed。
 只返回一个精简 JSON 对象，字段固定为 work_item_updates、boss_attention_candidates、relationship_touch_candidates、relationship_touch_executions、goal_action_submissions、goal_action_decisions、value_progress_entries、agent_delegation_decisions。
 每个数组最多1条；没有必要行动时使用空数组。"""
 
@@ -1990,6 +2009,7 @@ def _model_payload(materials: dict[str, Any]) -> dict[str, Any]:
             "items": _compact_for_model(work.get("items") or [], max_chars=5000),
             "brief": _compact_for_model(brief, max_chars=3000),
         },
+        "work_commitments": _compact_for_model(materials.get("work_commitments") or [], max_chars=4000),
         "institution_understanding_state": _compact_for_model(materials.get("institution_understanding_state"), max_chars=5000),
         "proactive_work_radar": _compact_for_model(materials.get("proactive_work_radar"), max_chars=9000),
         "employee_scorecard": _compact_for_model(materials.get("employee_scorecard"), max_chars=3000),

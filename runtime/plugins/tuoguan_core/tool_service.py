@@ -75,6 +75,7 @@ from .project_opportunities import (
     query_project_opportunities as build_project_opportunities,
     review_project_opportunity as review_project_opportunity_state,
 )
+from .supervision import query_supervision_status
 from .proactive_work import (
     execute_relationship_touch as execute_relationship_touch_state,
     query_goal_actions as build_goal_actions,
@@ -99,6 +100,7 @@ from .digital_employee_state import (
     query_institution_work,
     query_business_events,
     query_hermes_work_items,
+    query_work_commitments,
     query_wakeup_requests,
     query_active_goal_work_state,
     query_attention_threads,
@@ -132,6 +134,7 @@ from .digital_employee_state import (
     submit_staff_voice_signal,
     submit_goal_evidence,
     submit_hermes_work_item,
+    submit_work_commitment,
     advance_institution_work,
     submit_gray_optimization_decision,
     submit_gray_observation,
@@ -148,6 +151,7 @@ from .digital_employee_state import (
     submit_value_ledger_entry,
     update_attention_thread,
     update_hermes_work_item,
+    update_work_commitment,
 )
 
 
@@ -901,6 +905,8 @@ class TuoguanToolService:
             "submit_gray_optimization_decision",
             "submit_hermes_work_item",
             "update_hermes_work_item",
+            "submit_work_commitment",
+            "update_work_commitment",
             "submit_wakeup_request",
             "update_wakeup_request",
             "submit_due_wakeup_candidate",
@@ -3999,6 +4005,102 @@ class TuoguanToolService:
 
         return self._operation(operation_id, "update_hermes_work_item", execute)
 
+    def query_work_commitments(self, *, include_closed: bool = False, limit: int = 20) -> dict[str, Any]:
+        denied = self._approved()
+        if denied:
+            return denied
+        result = query_work_commitments(
+            self.store,
+            identity=self.identity,
+            include_closed=include_closed,
+            limit=limit,
+        )
+        return self._ok("query_work_commitments", data=result, message=str(result.get("rendered_text") or ""))
+
+    def submit_work_commitment(
+        self,
+        *,
+        focus_key: str,
+        title: str,
+        commitment_statement: str,
+        deliverable: str,
+        next_action: str,
+        operation_id: str,
+        source_message_id: str = "",
+        planned_at: str = "",
+        evidence_requirement: str = "",
+        related_authority_refs: list[Any] | None = None,
+        related_objects: list[Any] | None = None,
+        related_staff_user_ids: list[str] | None = None,
+        risk_level: str = "low",
+        source_text: str = "",
+    ) -> dict[str, Any]:
+        denied = self._approved()
+        if denied:
+            return denied
+
+        def execute() -> dict[str, Any]:
+            result = submit_work_commitment(
+                self.store,
+                identity=self.identity,
+                focus_key=focus_key,
+                title=title,
+                commitment_statement=commitment_statement,
+                deliverable=deliverable,
+                next_action=next_action,
+                operation_id=operation_id,
+                source_message_id=source_message_id,
+                planned_at=planned_at,
+                evidence_requirement=evidence_requirement,
+                related_authority_refs=related_authority_refs,
+                related_objects=related_objects,
+                related_staff_user_ids=related_staff_user_ids,
+                risk_level=risk_level,
+                source_text=source_text,
+            )
+            return result if not result.get("ok") else self._ok("submit_work_commitment", data=result, message=str(result.get("rendered_text") or ""))
+
+        return self._operation(operation_id, "submit_work_commitment", execute)
+
+    def update_work_commitment(
+        self,
+        *,
+        operation_id: str,
+        commitment_stage: str,
+        work_item_id: str = "",
+        focus_key: str = "",
+        progress_evidence: list[Any] | None = None,
+        next_action: str = "",
+        planned_at: str = "",
+        evidence_requirement: str = "",
+        stop_reason: str = "",
+        source_text: str = "",
+        source_message_id: str = "",
+    ) -> dict[str, Any]:
+        denied = self._approved()
+        if denied:
+            return denied
+
+        def execute() -> dict[str, Any]:
+            result = update_work_commitment(
+                self.store,
+                identity=self.identity,
+                operation_id=operation_id,
+                commitment_stage=commitment_stage,
+                work_item_id=work_item_id,
+                focus_key=focus_key,
+                progress_evidence=progress_evidence,
+                next_action=next_action,
+                planned_at=planned_at,
+                evidence_requirement=evidence_requirement,
+                stop_reason=stop_reason,
+                source_text=source_text,
+                source_message_id=source_message_id,
+            )
+            return result if not result.get("ok") else self._ok("update_work_commitment", data=result, message=str(result.get("rendered_text") or ""))
+
+        return self._operation(operation_id, "update_work_commitment", execute)
+
     def query_wakeup_requests(self, *, status: str = "", wakeup_source: str = "", limit: int = 50) -> dict[str, Any]:
         denied = self._approved()
         if denied:
@@ -4642,6 +4744,15 @@ class TuoguanToolService:
             return self._error("permission_denied", "只有店长或老板可以查看小优健康度。")
         result = query_xiaoyou_health(self.store, identity=self.identity, now_at=now_at, limit=limit)
         return self._ok("query_xiaoyou_health", data=result, message=str(result.get("rendered_text") or ""))
+
+    def query_supervision_status(self, *, limit: int = 20) -> dict[str, Any]:
+        denied = self._approved()
+        if denied:
+            return denied
+        if self.identity.role not in {"boss", "manager", "system"}:
+            return self._error("permission_denied", "当前身份无权查看小优内部监督状态。")
+        result = query_supervision_status(self.store, limit=limit)
+        return self._ok("query_supervision_status", data=result, message=str(result.get("rendered_text") or ""))
 
     def query_self_evolution_ledger(self, *, candidate_type: str = "", status: str = "", limit: int = 30) -> dict[str, Any]:
         denied = self._approved()

@@ -1048,6 +1048,54 @@ TUOGUAN_UPDATE_HERMES_WORK_ITEM_SCHEMA = _schema(
     ["user_id", "operation_id"],
 )
 
+TUOGUAN_QUERY_WORK_COMMITMENTS_SCHEMA = _schema(
+    "查询小优已落账的工作承诺。承诺代表后续工作对象，不等于任务、制度、外发或成果已经完成。",
+    _identity_props({
+        "include_closed": {"type": "boolean", "default": False, "description": "是否包含已完成、取消或过期承诺。"},
+        "limit": {"type": "integer", "default": 20, "description": "最多返回条数。"},
+    }),
+    ["user_id"],
+)
+
+TUOGUAN_SUBMIT_WORK_COMMITMENT_SCHEMA = _schema(
+    "当小优要承诺后续整理、核实、推进或处理时，先把承诺落为可恢复工作对象。只记录承诺和证据要求，不创建任务、不外发、不改变制度或权限。",
+    _identity_props({
+        "focus_key": {"type": "string", "description": "现实焦点；系统会归入 commitment: 命名空间。"},
+        "title": {"type": "string", "description": "承诺事项标题。"},
+        "commitment_statement": {"type": "string", "description": "本轮对外承诺的原句或紧凑摘要。"},
+        "deliverable": {"type": "string", "description": "可验收的工作成果。"},
+        "next_action": {"type": "string", "description": "下一次要做的可验证行动。"},
+        "source_message_id": {"type": "string", "description": "承诺来源消息 id。"},
+        "planned_at": {"type": "string", "description": "计划关注时间；没有真实唤醒或执行回执时不得承诺自动执行。"},
+        "evidence_requirement": {"type": "string", "description": "完成前需要什么证据。"},
+        "related_authority_refs": {"type": "array", "items": {}, "description": "已有目标、制度、任务或授权的引用；存在权威对象时只关联，不重复建业务事实。"},
+        "related_objects": {"type": "array", "items": {}, "description": "相关业务对象引用。"},
+        "related_staff_user_ids": {"type": "array", "items": {"type": "string"}, "description": "相关人员 id。"},
+        "risk_level": {"type": "string", "enum": ["low", "medium", "high"], "default": "low", "description": "承诺风险等级。"},
+        "source_text": {"type": "string", "description": "来源原话或简述。"},
+        "operation_id": {"type": "string", "description": "幂等操作 id。"},
+    }),
+    ["user_id", "focus_key", "title", "commitment_statement", "deliverable", "next_action", "operation_id"],
+)
+
+TUOGUAN_UPDATE_WORK_COMMITMENT_SCHEMA = _schema(
+    "推进已存在的工作承诺。只有真实证据或执行回执可以进入完成；这不替代正式任务、制度或外发回执。",
+    _identity_props({
+        "work_item_id": {"type": "string", "description": "承诺工作事项 id；可用 focus_key 替代。"},
+        "focus_key": {"type": "string", "description": "承诺焦点键。"},
+        "commitment_stage": {"type": "string", "enum": ["captured", "planned", "active", "waiting", "verifying", "completed", "cancelled", "expired", "superseded", "failed", "escalated"], "description": "承诺当前阶段。"},
+        "progress_evidence": {"type": "array", "items": {}, "description": "已取得的真实证据。"},
+        "next_action": {"type": "string", "description": "下一行动。"},
+        "planned_at": {"type": "string", "description": "下一关注时间。"},
+        "evidence_requirement": {"type": "string", "description": "仍需证据。"},
+        "stop_reason": {"type": "string", "description": "取消、过期、替代或失败原因。"},
+        "source_text": {"type": "string", "description": "来源原话或简述。"},
+        "source_message_id": {"type": "string", "description": "来源消息 id。"},
+        "operation_id": {"type": "string", "description": "幂等操作 id。"},
+    }),
+    ["user_id", "commitment_stage", "operation_id"],
+)
+
 TUOGUAN_QUERY_WAKEUP_REQUESTS_SCHEMA = _schema(
     "查询唤醒请求。唤醒请求只说明 Hermes 为什么重新查看一件事，不预设执行路线。",
     _identity_props({
@@ -1400,6 +1448,14 @@ TUOGUAN_QUERY_XIAOYOU_HEALTH_SCHEMA = _schema(
     ["user_id"],
 )
 
+TUOGUAN_QUERY_SUPERVISION_STATUS_SCHEMA = _schema(
+    "只读查询小优承诺、监督与低风险自愈状态。返回脱敏发现、复发和修复回执，不包含聊天正文、模型推理、密钥或家长隐私，也不会触发修复或外发。",
+    _identity_props({
+        "limit": {"type": "integer", "default": 20, "description": "最多返回多少条监督发现。"},
+    }),
+    ["user_id"],
+)
+
 TUOGUAN_QUERY_SELF_EVOLUTION_LEDGER_SCHEMA = _schema(
     "只读查询小优自我进化账本：最近学到的工作方式、错误修正、工具失败、机构事实缺口、手册候选、明日重点和 multi-agent 建议采纳记录。它只提供经验和审核材料，不自动改变制度、权限、手册、家长外发或模型下一步。",
     _identity_props({
@@ -1576,6 +1632,9 @@ TOOLS = (
     ("tuoguan_advance_institution_work", TUOGUAN_ADVANCE_INSTITUTION_WORK_SCHEMA, _handler("advance_institution_work")),
     ("tuoguan_submit_hermes_work_item", TUOGUAN_SUBMIT_HERMES_WORK_ITEM_SCHEMA, _handler("submit_hermes_work_item")),
     ("tuoguan_update_hermes_work_item", TUOGUAN_UPDATE_HERMES_WORK_ITEM_SCHEMA, _handler("update_hermes_work_item")),
+    ("tuoguan_query_work_commitments", TUOGUAN_QUERY_WORK_COMMITMENTS_SCHEMA, _handler("query_work_commitments")),
+    ("tuoguan_submit_work_commitment", TUOGUAN_SUBMIT_WORK_COMMITMENT_SCHEMA, _handler("submit_work_commitment")),
+    ("tuoguan_update_work_commitment", TUOGUAN_UPDATE_WORK_COMMITMENT_SCHEMA, _handler("update_work_commitment")),
     ("tuoguan_query_wakeup_requests", TUOGUAN_QUERY_WAKEUP_REQUESTS_SCHEMA, _handler("query_wakeup_requests")),
     ("tuoguan_submit_wakeup_request", TUOGUAN_SUBMIT_WAKEUP_REQUEST_SCHEMA, _handler("submit_wakeup_request")),
     ("tuoguan_update_wakeup_request", TUOGUAN_UPDATE_WAKEUP_REQUEST_SCHEMA, _handler("update_wakeup_request")),
@@ -1604,6 +1663,7 @@ TOOLS = (
     ("tuoguan_query_staff_voice_radar", TUOGUAN_QUERY_STAFF_VOICE_RADAR_SCHEMA, _handler("query_staff_voice_radar")),
     ("tuoguan_query_staff_conversation_activity", TUOGUAN_QUERY_STAFF_CONVERSATION_ACTIVITY_SCHEMA, _handler("query_staff_conversation_activity")),
     ("tuoguan_query_xiaoyou_health", TUOGUAN_QUERY_XIAOYOU_HEALTH_SCHEMA, _handler("query_xiaoyou_health")),
+    ("tuoguan_query_supervision_status", TUOGUAN_QUERY_SUPERVISION_STATUS_SCHEMA, _handler("query_supervision_status")),
     ("tuoguan_query_self_evolution_ledger", TUOGUAN_QUERY_SELF_EVOLUTION_LEDGER_SCHEMA, _handler("query_self_evolution_ledger")),
     ("tuoguan_query_industry_learning_candidates", TUOGUAN_QUERY_INDUSTRY_LEARNING_CANDIDATES_SCHEMA, _handler("query_industry_learning_candidates")),
     ("tuoguan_query_external_research_runs", TUOGUAN_QUERY_EXTERNAL_RESEARCH_RUNS_SCHEMA, _handler("query_external_research_runs")),

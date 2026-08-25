@@ -218,6 +218,8 @@ def test_dashboard_v2_frontend_uses_frozen_workbench_v1():
         assert label in _DASHBOARD_HTML
     assert "新项目机会" in _DASHBOARD_HTML
     assert "当前没有达到展示门槛的新项目机会" in _DASHBOARD_HTML
+    assert "工作承诺" in _DASHBOARD_HTML
+    assert "监督与自愈" in _DASHBOARD_HTML
     assert "复制问题，回企业微信问小优" in _DASHBOARD_HTML
     assert "/tuoguan/api/me" in _DASHBOARD_HTML
     assert "/tuoguan/api/teacher" in _DASHBOARD_HTML

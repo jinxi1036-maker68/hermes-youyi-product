@@ -10,7 +10,7 @@ def test_facade_manifest_covers_every_legacy_operation_once():
     legacy = {name.removeprefix("tuoguan_") for name, _schema, _handler in LEGACY_TOOLS}
     assigned = [operation for values in DOMAIN_OPERATIONS.values() for operation in values]
     assert len(DOMAIN_OPERATIONS) == 12
-    assert len(assigned) == len(set(assigned)) == len(legacy) == 109
+    assert len(assigned) == len(set(assigned)) == len(legacy) == 113
     assert set(assigned) == legacy
     manifest = operation_manifest()
     assert manifest["manifest_version"] == "xiaoyou-capabilities-v1.3-23"
@@ -49,7 +49,7 @@ def test_legacy_surface_remains_available_only_as_explicit_rollback(monkeypatch)
 
     monkeypatch.setenv("HERMES_TUOGUAN_TOOL_SURFACE", "legacy")
     assert model_tools() is LEGACY_TOOLS
-    assert len(model_tools()) == 109
+    assert len(model_tools()) == 113
 
 
 def test_task_facade_executes_explicit_operation_and_preserves_effective_tool(monkeypatch):

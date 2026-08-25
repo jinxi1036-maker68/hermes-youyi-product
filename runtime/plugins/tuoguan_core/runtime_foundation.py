@@ -85,6 +85,8 @@ WRITE_TOOLS = {
     "tuoguan_update_agent_delegation_decision",
     "tuoguan_update_attention_thread",
     "tuoguan_review_project_opportunity",
+    "tuoguan_submit_work_commitment",
+    "tuoguan_update_work_commitment",
 }
 
 OUTREACH_TOOLS = {
@@ -136,6 +138,7 @@ MODEL_SELECTED_READ_TOOLS = {
     "tuoguan_query_staff_voice_radar",
     "tuoguan_query_staff_conversation_activity",
     "tuoguan_query_xiaoyou_health",
+    "tuoguan_query_supervision_status",
     "tuoguan_query_institution_understanding",
     "tuoguan_query_hermes_employee_scorecard",
     "tuoguan_query_industry_learning_candidates",
@@ -283,6 +286,7 @@ def _sanitize_external_reply(
     identity_query: bool = False,
     institution_commitment_state: str = "",
     future_execution_verified: bool = False,
+    commitment_write_verified: bool = False,
 ) -> str:
     value = str(text or "")
     # Direct callers that explicitly supply an outreach state are testing an
@@ -368,6 +372,8 @@ def _sanitize_external_reply(
     )
     if future_claim and not future_execution_verified:
         return "这件事目前还没有形成可验证的执行安排；我只能先保留为待审核事项，等获得明确授权并建立真实唤醒或执行回执后再推进。"
+    if _contains_future_work_promise(value) and not commitment_write_verified:
+        return "这件事目前仍在讨论；我还没有建立可核验的后续工作承诺，所以不能把它说成已经会自动推进。"
     sent_claim_terms = (
         "已经发给", "已发给", "已经通知", "已通知", "我刚问了", "我已经问了", "已经联系",
         "已发送", "已经发送", "发送成功", "对方已收到", "对方已经收到",
@@ -472,6 +478,15 @@ def _contains_institution_claim(value: str) -> bool:
         if not re.search(r"(?:未|没有|尚未|待|不能|并非).{0,8}(?:确认|定下|处理|闭环|完成|落实|生效)", claim):
             return True
     return any(term in str(value or "") for term in ("四项已完成", "四项制度缺口我们过完了", "不再处理这四项"))
+
+
+def _contains_future_work_promise(value: str) -> bool:
+    """Catch only concrete work promises, not ordinary courtesy or conditional advice."""
+
+    return bool(re.search(
+        r"(?:我(?:来|会|将)|小优(?:会|将))(?:在.{0,8})?(?:整理|核实|继续推进|跟进|制定|安排|处理|检查|复盘|补齐|完成)",
+        str(value or ""),
+    ))
 
 
 def _looks_like_unverified_business_fact(raw_text: str, reply_text: str) -> bool:
@@ -1603,6 +1618,12 @@ def ensure_outbound_reply_recorded(
             message_id=message_id,
             session_id=session_id,
         )
+        unsupported_work_promise = _contains_future_work_promise(raw_model_final_reply) and not _tool_results_have_verified_work_commitment(
+            item.get("tool_calls") or [], item.get("tool_results") or [],
+        )
+        if unsupported_work_promise:
+            item["workstyle_adaptation"]["unverified_commitment"] = True
+            item["workstyle_adaptation"]["unverified_work_promise"] = True
     except Exception:
         item["workstyle_adaptation"] = {"ok": False, "error": "workstyle_observer_failed"}
     try:
@@ -1757,6 +1778,7 @@ def transform_final_response(*, store: TuoguanStore, session_id: str, response_t
     identity_query = False
     institution_commitment_state = ""
     future_execution_verified = False
+    commitment_write_verified = False
     with _LOCK:
         item = _TURN_BY_SESSION.get(str(session_id or "")) or {}
         actor_role = str(item.get("role") or "")
@@ -1773,6 +1795,7 @@ def transform_final_response(*, store: TuoguanStore, session_id: str, response_t
         outreach_state = _tool_results_outreach_state(item.get("tool_results") or [])
         institution_commitment_state = _tool_results_institution_stage(item.get("tool_results") or []) or str(item.get("institution_snapshot_stage") or "")
         future_execution_verified = _tool_results_have_verified_future_execution(item)
+        commitment_write_verified = _tool_results_have_verified_work_commitment(item.get("tool_calls") or [], item.get("tool_results") or [])
         raw = _compact(item.get("raw_text") or "")
         if any(term in raw for term in ("主动联系", "主动找", "去问老师", "去问店长", "去问老板")):
             outreach_guard_applies = True
@@ -1792,6 +1815,7 @@ def transform_final_response(*, store: TuoguanStore, session_id: str, response_t
         identity_query=identity_query,
         institution_commitment_state=institution_commitment_state,
         future_execution_verified=future_execution_verified,
+        commitment_write_verified=commitment_write_verified,
     )
 
 
@@ -1805,6 +1829,24 @@ def _tool_results_have_verified_future_execution(item: dict[str, Any]) -> bool:
             continue
         data = result.get("data") if isinstance(result.get("data"), dict) else result
         if result.get("ok") is True and isinstance(data, dict) and bool(data.get("writeback_verified")):
+            return True
+    return False
+
+
+def _tool_results_have_verified_work_commitment(calls: Any, results: Any) -> bool:
+    """A generic write receipt is insufficient for a future-work promise."""
+
+    call_rows = calls if isinstance(calls, list) else []
+    result_rows = results if isinstance(results, list) else []
+    for call, result in zip(call_rows, result_rows):
+        if not isinstance(call, dict) or not isinstance(result, dict):
+            continue
+        tool_name = str(call.get("tool") or "")
+        data = result.get("data") if isinstance(result.get("data"), dict) else result
+        effective = str(data.get("legacy_tool") or tool_name)
+        if effective not in {"tuoguan_submit_work_commitment", "tuoguan_update_work_commitment"}:
+            continue
+        if result.get("ok") is True and bool(data.get("writeback_verified")):
             return True
     return False
 

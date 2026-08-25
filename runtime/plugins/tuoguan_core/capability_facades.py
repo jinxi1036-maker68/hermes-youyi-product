@@ -32,6 +32,7 @@ DOMAIN_OPERATIONS: dict[str, tuple[str, ...]] = {
     "goals": (
         "goal_workspace", "query_active_goal_work_state", "submit_goal_evidence",
         "query_goal_actions", "submit_goal_action",
+        "query_work_commitments", "submit_work_commitment", "update_work_commitment",
     ),
     "proactive_work": (
         "submit_relationship_touch_candidate", "query_active_work_context",
@@ -70,7 +71,7 @@ DOMAIN_OPERATIONS: dict[str, tuple[str, ...]] = {
         "query_value_ledger", "submit_value_ledger_entry",
     ),
     "health": (
-        "query_xiaoyou_health", "generate_autonomous_recovery_report", "generate_due_wakeup_candidates",
+        "query_xiaoyou_health", "query_supervision_status", "generate_autonomous_recovery_report", "generate_due_wakeup_candidates",
         "query_gray_observations", "submit_gray_observation", "query_gray_rollout_decisions",
         "generate_gray_review", "query_gray_scenario_cards", "generate_gray_trial_start_pack",
         "generate_autonomous_acceptance_pack", "generate_autonomous_log_review",
@@ -175,7 +176,7 @@ def _domain_schema(domain: str, legacy: dict[str, tuple[dict[str, Any], Callable
         if required:
             text += " required=" + ",".join(required)
         if optional:
-            text += " optional=" + ",".join(optional)
+            text += f" optional_count={len(optional)}"
         contracts.append(text)
     selection_hint = {
         "people": (
@@ -187,6 +188,11 @@ def _domain_schema(domain: str, legacy: dict[str, tuple[dict[str, Any], Callable
             "选择提示：老师汇报进展、结果或完成证据用 update_task；不会做或不知道怎么说用 current_task_guidance；"
             "开始当前最高优先级任务或继续唯一开放任务用 next_task；取消或停止提醒用 cancel_task；"
             "老板或店长明确分配一次性任务、低风险测试任务时直接用 create_task，不要绕到 goal_workspace。"
+        ),
+        "goals": (
+            "选择提示：已确认经营目标的阶段、行动和证据使用 goal_workspace 或 goal action。"
+            "当你准备说“我来整理、我去核实、后续推进、到时处理”这类后续承诺时，先用 submit_work_commitment 建立可恢复工作对象；"
+            "没有写后反查不得把讨论说成已经承诺或已经完成。"
         ),
         "proactive_work": (
             "选择提示：用户明确要求现在主动找授权对象时，第一选择必须是 submit_relationship_touch_candidate，"

@@ -70,6 +70,9 @@ JSONL_LEDGERS = (
     "weekly_market_report_runs.jsonl",
     "agent_delegations.jsonl",
     "agent_delegation_results.jsonl",
+    "supervision_runs.jsonl",
+    "supervision_findings.jsonl",
+    "supervision_repairs.jsonl",
 )
 
 

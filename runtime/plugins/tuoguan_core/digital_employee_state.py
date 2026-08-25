@@ -1248,6 +1248,24 @@ def submit_gray_optimization_decision(
 _AUTONOMOUS_FORBIDDEN_KEYS = {"model_intent", "next_tool", "workflow_step", "expected_reply"}
 _WORK_ITEM_STATUSES = {"active", "waiting", "blocked", "closed", "superseded"}
 _WORK_ITEM_OPEN_STATUSES = {"active", "waiting", "blocked"}
+_WORK_ITEM_KINDS = {"autonomous_work", "conversation_commitment", "institution_change"}
+_COMMITMENT_STAGES = {
+    "captured", "planned", "active", "waiting", "verifying", "completed",
+    "cancelled", "expired", "superseded", "failed", "escalated",
+}
+_COMMITMENT_STAGE_TO_STATUS = {
+    "captured": "active",
+    "planned": "active",
+    "active": "active",
+    "waiting": "waiting",
+    "verifying": "active",
+    "completed": "closed",
+    "cancelled": "closed",
+    "expired": "closed",
+    "superseded": "superseded",
+    "failed": "blocked",
+    "escalated": "blocked",
+}
 _INSTITUTION_WORK_STAGES = {
     "discovered", "investigating", "drafting", "awaiting_content_approval",
     "content_approved", "awaiting_implementation_authorization", "implementing",
@@ -4128,6 +4146,13 @@ def _fold_hermes_work_items(store: TuoguanStore) -> dict[str, dict[str, Any]]:
             "next_attention_at",
             "stop_reason",
             "closed_at",
+            "commitment_stage",
+            "commitment_statement",
+            "deliverable",
+            "next_action",
+            "planned_at",
+            "evidence_requirement",
+            "related_authority_refs",
         )
         # Updates are patches, not snapshots. Apply every patch in time order so
         # an omitted field keeps the most recently confirmed value instead of
@@ -4354,10 +4379,28 @@ def submit_hermes_work_item(
     value_progress_note: str = "",
     next_attention_at: str = "",
     status: str = "active",
+    work_kind: str = "autonomous_work",
+    commitment_stage: str = "",
+    commitment_statement: str = "",
+    deliverable: str = "",
+    next_action: str = "",
+    planned_at: str = "",
+    evidence_requirement: str = "",
+    related_authority_refs: list[Any] | None = None,
     source_text: str = "",
     source_message_id: str = "",
     operation_id: str = "",
 ) -> dict[str, Any]:
+    normalized_work_kind = str(work_kind or "autonomous_work").strip()
+    if normalized_work_kind not in _WORK_ITEM_KINDS:
+        return {"ok": False, "error": "invalid_work_item_kind", "message": "工作事项类型无效。"}
+    normalized_commitment_stage = str(commitment_stage or "").strip()
+    if normalized_work_kind == "conversation_commitment":
+        if normalized_commitment_stage not in _COMMITMENT_STAGES:
+            return {"ok": False, "error": "invalid_commitment_stage", "message": "工作承诺必须包含有效生命周期阶段。"}
+        if not str(commitment_statement or "").strip() or not str(deliverable or "").strip() or not str(next_action or "").strip():
+            return {"ok": False, "error": "commitment_requires_contract", "message": "工作承诺必须包含承诺原话、工作成果和下一行动。"}
+        status = _COMMITMENT_STAGE_TO_STATUS[normalized_commitment_stage]
     normalized_status = str(status or "active").strip()
     if normalized_status not in _WORK_ITEM_STATUSES:
         return {"ok": False, "error": "invalid_work_item_status", "message": "工作事项状态必须是 active、waiting、blocked、closed 或 superseded。"}
@@ -4403,6 +4446,13 @@ def submit_hermes_work_item(
             source_text=source_text,
             source_message_id=source_message_id,
             operation_id=operation_id,
+            commitment_stage=normalized_commitment_stage,
+            commitment_statement=commitment_statement,
+            deliverable=deliverable,
+            next_action=next_action,
+            planned_at=planned_at,
+            evidence_requirement=evidence_requirement,
+            related_authority_refs=related_authority_refs,
         )
     now = now_iso()
     row = {
@@ -4410,6 +4460,7 @@ def submit_hermes_work_item(
         "work_item_id": _new_id("hermes_work"),
         "tenant_id": current_tenant_id(),
         "focus_key": normalized_focus,
+        "work_kind": normalized_work_kind,
         "title": _limit_text(title, 200),
         "focus_summary": _limit_text(focus_summary),
         "related_objects": _strip_forbidden(related_objects or []),
@@ -4429,6 +4480,13 @@ def submit_hermes_work_item(
         "owner_escalation_reason": _limit_text(owner_escalation_reason, 500),
         "value_progress_note": _limit_text(value_progress_note, 500),
         "next_attention_at": str(next_attention_at or "").strip(),
+        "commitment_stage": normalized_commitment_stage,
+        "commitment_statement": _limit_text(commitment_statement, 500),
+        "deliverable": _limit_text(deliverable, 500),
+        "next_action": _limit_text(next_action, 500),
+        "planned_at": str(planned_at or "").strip(),
+        "evidence_requirement": _limit_text(evidence_requirement, 500),
+        "related_authority_refs": _strip_forbidden(related_authority_refs or []),
         "status": normalized_status,
         "stop_reason": "",
         "source_text": _limit_text(source_text),
@@ -4479,6 +4537,13 @@ def update_hermes_work_item(
     value_progress_note: str = "",
     next_attention_at: str = "",
     stop_reason: str = "",
+    commitment_stage: str = "",
+    commitment_statement: str = "",
+    deliverable: str = "",
+    next_action: str = "",
+    planned_at: str = "",
+    evidence_requirement: str = "",
+    related_authority_refs: list[Any] | None = None,
     update_text: str = "",
     source_text: str = "",
     source_message_id: str = "",
@@ -4491,6 +4556,11 @@ def update_hermes_work_item(
         return {"ok": False, "error": "work_item_not_found", "message": "没有找到要更新的 Hermes 工作事项。"}
     if not _identity_can_view_autonomous_item(identity, item):
         return {"ok": False, "error": "permission_denied", "message": "当前账号无权更新这个 Hermes 工作事项。"}
+    normalized_commitment_stage = str(commitment_stage or item.get("commitment_stage") or "").strip()
+    if str(item.get("work_kind") or "") == "conversation_commitment":
+        if normalized_commitment_stage not in _COMMITMENT_STAGES:
+            return {"ok": False, "error": "invalid_commitment_stage", "message": "工作承诺阶段无效。"}
+        status = _COMMITMENT_STAGE_TO_STATUS[normalized_commitment_stage]
     normalized_status = str(status or item.get("status") or "active").strip()
     normalized_waiting = _strip_forbidden(current_waiting) if current_waiting is not None else None
     normalized_blocked_by = _strip_forbidden(blocked_by) if blocked_by is not None else item.get("blocked_by")
@@ -4515,6 +4585,13 @@ def update_hermes_work_item(
         "update_text": update_text,
         "source_text": source_text,
         "stop_reason": stop_reason,
+        "commitment_stage": normalized_commitment_stage,
+        "commitment_statement": commitment_statement or item.get("commitment_statement") or "",
+        "deliverable": deliverable or item.get("deliverable") or "",
+        "next_action": next_action or item.get("next_action") or "",
+        "planned_at": planned_at or item.get("planned_at") or "",
+        "evidence_requirement": evidence_requirement or item.get("evidence_requirement") or "",
+        "related_authority_refs": related_authority_refs if related_authority_refs is not None else item.get("related_authority_refs") or [],
     })
     if normalized_status in _WORK_ITEM_OPEN_STATUSES and hermes_work_item_is_semantically_retired(prospective):
         normalized_status = "superseded"
@@ -4577,6 +4654,20 @@ def update_hermes_work_item(
         row["next_attention_at"] = str(next_attention_at or "").strip()
     if stop_reason:
         row["stop_reason"] = _limit_text(stop_reason, 500)
+    if commitment_stage:
+        row["commitment_stage"] = normalized_commitment_stage
+    if commitment_statement:
+        row["commitment_statement"] = _limit_text(commitment_statement, 500)
+    if deliverable:
+        row["deliverable"] = _limit_text(deliverable, 500)
+    if next_action:
+        row["next_action"] = _limit_text(next_action, 500)
+    if planned_at:
+        row["planned_at"] = str(planned_at).strip()
+    if evidence_requirement:
+        row["evidence_requirement"] = _limit_text(evidence_requirement, 500)
+    if related_authority_refs is not None:
+        row["related_authority_refs"] = _strip_forbidden(related_authority_refs)
     material_keys = (
         "status",
         "current_phase",
@@ -4626,6 +4717,126 @@ def update_hermes_work_item(
         "state_changed": True,
         "rendered_text": "已更新 Hermes 自主工作事项；更新只保存状态和证据，不自动执行外部动作。",
     }
+
+
+def query_work_commitments(
+    store: TuoguanStore,
+    *,
+    identity: UserIdentity,
+    include_closed: bool = False,
+    limit: int = 20,
+) -> dict[str, Any]:
+    """Return only commitment work items; tasks and institution work stay separate."""
+
+    rows: list[dict[str, Any]] = []
+    for item in _fold_hermes_work_items(store).values():
+        if str(item.get("work_kind") or "") != "conversation_commitment":
+            continue
+        if not include_closed and str(item.get("status") or "") not in _WORK_ITEM_OPEN_STATUSES:
+            continue
+        if not _identity_can_view_autonomous_item(identity, item):
+            continue
+        rows.append(_compact_work_item_view(item, update_count=len(item.get("updates") or [])))
+    rows.sort(key=lambda item: str(item.get("updated_at") or item.get("created_at") or ""), reverse=True)
+    rows = rows[: max(1, min(int(limit or 20), 100))]
+    active = [item for item in rows if str(item.get("commitment_stage") or "") not in {"completed", "cancelled", "expired", "superseded"}]
+    return {
+        "ok": True,
+        "commitment_count": len(rows),
+        "active_commitment_count": len(active),
+        "items": rows,
+        "read_only": True,
+        "rendered_text": f"查到 {len(rows)} 条工作承诺，其中仍在推进 {len(active)} 条。",
+    }
+
+
+def submit_work_commitment(
+    store: TuoguanStore,
+    *,
+    identity: UserIdentity,
+    focus_key: str,
+    title: str,
+    commitment_statement: str,
+    deliverable: str,
+    next_action: str,
+    operation_id: str,
+    source_message_id: str = "",
+    planned_at: str = "",
+    evidence_requirement: str = "",
+    related_authority_refs: list[Any] | None = None,
+    related_objects: list[Any] | None = None,
+    related_staff_user_ids: list[str] | None = None,
+    risk_level: str = "low",
+    source_text: str = "",
+) -> dict[str, Any]:
+    """Persist a future work promise before Xiaoyou can present it as committed."""
+
+    if str(risk_level or "low") not in {"low", "medium", "high"}:
+        return {"ok": False, "error": "invalid_commitment_risk", "message": "承诺风险等级无效。"}
+    normalized_focus = str(focus_key or "").strip()
+    if not normalized_focus.startswith("commitment:"):
+        normalized_focus = f"commitment:{normalized_focus or source_message_id or _new_id('focus')}"
+    result = submit_hermes_work_item(
+        store,
+        identity=identity,
+        focus_key=normalized_focus,
+        title=title,
+        focus_summary=f"承诺成果：{deliverable}；下一行动：{next_action}",
+        related_objects=related_objects,
+        related_staff_user_ids=related_staff_user_ids,
+        current_phase={"phase_key": "commitment_captured", "risk_level": str(risk_level or "low")},
+        next_actions=[{"action": next_action, "planned_at": planned_at, "evidence_requirement": evidence_requirement}],
+        work_kind="conversation_commitment",
+        commitment_stage="captured",
+        commitment_statement=commitment_statement,
+        deliverable=deliverable,
+        next_action=next_action,
+        planned_at=planned_at,
+        evidence_requirement=evidence_requirement,
+        related_authority_refs=related_authority_refs,
+        source_text=source_text,
+        source_message_id=source_message_id,
+        operation_id=operation_id,
+    )
+    if result.get("ok"):
+        result["rendered_text"] = "已建立工作承诺并完成写后反查；它只代表后续工作对象已落账，不代表任务、制度或外发已经完成。"
+    return result
+
+
+def update_work_commitment(
+    store: TuoguanStore,
+    *,
+    identity: UserIdentity,
+    operation_id: str,
+    commitment_stage: str,
+    work_item_id: str = "",
+    focus_key: str = "",
+    progress_evidence: list[Any] | None = None,
+    next_action: str = "",
+    planned_at: str = "",
+    evidence_requirement: str = "",
+    stop_reason: str = "",
+    source_text: str = "",
+    source_message_id: str = "",
+) -> dict[str, Any]:
+    if str(commitment_stage or "") not in _COMMITMENT_STAGES:
+        return {"ok": False, "error": "invalid_commitment_stage", "message": "工作承诺阶段无效。"}
+    return update_hermes_work_item(
+        store,
+        identity=identity,
+        operation_id=operation_id,
+        work_item_id=work_item_id,
+        focus_key=focus_key,
+        commitment_stage=commitment_stage,
+        progress_evidence=progress_evidence,
+        next_action=next_action,
+        planned_at=planned_at,
+        evidence_requirement=evidence_requirement,
+        stop_reason=stop_reason,
+        update_text=f"工作承诺推进到 {commitment_stage}。",
+        source_text=source_text,
+        source_message_id=source_message_id,
+    )
 
 
 def _institution_item_visible(identity: UserIdentity, item: dict[str, Any]) -> bool:
@@ -5661,6 +5872,12 @@ def query_xiaoyou_health(
     except Exception:
         evolution = {"ok": False, "error": "self_evolution_unavailable"}
     work = query_hermes_work_items(store, identity=identity, include_closed=False, limit=limit)
+    try:
+        from .supervision import query_supervision_status
+
+        supervision = query_supervision_status(store, limit=min(max(int(limit or 20), 5), 30))
+    except Exception:
+        supervision = {"ok": False, "error": "supervision_status_unavailable"}
     issues: list[str] = []
     if not daily_reports["sent_last_24h"]:
         issues.append("过去24小时没有可验证的老板日报送达记录。")
@@ -5716,6 +5933,8 @@ def query_xiaoyou_health(
     staff_voice_high_count = int(staff_voice.get("high_or_urgent_open_count") or 0) if isinstance(staff_voice, dict) and staff_voice.get("ok") else 0
     if staff_voice_high_count:
         issues.append(f"有 {staff_voice_high_count} 条员工声音高风险开放信号，需要老板优先关注。")
+    if isinstance(supervision, dict) and int(supervision.get("p0_open_count") or 0):
+        issues.append(f"监督系统发现 {int(supervision.get('p0_open_count') or 0)} 项 P0 运行一致性问题，已进入升级处理。")
     pending_review = int(evolution.get("review_queue_count") or 0) if isinstance(evolution, dict) else 0
     if pending_review:
         issues.append(f"有 {pending_review} 条中高风险进化候选等待人工确认，未自动生效。")
@@ -5768,6 +5987,13 @@ def query_xiaoyou_health(
         "runtime_learning": {**runtime_learning, "turn_trace": turn_runtime, "model_providers": provider_health},
         "runtime_status": runtime_status,
         "task_coaching": teacher_coaching,
+        "supervision": {
+            "available": bool(isinstance(supervision, dict) and supervision.get("ok")),
+            "active_finding_count": int(supervision.get("active_finding_count") or 0) if isinstance(supervision, dict) else 0,
+            "p0_open_count": int(supervision.get("p0_open_count") or 0) if isinstance(supervision, dict) else 0,
+            "recent_repairs": deepcopy((supervision.get("recent_repairs") or [])[:5]) if isinstance(supervision, dict) else [],
+            "findings": deepcopy((supervision.get("findings") or [])[:5]) if isinstance(supervision, dict) else [],
+        },
         "issues": issues[:12],
         "actions_taken": [],
         "boundary": {

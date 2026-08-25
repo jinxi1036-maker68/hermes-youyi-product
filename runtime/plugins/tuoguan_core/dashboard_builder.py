@@ -15,6 +15,7 @@ from .digital_employee_state import (
     query_attention_threads,
     query_hermes_work_items,
     query_institution_work,
+    query_work_commitments,
 )
 from .knowledge import list_pending_learning_candidates
 from .operations_focus import active_operations_focus
@@ -37,6 +38,7 @@ from .programs import (
     user_program_ids,
 )
 from .project_opportunities import query_project_opportunities
+from .supervision import query_supervision_status
 from .tasks import build_task_contract, closure_missing_fields, task_is_open
 
 
@@ -1555,6 +1557,16 @@ def _hermes_employee_snapshot(
         row for row in _as_list(work_result.get("items"))
         if isinstance(row, dict) and _current_state_row(row, now=now)
     ]
+    commitment_result = (
+        query_work_commitments(store, identity=dashboard_identity, include_closed=False, limit=20)
+        if role == "boss"
+        else {"items": []}
+    )
+    commitment_rows = [
+        row for row in _as_list(commitment_result.get("items"))
+        if isinstance(row, dict) and _current_state_row(row, now=now)
+    ]
+    supervision = query_supervision_status(store, limit=10) if role == "boss" else {}
     institution_result = query_institution_work(
         store,
         identity=dashboard_identity,
@@ -1581,6 +1593,7 @@ def _hermes_employee_snapshot(
     action_rows = _read_jsonl(store, "action_executions.jsonl")
     today_actions = [row for row in action_rows if _row_today(row, now)]
     work_items = [_work_item_card(item) for item in reversed(_latest_rows(work_rows, limit=5))]
+    commitment_items = [_work_item_card(item) for item in reversed(_latest_rows(commitment_rows, limit=5))]
     institution_items = [_work_item_card(item) for item in institution_rows[:3]] if role == "boss" else []
     current = work_items[0] if work_items else {}
     open_questions = [
@@ -1667,6 +1680,20 @@ def _hermes_employee_snapshot(
         "work_items": work_items[:3],
         "other_work_count": max(0, len(work_items) - 3),
         "institution_work_items": institution_items,
+        "work_commitments": commitment_items if role == "boss" else [],
+        "supervision": {
+            "active_finding_count": int(supervision.get("active_finding_count") or 0) if isinstance(supervision, dict) else 0,
+            "p0_open_count": int(supervision.get("p0_open_count") or 0) if isinstance(supervision, dict) else 0,
+            "recent_repairs": [
+                {key: row.get(key) for key in ("repair_id", "action", "status", "created_at")}
+                for row in (supervision.get("recent_repairs") or [])[:3]
+            ] if isinstance(supervision, dict) else [],
+            "findings": [
+                {key: row.get(key) for key in ("category", "severity", "state", "summary", "recurrence_count")}
+                for row in (supervision.get("findings") or [])[:3]
+            ] if isinstance(supervision, dict) else [],
+            "read_only": True,
+        } if role == "boss" else {},
         "open_questions": open_questions,
         "value_entries": [
             {
