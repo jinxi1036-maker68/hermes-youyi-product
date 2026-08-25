@@ -44,6 +44,7 @@ def test_runtime_tuning_applies_primary_only_policy_and_agent_limits(tmp_path: P
     assert result["ownership_preserved"] is True
     assert updated["custom_providers"][0]["api_key"] == "secret"
     assert updated["model"]["api_key"] == "primary-secret"
+    assert TUNING["context_length"] == 524288
     for key, value in TUNING.items():
         assert updated["custom_providers"][0][key] == value
         assert updated["model"][key] == value

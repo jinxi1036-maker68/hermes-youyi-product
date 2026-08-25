@@ -13,7 +13,10 @@ import yaml
 
 
 PRIMARY_TUNING = {
-    "context_length": 262144,
+    # Agnes 2.5 Flash currently publishes a 512K context window. Keep this
+    # capability declaration separate from the much smaller live-turn budget
+    # enforced by COMPRESSION_TUNING below.
+    "context_length": 524288,
     "max_tokens": 1600,
     # A WeCom turn gets exactly one Agnes attempt. Production is Agnes-only:
     # transport failure returns an explicit failure instead of switching model.
@@ -36,7 +39,7 @@ AGENT_TUNING = {
 COMPRESSION_TUNING = {
     # Hermes v0.20 enforces a model-dependent percentage floor.  The absolute
     # cap is therefore the authority that keeps long WeCom conversations from
-    # quietly growing to the model's full 262k context window.
+    # quietly growing to the model's full 512k context window.
     "threshold": 0.18,
     "threshold_tokens": 32000,
     "target_ratio": 0.22,
