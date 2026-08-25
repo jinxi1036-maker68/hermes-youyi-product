@@ -324,6 +324,11 @@ def install_hermes_model_resilience_patch() -> bool:
             if not hasattr(self, "_xiaoyou_default_api_max_retries"):
                 self._xiaoyou_default_api_max_retries = getattr(self, "_api_max_retries", 2)
             self._api_max_retries = 1
+            if agnes_only_mode():
+                # With no alternate model there is nothing to route around.
+                # The real user request is the health check; avoid adding a
+                # second background Agnes call during half-open recovery.
+                return restored
             state = circuit_state()
             if state["state"] == "open" and not agnes_only_mode():
                 original_fallback(self, None)

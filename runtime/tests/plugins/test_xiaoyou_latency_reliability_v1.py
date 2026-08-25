@@ -250,9 +250,12 @@ def test_wecom_agnes_patch_skips_extra_recovery_and_blocks_fallback_in_primary_o
     agent = FakeAgent()
     assert agent._try_recover_primary_transport(RuntimeError("TLS timeout"), retry_count=1, max_retries=1) is False
     assert provider_resilience.circuit_state()["state"] == "open"
+    probes = []
+    monkeypatch.setattr(provider_resilience, "_start_recovery_probe", lambda current: probes.append(current) or True)
     agent._restore_primary_runtime()
     assert agent._api_max_retries == 1
     assert agent.fallback_calls == 0
+    assert probes == []
     assert agent._try_activate_fallback("timeout") is False
     assert agent.fallback_calls == 0
 
