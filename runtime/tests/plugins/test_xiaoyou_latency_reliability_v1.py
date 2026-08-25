@@ -133,6 +133,107 @@ def test_turn_trace_splits_model_and_tool_time_without_storing_content(tmp_path)
     assert "private reply" not in serialized
 
 
+def test_turn_fence_discards_expired_or_superseded_model_work():
+    from plugins.tuoguan_core.turn_fence import (
+        begin_callback_turn,
+        bind_session,
+        block_reason,
+        clear_turn_fences,
+        mark_phase,
+    )
+
+    clear_turn_fences()
+    begin_callback_turn(message_id="old", chat_id="corp:CeShi", budget_seconds=38)
+    assert bind_session(message_id="old", session_id="session-old", chat_id="corp:CeShi")
+    mark_phase(session_id="session-old", phase="model")
+    begin_callback_turn(message_id="new", chat_id="corp:CeShi", budget_seconds=38)
+    assert block_reason(session_id="session-old") == "turn_superseded"
+
+
+def test_turn_fence_never_cancels_a_turn_after_tool_phase_begins():
+    from plugins.tuoguan_core.turn_fence import (
+        begin_callback_turn,
+        bind_session,
+        block_reason,
+        clear_turn_fences,
+        mark_phase,
+    )
+
+    clear_turn_fences()
+    begin_callback_turn(message_id="write", chat_id="corp:CeShi", budget_seconds=38)
+    assert bind_session(message_id="write", session_id="session-write", chat_id="corp:CeShi")
+    mark_phase(session_id="session-write", phase="tool")
+    begin_callback_turn(message_id="next", chat_id="corp:CeShi", budget_seconds=38)
+    assert block_reason(session_id="session-write") == ""
+
+
+def test_provider_circuit_opens_for_agnes_transport_failures_without_secrets(tmp_path, monkeypatch):
+    from plugins.tuoguan_core import provider_resilience
+
+    monkeypatch.setattr(provider_resilience, "get_hermes_home", lambda: tmp_path)
+    provider_resilience.open_circuit(RuntimeError("TLS handshake timed out"))
+    snapshot = provider_resilience.provider_health_snapshot()
+
+    assert snapshot["agnes"]["state"] == "open"
+    assert snapshot["agnes"]["last_error_class"] == "tls"
+    raw = (tmp_path / "state" / provider_resilience.STATE_FILE_NAME).read_text(encoding="utf-8")
+    assert "api_key" not in raw
+    assert "https://" not in raw
+
+
+def test_provider_circuit_requires_two_recovery_probes_before_restoring_agnes(tmp_path, monkeypatch):
+    from plugins.tuoguan_core import provider_resilience
+
+    monkeypatch.setattr(provider_resilience, "get_hermes_home", lambda: tmp_path)
+    original_time = provider_resilience.time.time
+    provider_resilience.open_circuit(RuntimeError("502 upstream"))
+    monkeypatch.setattr(provider_resilience.time, "time", lambda: original_time() + 601)
+    assert provider_resilience.circuit_state()["state"] == "half_open"
+    provider_resilience._mark_probe_result(success=True)
+    assert provider_resilience.circuit_state()["state"] == "half_open"
+    provider_resilience._mark_probe_result(success=True)
+    assert provider_resilience.circuit_state()["state"] == "closed"
+
+
+def test_wecom_agnes_patch_skips_extra_primary_recovery_and_uses_fallback(tmp_path, monkeypatch):
+    import sys
+    import types
+    from plugins.tuoguan_core import provider_resilience
+
+    class FakeAgent:
+        def __init__(self):
+            self.platform = "wecom_callback"
+            self.model = "agnes-2.5-flash"
+            self.base_url = "https://apihub.agnes-ai.com/v1"
+            self._primary_runtime = {"model": self.model, "base_url": self.base_url}
+            self._api_max_retries = 2
+            self.fallback_calls = 0
+
+        def _restore_primary_runtime(self):
+            return False
+
+        def _try_recover_primary_transport(self, _error, *, retry_count, max_retries):
+            return True
+
+        def _try_activate_fallback(self, _reason=None):
+            self.fallback_calls += 1
+            return True
+
+    fake_run_agent = types.ModuleType("run_agent")
+    fake_run_agent.AIAgent = FakeAgent
+    monkeypatch.setitem(sys.modules, "run_agent", fake_run_agent)
+    monkeypatch.setattr(provider_resilience, "get_hermes_home", lambda: tmp_path)
+    monkeypatch.setattr(provider_resilience, "_PATCHED", False)
+
+    assert provider_resilience.install_hermes_model_resilience_patch()
+    agent = FakeAgent()
+    assert agent._try_recover_primary_transport(RuntimeError("TLS timeout"), retry_count=1, max_retries=1) is False
+    assert provider_resilience.circuit_state()["state"] == "open"
+    agent._restore_primary_runtime()
+    assert agent._api_max_retries == 1
+    assert agent.fallback_calls == 1
+
+
 def test_plugin_blocks_any_more_business_tools_after_authoritative_result(tmp_path):
     import plugins.tuoguan_core as plugin
     from plugins.tuoguan_core.runtime_foundation import (
@@ -211,8 +312,8 @@ async def test_wecom_empty_model_result_gets_visible_chinese_failure_receipt():
     adapter.set_message_handler(empty_handler)
     response = await adapter._message_handler(_event())
 
-    assert "没有拿到可靠结果" in response
-    assert "继续" in response
+    assert "模型服务暂时不稳定" in response
+    assert "继续" not in response
 
 
 @pytest.mark.asyncio
@@ -226,7 +327,7 @@ async def test_wecom_handler_error_does_not_leave_user_in_silence():
 
     adapter.set_message_handler(failed_handler)
     response = await adapter._message_handler(_event())
-    assert "超时或中断" in response
+    assert "模型服务暂时不稳定" in response
 
 
 @pytest.mark.asyncio
@@ -243,7 +344,7 @@ async def test_wecom_slow_model_turn_gets_bounded_visible_failure(monkeypatch):
     adapter.set_message_handler(slow_handler)
     response = await adapter._message_handler(_event())
 
-    assert "没有拿到可靠结果" in response
+    assert "模型服务暂时不稳定" in response
     assert "不应送达" not in response
 
 

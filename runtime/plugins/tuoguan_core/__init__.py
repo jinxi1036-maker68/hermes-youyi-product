@@ -45,7 +45,16 @@ from .turn_trace import (
     record_context_sources as _record_trace_context_sources,
     record_guard_event as _record_trace_guard_event,
     record_tool_event as _record_trace_tool_event,
+    record_provider_event as _record_trace_provider_event,
 )
+from .turn_fence import (
+    bind_session as _bind_turn_fence_session,
+    block_reason as _turn_fence_block_reason,
+    finish_turn as _finish_turn_fence,
+    mark_phase as _mark_turn_fence_phase,
+    observe_tool_result as _observe_turn_fence_tool_result,
+)
+from .provider_resilience import install_hermes_model_resilience_patch as _install_model_resilience_patch
 from .runtime_performance import (
     clear_turn_tool_budget as _clear_turn_tool_budget,
     guard_turn_tool_call as _guard_turn_tool_call,
@@ -69,6 +78,8 @@ def _log_runtime_module_manifest() -> None:
         "plugins.tuoguan_core.runtime_ownership",
         "plugins.tuoguan_core.runtime_foundation",
         "plugins.tuoguan_core.active_work_context",
+        "plugins.tuoguan_core.provider_resilience",
+        "plugins.tuoguan_core.turn_fence",
         "plugins.tuoguan_core.self_evolution",
     ):
         try:
@@ -1442,6 +1453,12 @@ def _on_pre_llm_call(**kwargs: Any) -> dict[str, str] | None:
             "raw_text": raw_text,
             "created_at": datetime.now().astimezone(),
         }
+        _bind_turn_fence_session(
+            message_id=message_id,
+            session_id=turn_key,
+            chat_id=chat_id,
+        )
+        _mark_turn_fence_phase(session_id=turn_key, phase="model")
         if len(_ACTIVE_MODEL_TURNS) > 512:
             oldest = sorted(
                 _ACTIVE_MODEL_TURNS,
@@ -1743,7 +1760,56 @@ def _on_post_tool_call(**kwargs: Any) -> None:
         result=result,
     )
     _observe_turn_tool_result(session_id, tool_name=tool_name, result=result)
+    _observe_turn_fence_tool_result(session_id=session_id, result=result)
     _record_trace_tool_event(session_id, tool_name=tool_name, result=result)
+
+
+def _on_pre_api_request(**kwargs: Any) -> None:
+    platform_raw = kwargs.get("platform")
+    platform = str(getattr(platform_raw, "value", platform_raw) or "").lower()
+    if platform != "wecom_callback":
+        return
+    session_id = str(kwargs.get("session_id") or "")
+    _mark_turn_fence_phase(session_id=session_id, phase="model")
+    _record_trace_provider_event(
+        session_id,
+        provider=str(kwargs.get("provider") or ""),
+        model=str(kwargs.get("model") or ""),
+        outcome="request_started",
+        error_class="",
+        circuit_state="",
+    )
+
+
+def _on_post_api_request(**kwargs: Any) -> None:
+    platform_raw = kwargs.get("platform")
+    platform = str(getattr(platform_raw, "value", platform_raw) or "").lower()
+    if platform != "wecom_callback":
+        return
+    _record_trace_provider_event(
+        str(kwargs.get("session_id") or ""),
+        provider=str(kwargs.get("provider") or ""),
+        model=str(kwargs.get("model") or ""),
+        outcome="request_succeeded",
+        error_class="",
+        circuit_state="",
+    )
+
+
+def _on_api_request_error(**kwargs: Any) -> None:
+    platform_raw = kwargs.get("platform")
+    platform = str(getattr(platform_raw, "value", platform_raw) or "").lower()
+    if platform != "wecom_callback":
+        return
+    error_type = str(kwargs.get("error_type") or kwargs.get("reason") or "provider_error")
+    _record_trace_provider_event(
+        str(kwargs.get("session_id") or ""),
+        provider=str(kwargs.get("provider") or ""),
+        model=str(kwargs.get("model") or ""),
+        outcome="request_failed",
+        error_class=error_type,
+        circuit_state="",
+    )
 
 
 def _on_llm_request_middleware(**kwargs: Any) -> dict[str, Any] | None:
@@ -1781,6 +1847,19 @@ def _on_pre_tool_call(**kwargs: Any) -> dict[str, str] | None:
     session_id = str(kwargs.get("session_id") or "")
     tool_name = str(kwargs.get("tool_name") or "")
     args = kwargs.get("args")
+    late_turn_reason = _turn_fence_block_reason(session_id=session_id)
+    if late_turn_reason:
+        _record_trace_guard_event(
+            session_id,
+            guard="turn_fence",
+            result=late_turn_reason,
+        )
+        return {
+            "action": "block",
+            "reason": "expired_late_result_discarded",
+            "message": "本轮已超时或已被新消息取代，系统不会再执行迟到的写入、外发或任务动作。",
+        }
+    _mark_turn_fence_phase(session_id=session_id, phase="tool")
     for boundary in (
         lambda: _foundation_block_tool_after_terminal_result(
             session_id=session_id, tool_name=tool_name, args=args,
@@ -1837,6 +1916,19 @@ def _on_post_llm_call_v020(**kwargs: Any) -> None:
     _clear_turn_tool_budget(session_id)
     if not turn:
         return
+    late_turn_reason = _turn_fence_block_reason(session_id=session_id)
+    if late_turn_reason:
+        _record_trace_guard_event(session_id, guard="turn_fence", result="expired_late_result_discarded")
+        try:
+            _finalize_turn_trace(
+                _router().store,
+                session_id=session_id,
+                delivery_status="expired_late_result_discarded",
+                final_reply="",
+            )
+        except Exception:
+            logger.exception("tuoguan_core failed to persist late-result trace")
+        return
     final_reply = str(kwargs.get("assistant_response") or "")
     if not final_reply:
         return
@@ -1867,12 +1959,26 @@ def _on_post_llm_call_v020(**kwargs: Any) -> None:
         session_id,
         str(turn.get("message_id") or ""),
     )
+    _finish_turn_fence(session_id=session_id)
 
 
 def _on_post_gateway_response(**kwargs: Any) -> None:
     event = kwargs.get("event")
     source = getattr(event, "source", None)
     if source is None or _platform_name(source) != "wecom_callback":
+        return
+    source_message_id = str(getattr(event, "message_id", "") or "")
+    late_turn_reason = _turn_fence_block_reason(
+        session_id=str(kwargs.get("session_id") or ""),
+        message_id=source_message_id,
+    )
+    if late_turn_reason:
+        trace_key = str(kwargs.get("session_id") or getattr(source, "chat_id", "") or source_message_id)
+        _record_trace_guard_event(trace_key, guard="turn_fence", result="expired_late_result_discarded")
+        logger.warning(
+            "YOUYI_LATE_GATEWAY_RESULT_DISCARDED session_id=%s message_id=%s reason=%s",
+            trace_key, source_message_id, late_turn_reason,
+        )
         return
     try:
         gateway = kwargs.get("gateway")
@@ -1887,7 +1993,6 @@ def _on_post_gateway_response(**kwargs: Any) -> None:
         chat_id=str(getattr(source, "chat_id", "") or ""),
         message_text=str(getattr(event, "text", "") or ""),
     )
-    source_message_id = str(getattr(event, "message_id", "") or "")
     _foundation_ensure_outbound_reply_recorded(
         store=_router().store,
         message_id=source_message_id,
@@ -1923,6 +2028,10 @@ def _on_post_gateway_response(**kwargs: Any) -> None:
         source_message_id,
         str(kwargs.get("delivery_status") or ""),
     )
+    _finish_turn_fence(
+        session_id=str(kwargs.get("session_id") or ""),
+        message_id=source_message_id,
+    )
     # Architecture migration shadow: observe the completed ledger only. This
     # never executes a command and never writes protected business files.
     try:
@@ -1947,6 +2056,7 @@ def register(ctx) -> None:
     _REGISTERED_TOOL_COUNT = len(selected_tools)
 
     _log_runtime_module_manifest()
+    _install_model_resilience_patch()
     # Model-led restore: old business routers and runtime prompt/response hooks are
     # not registered on the main message path. Keep tools plus passive audit only.
     ctx.register_hook("pre_llm_call", _on_pre_llm_call)
@@ -1959,6 +2069,13 @@ def register(ctx) -> None:
         from hermes_cli.plugins import VALID_HOOKS
     except Exception:
         VALID_HOOKS = {"post_gateway_response"}
+    for hook_name, handler in (
+        ("pre_api_request", _on_pre_api_request),
+        ("post_api_request", _on_post_api_request),
+        ("api_request_error", _on_api_request_error),
+    ):
+        if hook_name in VALID_HOOKS:
+            ctx.register_hook(hook_name, handler)
     if "post_gateway_response" in VALID_HOOKS:
         ctx.register_hook("post_gateway_response", _on_post_gateway_response)
     else:

@@ -116,6 +116,32 @@ def test_active_context_excludes_old_relationship_touch_candidate(tmp_path):
     assert all(item["context_id"] != "old-touch" for item in result["contexts"])
 
 
+def test_relationship_candidate_without_delivery_receipt_is_not_an_unanswered_teacher(tmp_path):
+    from plugins.tuoguan_core.active_work_context import query_active_work_context, render_active_work_context
+    from plugins.tuoguan_core.store import TuoguanStore
+
+    now = datetime(2026, 8, 24, 18, 0, tzinfo=BEIJING)
+    (tmp_path / "relationship_touch_candidates.jsonl").write_text(
+        json.dumps({
+            "record_type": "relationship_touch_candidate",
+            "candidate_id": "unverified-touch",
+            "target_role": "teacher",
+            "target_user_id": "teacher-1",
+            "message": "李老师，请补一条测试事实。",
+            "status": "queued",
+            "created_at": now.isoformat(),
+            "updated_at": now.isoformat(),
+        }, ensure_ascii=False) + "\n",
+        encoding="utf-8",
+    )
+
+    result = query_active_work_context(TuoguanStore(tmp_path), identity=_identity("teacher-1"), now=now)
+    touch = next(item for item in result["contexts"] if item["context_id"] == "unverified-touch")
+
+    assert touch["reply_wait_state"] == "delivery_unverified"
+    assert "绝不能说对方未响应" in render_active_work_context(result)
+
+
 def test_recent_tool_context_does_not_repeat_chat_text(tmp_path):
     from plugins.tuoguan_core.active_work_context import query_active_work_context
     from plugins.tuoguan_core.store import TuoguanStore

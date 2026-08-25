@@ -48,7 +48,7 @@ def begin_turn_trace(
     key = str(session_id or message_id or uuid.uuid4().hex)
     trace = {
         "trace_id": f"turn_{uuid.uuid4().hex}",
-        "schema_version": 1,
+        "schema_version": 2,
         "tenant_id": str(tenant_id or ""),
         "app_id_hash": _digest(app_id),
         "actor_id_hash": _digest(user_id),
@@ -60,6 +60,7 @@ def begin_turn_trace(
         "context_sources": [],
         "tool_events": [],
         "model_events": [],
+        "provider_events": [],
         "guard_events": [],
         "started_at": _now(),
         "started_monotonic_ns": time.monotonic_ns(),
@@ -166,6 +167,30 @@ def record_guard_event(session_id: str, *, guard: str, result: str) -> None:
         trace = _ACTIVE.get(str(session_id or ""))
         if trace:
             trace.setdefault("guard_events", []).append({"guard": str(guard), "result": str(result)})
+
+
+def record_provider_event(
+    session_id: str,
+    *,
+    provider: str,
+    model: str,
+    outcome: str,
+    error_class: str,
+    circuit_state: str,
+) -> None:
+    """Persist only provider timing/state labels, never URLs, keys or content."""
+
+    with _LOCK:
+        trace = _ACTIVE.get(str(session_id or ""))
+        if not trace:
+            return
+        trace.setdefault("provider_events", []).append({
+            "provider": str(provider or "")[:80],
+            "model": str(model or "")[:120],
+            "outcome": str(outcome or "")[:80],
+            "error_class": str(error_class or "")[:120] or None,
+            "circuit_state": str(circuit_state or "")[:40] or None,
+        })
 
 
 def finalize_turn_trace(

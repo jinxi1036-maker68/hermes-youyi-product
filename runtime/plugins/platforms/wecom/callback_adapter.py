@@ -66,7 +66,10 @@ DEFAULT_PATH = "/wecom/callback"
 # unauthenticated POST can force before signature verification.
 _MAX_BODY = 65_536
 ACCESS_TOKEN_TTL_SECONDS = 7200
-DEFAULT_MODEL_TURN_TIMEOUT_SECONDS = 45.0
+# Enterprise WeChat should receive a deterministic outcome before its visible
+# wait window closes.  The remaining seconds belong to its proactive send and
+# our writeback/reply guards, not another primary-model retry.
+DEFAULT_MODEL_TURN_TIMEOUT_SECONDS = 38.0
 
 
 def _model_turn_timeout_seconds() -> float:
@@ -75,7 +78,7 @@ def _model_turn_timeout_seconds() -> float:
         value = float(raw) if raw else DEFAULT_MODEL_TURN_TIMEOUT_SECONDS
     except (TypeError, ValueError):
         value = DEFAULT_MODEL_TURN_TIMEOUT_SECONDS
-    return min(120.0, max(10.0, value))
+    return min(DEFAULT_MODEL_TURN_TIMEOUT_SECONDS, max(10.0, value))
 
 
 def _import_tuoguan_module(name: str):
@@ -93,6 +96,20 @@ def _import_tuoguan_module(name: str):
     if last_error is not None:
         raise last_error
     raise ModuleNotFoundError(name)
+
+
+def _turn_fence_module():
+    """Keep the callback usable if a lightweight test omits tuoguan_core."""
+
+    try:
+        return _import_tuoguan_module("turn_fence")
+    except Exception:
+        return None
+
+
+def _event_chat_id(event: MessageEvent) -> str:
+    source = getattr(event, "source", None)
+    return str(getattr(source, "chat_id", "") or "")
 
 
 def check_wecom_callback_requirements() -> bool:
@@ -124,6 +141,17 @@ class WecomCallbackAdapter(BasePlatformAdapter):
         """Guarantee a visible, safe reply when a non-streaming model turn fails."""
 
         async def reliable_handler(event: MessageEvent):
+            fence = _turn_fence_module()
+            message_id = str(getattr(event, "message_id", "") or "")
+            if fence is not None and message_id:
+                try:
+                    fence.begin_callback_turn(
+                        message_id=message_id,
+                        chat_id=_event_chat_id(event),
+                        budget_seconds=_model_turn_timeout_seconds(),
+                    )
+                except Exception:
+                    logger.exception("[WecomCallback] Unable to begin turn fence")
             try:
                 response = await asyncio.wait_for(
                     handler(event),
@@ -132,6 +160,8 @@ class WecomCallbackAdapter(BasePlatformAdapter):
             except asyncio.CancelledError:
                 raise
             except asyncio.TimeoutError:
+                if fence is not None:
+                    fence.expire_turn(message_id=message_id, reason="callback_deadline_exceeded")
                 logger.error(
                     "[WecomCallback] Model turn exceeded %.1fs message_id=%s",
                     _model_turn_timeout_seconds(),
@@ -139,6 +169,8 @@ class WecomCallbackAdapter(BasePlatformAdapter):
                 )
                 response = None
             except Exception:
+                if fence is not None:
+                    fence.expire_turn(message_id=message_id, reason="handler_exception")
                 logger.exception("[WecomCallback] Model handler failed before producing a reply")
                 response = None
             get_command = getattr(event, "get_command", None)
@@ -158,10 +190,12 @@ class WecomCallbackAdapter(BasePlatformAdapter):
                     "message_id=%s",
                     event.message_id,
                 )
-                return (
-                    "这次处理超时或中断了，我没有拿到可靠结果，也不会假装已经完成。"
-                    "你回复“继续”即可，我会从当前事项接着处理。"
-                )
+                if fence is not None:
+                    fence.expire_turn(message_id=message_id, reason="empty_or_failed_model_response")
+                    return fence.failure_reply(message_id=message_id)
+                return "模型服务暂时不稳定，这一轮没有执行写入或发送，请稍后再试。"
+            if fence is not None and message_id:
+                fence.finish_turn(message_id=message_id)
             return response
 
         # BasePlatformAdapter.set_message_handler is a direct assignment in

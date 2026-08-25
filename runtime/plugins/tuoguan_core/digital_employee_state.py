@@ -5603,6 +5603,12 @@ def query_xiaoyou_health(
     autonomous_loop = _xiaoyou_autonomous_loop_health(store, since_ts)
     runtime_learning = _xiaoyou_runtime_learning_health(store, since_ts)
     turn_runtime = _xiaoyou_turn_trace_health(store, since_ts)
+    try:
+        from .provider_resilience import provider_health_snapshot
+
+        provider_health = provider_health_snapshot()
+    except Exception:
+        provider_health = {"available": False, "error": "provider_health_unavailable"}
     teacher_coaching = _xiaoyou_teacher_coaching_health(store, since_ts)
     social_market = _xiaoyou_social_market_health(store, since_ts)
     public_learning = _xiaoyou_public_learning_health(store, since_ts)
@@ -5662,6 +5668,9 @@ def query_xiaoyou_health(
         issues.append(f"简单对话 p95 为 {turn_runtime['performance']['simple_reply_p95_ms']}ms，超过12秒目标。")
     if turn_runtime["performance"]["direct_read_p95_over_target"]:
         issues.append(f"直接查询 p95 为 {turn_runtime['performance']['direct_read_p95_ms']}ms，超过20秒目标。")
+    agnes_state = ((provider_health.get("agnes") or {}).get("state") if isinstance(provider_health, dict) else "")
+    if agnes_state in {"open", "half_open"}:
+        issues.append("Agnes 当前处于保护性熔断恢复中，实时对话暂由备用模型承接。")
     if int(proactive_work.get("stuck_candidate_count") or 0):
         issues.append(f"有 {int(proactive_work.get('stuck_candidate_count') or 0)} 条主动联系候选超过6小时仍未进入执行或关闭状态。")
     tool_failure_count = int(((evolution.get("health_signals") or {}).get("tool_failure_candidate_count") or 0)) if isinstance(evolution, dict) else 0
@@ -5732,7 +5741,7 @@ def query_xiaoyou_health(
         },
         "market_learning": social_market,
         "public_learning": public_learning,
-        "runtime_learning": {**runtime_learning, "turn_trace": turn_runtime},
+        "runtime_learning": {**runtime_learning, "turn_trace": turn_runtime, "model_providers": provider_health},
         "task_coaching": teacher_coaching,
         "issues": issues[:12],
         "actions_taken": [],
@@ -5859,6 +5868,12 @@ def _xiaoyou_turn_trace_health(store: TuoguanStore, since_ts: float) -> dict[str
         for event in (row.get("guard_events") or [])
         if isinstance(event, dict)
     ]
+    provider_events = [
+        event
+        for row in rows
+        for event in (row.get("provider_events") or [])
+        if isinstance(event, dict)
+    ]
     wrong_tools = [
         event for event in tool_events
         if str(event.get("error") or "").startswith("wrong_tool")
@@ -5914,6 +5929,7 @@ def _xiaoyou_turn_trace_health(store: TuoguanStore, since_ts: float) -> dict[str
     guard_rewrite_count = 0
     context_guard_failure_count = 0
     corrective_retry_exhausted_count = 0
+    late_turn_discarded_count = 0
     for event in guard_events:
         guard = str(event.get("guard") or "")
         result = str(event.get("result") or "unknown")
@@ -5925,6 +5941,8 @@ def _xiaoyou_turn_trace_health(store: TuoguanStore, since_ts: float) -> dict[str
             context_guard_failure_count += 1
         if guard == "corrective_tool_retry_exhausted" and result == "blocked":
             corrective_retry_exhausted_count += 1
+        if guard == "turn_fence" and result in {"turn_expired", "turn_superseded", "expired_late_result_discarded"}:
+            late_turn_discarded_count += 1
     failure_type_counts: dict[str, int] = {}
     for row in rows:
         failure_type = str(row.get("failure_type") or "")
@@ -5950,6 +5968,14 @@ def _xiaoyou_turn_trace_health(store: TuoguanStore, since_ts: float) -> dict[str
         "direct_read_p95_over_target": performance["direct_read_p95_ms"] > 20000,
         "complex_reply_p95_over_target": performance["complex_reply_p95_ms"] > 35000,
     })
+    provider_outcomes: dict[str, int] = {}
+    provider_errors: dict[str, int] = {}
+    for event in provider_events:
+        outcome = str(event.get("outcome") or "unknown")
+        provider_outcomes[outcome] = provider_outcomes.get(outcome, 0) + 1
+        error = str(event.get("error_class") or "")
+        if error:
+            provider_errors[error] = provider_errors.get(error, 0) + 1
     return {
         "available": bool(rows),
         "turn_count_last_24h": len(rows),
@@ -5960,6 +5986,10 @@ def _xiaoyou_turn_trace_health(store: TuoguanStore, since_ts: float) -> dict[str
         "final_claim_guard_rewrite_count": guard_rewrite_count,
         "context_guard_failure_count": context_guard_failure_count,
         "corrective_retry_exhausted_count": corrective_retry_exhausted_count,
+        "late_turn_discarded_count": late_turn_discarded_count,
+        "provider_event_count": len(provider_events),
+        "provider_outcomes": provider_outcomes,
+        "provider_error_counts": provider_errors,
         "failed_turn_count": sum(failure_type_counts.values()),
         "failure_type_counts": failure_type_counts,
         "corrective_tool_retry_count": sum(int(row.get("corrective_tool_retry_count") or 0) for row in rows),

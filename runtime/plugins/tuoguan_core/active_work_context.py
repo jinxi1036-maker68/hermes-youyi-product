@@ -216,6 +216,23 @@ def _latest_daily_report_context(store: TuoguanStore, identity: UserIdentity, no
     }
 
 
+def _relationship_reply_wait_state(row: dict[str, Any]) -> str:
+    """A candidate is not evidence that a teacher has failed to reply."""
+
+    status = str(row.get("status") or "candidate")
+    receipt = row.get("delivery_receipt") if isinstance(row.get("delivery_receipt"), dict) else {}
+    delivery = str(receipt.get("delivery_status") or receipt.get("status") or "")
+    if status in {"replied_partial", "replied_sufficient"}:
+        return "reply_received"
+    if status in {"candidate", "authorized", "queued", "sending", "result_unknown"}:
+        return "delivery_unverified"
+    if status in {"failed", "retry_pending"}:
+        return "delivery_failed_or_retry_pending"
+    if status == "sent" and delivery in {"sent", "delivered", "success"}:
+        return "awaiting_reply"
+    return "delivery_unverified"
+
+
 def _recent_writeback_contexts(store: TuoguanStore, identity: UserIdentity, now: datetime, maximum: int) -> list[dict[str, Any]]:
     cutoff = now - timedelta(hours=3)
     ids = _identity_ids(identity)
@@ -310,6 +327,7 @@ def query_active_work_context(
         updated_at = _parse_time(str(row.get("updated_at") or row.get("created_at") or ""))
         if updated_at is None or updated_at < now - timedelta(hours=36):
             continue
+        delivery_receipt = deepcopy(row.get("delivery_receipt") or {})
         items.append({
             "context_type": "relationship_touch",
             "context_id": str(row.get("candidate_id") or ""),
@@ -319,7 +337,8 @@ def query_active_work_context(
             "evidence_source": "relationship_touch_candidates",
             "goal_id": str(row.get("goal_id") or ""),
             "goal_action_id": str(row.get("goal_action_id") or ""),
-            "delivery_receipt": deepcopy(row.get("delivery_receipt") or {}),
+            "delivery_receipt": delivery_receipt,
+            "reply_wait_state": _relationship_reply_wait_state(row),
             "target_user_id": str(row.get("target_user_id") or ""),
         })
     goal_actions = query_goal_actions(
@@ -381,5 +400,7 @@ def render_active_work_context(result: dict[str, Any]) -> str:
             f"- 类型={item.get('context_type') or ''}；id={item.get('context_id') or ''}；"
             f"状态={item.get('status') or ''}；时间={item.get('updated_at') or '未知'}；内容={item.get('summary') or ''}"
         )
+        if item.get("context_type") == "relationship_touch":
+            lines.append(f"  发送/回复证据={item.get('reply_wait_state') or '未知'}；未取得 sent/delivered 回执时，绝不能说对方未响应。")
     lines.append("先由模型判断本轮原话与哪条最相关；只有确实相关时才沿该线程回答或调用可信工具。")
     return "\n".join(lines)

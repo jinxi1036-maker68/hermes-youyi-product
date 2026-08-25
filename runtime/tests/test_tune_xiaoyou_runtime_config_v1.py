@@ -54,7 +54,7 @@ def test_runtime_tuning_applies_to_primary_provider_fallback_and_agent(tmp_path:
     assert updated["agent"]["gateway_timeout"] == 35
     assert updated["agent"]["gateway_timeout_warning"] == 15
     assert updated["fallback_providers"][0]["api_key"] == "fallback-secret"
-    assert updated["fallback_providers"][0]["request_timeout_seconds"] == 12
+    assert updated["fallback_providers"][0]["request_timeout_seconds"] == 20
     assert len(list((tmp_path / "backup").glob("config.before-latency-tuning.*.yaml"))) == 1
 
 
@@ -112,7 +112,7 @@ def test_runtime_tuning_migrates_json_string_fallback_without_leaking_secret(tmp
     assert secret not in str(result)
     assert isinstance(updated["fallback_providers"], list)
     assert updated["fallback_providers"][0]["api_key"] == secret
-    assert updated["fallback_providers"][0]["request_timeout_seconds"] == 12
+    assert updated["fallback_providers"][0]["request_timeout_seconds"] == 20
 
 
 def test_runtime_tuning_accepts_primary_only_shadow_config(tmp_path: Path):

@@ -12,14 +12,23 @@ from pathlib import Path
 import yaml
 
 
-TUNING = {
+PRIMARY_TUNING = {
     "context_length": 262144,
     "max_tokens": 1600,
-    # Hermes v0.20 retries one transport failure before activating fallback.
-    # Twelve seconds keeps the full primary-primary-fallback path below the
-    # gateway's 35 second hard ceiling.
-    "request_timeout_seconds": 12,
-    "stale_timeout_seconds": 15,
+    # A WeCom turn gets exactly one Agnes attempt. The resilience patch opens
+    # the provider circuit and immediately uses DeepSeek on transport errors.
+    "request_timeout_seconds": 9,
+    "stale_timeout_seconds": 10,
+}
+
+# Compatibility export used by existing deployment tooling: it always means
+# the preferred Agnes route, never the fallback route.
+TUNING = PRIMARY_TUNING
+
+FALLBACK_TUNING = {
+    "max_tokens": 1600,
+    "request_timeout_seconds": 20,
+    "stale_timeout_seconds": 22,
 }
 
 AGENT_TUNING = {
@@ -60,7 +69,7 @@ def tune(config_file: Path, backup_dir: Path, *, apply: bool) -> dict[str, objec
     changed: dict[str, dict[str, object]] = {}
     if matches:
         provider = matches[0]
-        for key, value in TUNING.items():
+        for key, value in PRIMARY_TUNING.items():
             before = provider.get(key)
             if before != value:
                 changed[f"agnes.{key}"] = {"before": before, "after": value}
@@ -71,7 +80,7 @@ def tune(config_file: Path, backup_dir: Path, *, apply: bool) -> dict[str, objec
         return {"ok": False, "error": "primary_model_not_mapping"}
     if str(model.get("model") or model.get("default") or model.get("name") or "") != "agnes-2.5-flash":
         return {"ok": False, "error": "primary_model_not_agnes"}
-    for key, value in TUNING.items():
+    for key, value in PRIMARY_TUNING.items():
         before = model.get(key)
         if before != value:
             changed[f"model.{key}"] = {"before": before, "after": value}
@@ -112,8 +121,7 @@ def tune(config_file: Path, backup_dir: Path, *, apply: bool) -> dict[str, objec
     for index, fallback in enumerate(fallbacks):
         if not isinstance(fallback, dict):
             continue
-        for key in ("max_tokens", "request_timeout_seconds", "stale_timeout_seconds"):
-            value = TUNING[key]
+        for key, value in FALLBACK_TUNING.items():
             before = fallback.get(key)
             if before != value:
                 changed[f"fallback.{index}.{key}"] = {"before": before, "after": value}
@@ -162,17 +170,17 @@ def tune(config_file: Path, backup_dir: Path, *, apply: bool) -> dict[str, objec
     ]
     verified = len(verified_matches) <= 1
     if verified_matches:
-        verified = verified and all(verified_matches[0].get(key) == value for key, value in TUNING.items())
-    verified = verified and all(verified_data["model"].get(key) == value for key, value in TUNING.items())
+        verified = verified and all(verified_matches[0].get(key) == value for key, value in PRIMARY_TUNING.items())
+    verified = verified and all(verified_data["model"].get(key) == value for key, value in PRIMARY_TUNING.items())
     verified = verified and all(verified_data["agent"].get(key) == value for key, value in AGENT_TUNING.items())
     verified = verified and all(verified_data["compression"].get(key) == value for key, value in COMPRESSION_TUNING.items())
     verified_fallbacks = verified_data.get("fallback_providers")
     if isinstance(verified_fallbacks, list):
         verified = verified and all(
-            fallback.get(key) == TUNING[key]
+            fallback.get(key) == FALLBACK_TUNING[key]
             for fallback in verified_fallbacks
             if isinstance(fallback, dict)
-            for key in ("max_tokens", "request_timeout_seconds", "stale_timeout_seconds")
+            for key in FALLBACK_TUNING
         )
     elif fallback_migration:
         verified = False
