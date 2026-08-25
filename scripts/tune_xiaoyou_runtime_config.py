@@ -51,6 +51,11 @@ COMPRESSION_TUNING = {
     "hygiene_hard_message_limit": 40,
 }
 
+OFFICIAL_AGNES_BASE_URLS = {
+    "https://apihub.agnes-ai.com/v1",
+    "https://apihub.agnes-ai.cn/v1",
+}
+
 
 def _hash(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()
@@ -118,7 +123,13 @@ def _tune_v020_provider_models(data: dict[str, object], changed: dict[str, dict[
     return True
 
 
-def tune(config_file: Path, backup_dir: Path, *, apply: bool) -> dict[str, object]:
+def tune(
+    config_file: Path,
+    backup_dir: Path,
+    *,
+    apply: bool,
+    agnes_base_url: str | None = None,
+) -> dict[str, object]:
     original = config_file.read_bytes()
     original_stat = config_file.stat()
     original_mode = original_stat.st_mode & 0o777
@@ -126,6 +137,10 @@ def tune(config_file: Path, backup_dir: Path, *, apply: bool) -> dict[str, objec
     data = yaml.safe_load(original.decode("utf-8"))
     if not isinstance(data, dict):
         return {"ok": False, "error": "config_not_mapping"}
+
+    requested_base_url = str(agnes_base_url or "").strip().rstrip("/")
+    if requested_base_url and requested_base_url not in OFFICIAL_AGNES_BASE_URLS:
+        return {"ok": False, "error": "agnes_base_url_not_official"}
 
     providers = data.get("custom_providers", [])
     if not isinstance(providers, list):
@@ -147,6 +162,12 @@ def tune(config_file: Path, backup_dir: Path, *, apply: bool) -> dict[str, objec
             if before != value:
                 changed[f"agnes.{key}"] = {"before": before, "after": value}
                 provider[key] = value
+        if requested_base_url and provider.get("base_url") != requested_base_url:
+            changed["agnes.base_url"] = {
+                "before": provider.get("base_url"),
+                "after": requested_base_url,
+            }
+            provider["base_url"] = requested_base_url
 
     model = data.get("model")
     if not isinstance(model, dict):
@@ -158,6 +179,22 @@ def tune(config_file: Path, backup_dir: Path, *, apply: bool) -> dict[str, objec
         if before != value:
             changed[f"model.{key}"] = {"before": before, "after": value}
             model[key] = value
+    if requested_base_url and model.get("base_url") != requested_base_url:
+        changed["model.base_url"] = {
+            "before": model.get("base_url"),
+            "after": requested_base_url,
+        }
+        model["base_url"] = requested_base_url
+
+    auxiliary = data.get("auxiliary")
+    title_generation = auxiliary.get("title_generation") if isinstance(auxiliary, dict) else None
+    if requested_base_url and isinstance(title_generation, dict):
+        if title_generation.get("base_url") != requested_base_url:
+            changed["auxiliary.title_generation.base_url"] = {
+                "before": title_generation.get("base_url"),
+                "after": requested_base_url,
+            }
+            title_generation["base_url"] = requested_base_url
 
     agent = data.setdefault("agent", {})
     if not isinstance(agent, dict):
@@ -251,6 +288,18 @@ def tune(config_file: Path, backup_dir: Path, *, apply: bool) -> dict[str, objec
     verified = verified and all(verified_data["model"].get(key) == value for key, value in PRIMARY_TUNING.items())
     verified = verified and all(verified_data["agent"].get(key) == value for key, value in AGENT_TUNING.items())
     verified = verified and all(verified_data["compression"].get(key) == value for key, value in COMPRESSION_TUNING.items())
+    if requested_base_url:
+        verified = verified and verified_data["model"].get("base_url") == requested_base_url
+        if verified_matches:
+            verified = verified and verified_matches[0].get("base_url") == requested_base_url
+        verified_auxiliary = verified_data.get("auxiliary")
+        verified_title = (
+            verified_auxiliary.get("title_generation")
+            if isinstance(verified_auxiliary, dict)
+            else None
+        )
+        if isinstance(verified_title, dict):
+            verified = verified and verified_title.get("base_url") == requested_base_url
     verified = verified and verified_data.get("fallback_providers") == []
     verified = verified and not verified_data.get("fallback_model")
     permissions_preserved = (config_file.stat().st_mode & 0o777) == (original_mode or 0o600)
@@ -270,9 +319,15 @@ def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--config-file", required=True, type=Path)
     parser.add_argument("--backup-dir", required=True, type=Path)
+    parser.add_argument("--agnes-base-url", choices=sorted(OFFICIAL_AGNES_BASE_URLS))
     parser.add_argument("--apply", action="store_true")
     args = parser.parse_args()
-    result = tune(args.config_file, args.backup_dir, apply=args.apply)
+    result = tune(
+        args.config_file,
+        args.backup_dir,
+        apply=args.apply,
+        agnes_base_url=args.agnes_base_url,
+    )
     print(json.dumps(result, ensure_ascii=False, indent=2))
     return 0 if result.get("ok") else 1
 

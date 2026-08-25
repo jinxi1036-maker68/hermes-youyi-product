@@ -141,3 +141,51 @@ def test_runtime_tuning_accepts_primary_only_shadow_config(tmp_path: Path):
     assert result["writeback_verified"] is True
     assert all(updated["model"][key] == value for key, value in TUNING.items())
     assert updated["fallback_providers"] == []
+
+
+def test_runtime_tuning_switches_all_agnes_routes_to_official_alternate(tmp_path: Path):
+    from scripts.tune_xiaoyou_runtime_config import tune
+
+    primary = "https://apihub.agnes-ai.com/v1"
+    alternate = "https://apihub.agnes-ai.cn/v1"
+    config = tmp_path / "config.yaml"
+    config.write_text(yaml.safe_dump({
+        "model": {"model": "agnes-2.5-flash", "base_url": primary},
+        "custom_providers": [{"model": "agnes-2.5-flash", "base_url": primary}],
+        "auxiliary": {"title_generation": {"base_url": primary}},
+    }), encoding="utf-8")
+
+    result = tune(
+        config,
+        tmp_path / "backup",
+        apply=True,
+        agnes_base_url=alternate,
+    )
+    updated = yaml.safe_load(config.read_text(encoding="utf-8"))
+
+    assert result["ok"] is True
+    assert result["writeback_verified"] is True
+    assert updated["model"]["base_url"] == alternate
+    assert updated["custom_providers"][0]["base_url"] == alternate
+    assert updated["auxiliary"]["title_generation"]["base_url"] == alternate
+
+
+def test_runtime_tuning_rejects_non_official_agnes_route(tmp_path: Path):
+    from scripts.tune_xiaoyou_runtime_config import tune
+
+    config = tmp_path / "config.yaml"
+    config.write_text(yaml.safe_dump({
+        "model": {"model": "agnes-2.5-flash"},
+        "custom_providers": [{"model": "agnes-2.5-flash"}],
+    }), encoding="utf-8")
+    before = config.read_bytes()
+
+    result = tune(
+        config,
+        tmp_path / "backup",
+        apply=True,
+        agnes_base_url="https://untrusted.example/v1",
+    )
+
+    assert result == {"ok": False, "error": "agnes_base_url_not_official"}
+    assert config.read_bytes() == before
