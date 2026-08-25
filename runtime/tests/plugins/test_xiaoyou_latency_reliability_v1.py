@@ -195,6 +195,8 @@ def test_provider_circuit_opens_for_agnes_transport_failures_without_secrets(tmp
 
     assert snapshot["agnes"]["state"] == "open"
     assert snapshot["agnes"]["last_error_class"] == "tls"
+    assert snapshot["model_policy"] == "agnes_only"
+    assert snapshot["fallback_model"] == ""
     raw = (tmp_path / "state" / provider_resilience.STATE_FILE_NAME).read_text(encoding="utf-8")
     assert "api_key" not in raw
     assert "https://" not in raw
@@ -214,7 +216,7 @@ def test_provider_circuit_requires_two_recovery_probes_before_restoring_agnes(tm
     assert provider_resilience.circuit_state()["state"] == "closed"
 
 
-def test_wecom_agnes_patch_skips_extra_primary_recovery_and_uses_fallback(tmp_path, monkeypatch):
+def test_wecom_agnes_patch_skips_extra_recovery_and_blocks_fallback_in_primary_only_mode(tmp_path, monkeypatch):
     import sys
     import types
     from plugins.tuoguan_core import provider_resilience
@@ -250,7 +252,9 @@ def test_wecom_agnes_patch_skips_extra_primary_recovery_and_uses_fallback(tmp_pa
     assert provider_resilience.circuit_state()["state"] == "open"
     agent._restore_primary_runtime()
     assert agent._api_max_retries == 1
-    assert agent.fallback_calls == 1
+    assert agent.fallback_calls == 0
+    assert agent._try_activate_fallback("timeout") is False
+    assert agent.fallback_calls == 0
 
 
 def test_plugin_blocks_any_more_business_tools_after_authoritative_result(tmp_path):

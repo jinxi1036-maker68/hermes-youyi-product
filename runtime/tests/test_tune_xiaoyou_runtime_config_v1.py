@@ -5,7 +5,7 @@ from pathlib import Path
 import yaml
 
 
-def test_runtime_tuning_applies_to_primary_provider_fallback_and_agent(tmp_path: Path):
+def test_runtime_tuning_applies_primary_only_policy_and_agent_limits(tmp_path: Path):
     from scripts.tune_xiaoyou_runtime_config import TUNING, tune
 
     config = tmp_path / "config.yaml"
@@ -55,20 +55,17 @@ def test_runtime_tuning_applies_to_primary_provider_fallback_and_agent(tmp_path:
         "timeout_seconds": 9,
         "stale_timeout_seconds": 10,
     }
-    assert updated["providers"]["custom"]["models"]["deepseek-v4-flash"] == {
-        "timeout_seconds": 20,
-        "stale_timeout_seconds": 22,
-    }
+    assert "deepseek-v4-flash" not in updated["providers"]["custom"]["models"]
     assert updated["agent"]["api_max_retries"] == 2
     assert updated["agent"]["max_turns"] == 8
     assert updated["agent"]["gateway_timeout"] == 35
     assert updated["agent"]["gateway_timeout_warning"] == 15
-    assert updated["fallback_providers"][0]["api_key"] == "fallback-secret"
-    assert updated["fallback_providers"][0]["request_timeout_seconds"] == 20
+    assert updated["fallback_providers"] == []
+    assert "fallback-secret" not in str(result)
     assert len(list((tmp_path / "backup").glob("config.before-latency-tuning.*.yaml"))) == 1
 
 
-def test_runtime_tuning_preserves_string_fallback_provider(tmp_path: Path):
+def test_runtime_tuning_disables_string_fallback_provider(tmp_path: Path):
     from scripts.tune_xiaoyou_runtime_config import tune
 
     config = tmp_path / "config.yaml"
@@ -91,10 +88,10 @@ def test_runtime_tuning_preserves_string_fallback_provider(tmp_path: Path):
 
     assert result["ok"] is True
     assert result["writeback_verified"] is True
-    assert updated["fallback_providers"] == "openrouter/auto"
+    assert updated["fallback_providers"] == []
 
 
-def test_runtime_tuning_migrates_json_string_fallback_without_leaking_secret(tmp_path: Path):
+def test_runtime_tuning_disables_json_string_fallback_without_leaking_secret(tmp_path: Path):
     from scripts.tune_xiaoyou_runtime_config import tune
 
     secret = "fallback-private-value"
@@ -118,11 +115,9 @@ def test_runtime_tuning_migrates_json_string_fallback_without_leaking_secret(tmp
     updated = yaml.safe_load(config.read_text(encoding="utf-8"))
 
     assert result["ok"] is True
-    assert result["fallback_migration"] == {"from": "json_string", "to": "yaml_list", "count": 1}
+    assert result["fallback_migration"] == {"from": "str", "to": "disabled_agnes_only", "count": 1}
     assert secret not in str(result)
-    assert isinstance(updated["fallback_providers"], list)
-    assert updated["fallback_providers"][0]["api_key"] == secret
-    assert updated["fallback_providers"][0]["request_timeout_seconds"] == 20
+    assert updated["fallback_providers"] == []
 
 
 def test_runtime_tuning_accepts_primary_only_shadow_config(tmp_path: Path):
@@ -144,3 +139,4 @@ def test_runtime_tuning_accepts_primary_only_shadow_config(tmp_path: Path):
     assert result["ok"] is True
     assert result["writeback_verified"] is True
     assert all(updated["model"][key] == value for key, value in TUNING.items())
+    assert updated["fallback_providers"] == []

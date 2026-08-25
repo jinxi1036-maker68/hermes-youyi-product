@@ -15,8 +15,8 @@ import yaml
 PRIMARY_TUNING = {
     "context_length": 262144,
     "max_tokens": 1600,
-    # A WeCom turn gets exactly one Agnes attempt. The resilience patch opens
-    # the provider circuit and immediately uses DeepSeek on transport errors.
+    # A WeCom turn gets exactly one Agnes attempt. Production is Agnes-only:
+    # transport failure returns an explicit failure instead of switching model.
     "request_timeout_seconds": 9,
     "stale_timeout_seconds": 10,
 }
@@ -24,12 +24,6 @@ PRIMARY_TUNING = {
 # Compatibility export used by existing deployment tooling: it always means
 # the preferred Agnes route, never the fallback route.
 TUNING = PRIMARY_TUNING
-
-FALLBACK_TUNING = {
-    "max_tokens": 1600,
-    "request_timeout_seconds": 20,
-    "stale_timeout_seconds": 22,
-}
 
 AGENT_TUNING = {
     # Hermes v0.20 counts the initial attempt here, so 2 means one retry.
@@ -96,10 +90,7 @@ def _tune_v020_provider_models(data: dict[str, object], changed: dict[str, dict[
     models = custom.setdefault("models", {})
     if not isinstance(models, dict):
         return False
-    for model_name, tuning in (
-        ("agnes-2.5-flash", PRIMARY_TUNING),
-        ("deepseek-v4-flash", FALLBACK_TUNING),
-    ):
+    for model_name, tuning in (("agnes-2.5-flash", PRIMARY_TUNING),):
         model_config = models.setdefault(model_name, {})
         if not isinstance(model_config, dict):
             return False
@@ -115,6 +106,12 @@ def _tune_v020_provider_models(data: dict[str, object], changed: dict[str, dict[
                     "after": value,
                 }
                 model_config[configured_key] = value
+    if "deepseek-v4-flash" in models:
+        models.pop("deepseek-v4-flash", None)
+        changed["providers.custom.models.deepseek-v4-flash"] = {
+            "before": "configured",
+            "after": "removed_agnes_only",
+        }
     return True
 
 
@@ -169,36 +166,22 @@ def tune(config_file: Path, backup_dir: Path, *, apply: bool) -> dict[str, objec
             agent[key] = value
 
     fallback_value = data.get("fallback_providers")
+    fallback_count = len(fallback_value) if isinstance(fallback_value, list) else (1 if fallback_value else 0)
     fallback_migration: dict[str, object] = {}
-    if isinstance(fallback_value, str) and fallback_value.lstrip().startswith("["):
-        try:
-            parsed_fallbacks = json.loads(fallback_value)
-        except json.JSONDecodeError:
-            return {"ok": False, "error": "fallback_providers_string_invalid"}
-        if not isinstance(parsed_fallbacks, list) or not all(isinstance(item, dict) for item in parsed_fallbacks):
-            return {"ok": False, "error": "fallback_providers_string_not_list"}
-        data["fallback_providers"] = parsed_fallbacks
-        fallbacks = parsed_fallbacks
-        fallback_migration = {
-            "from": "json_string",
-            "to": "yaml_list",
-            "count": len(parsed_fallbacks),
+    if fallback_value != []:
+        changed["fallback_providers"] = {
+            "before": f"configured_entries:{fallback_count}",
+            "after": "disabled_agnes_only",
         }
-    elif fallback_value is None or isinstance(fallback_value, str):
-        # Preserve a plain provider-name string exactly as configured.
-        fallbacks = []
-    elif isinstance(fallback_value, list):
-        fallbacks = fallback_value
-    else:
-        return {"ok": False, "error": "fallback_providers_invalid_type"}
-    for index, fallback in enumerate(fallbacks):
-        if not isinstance(fallback, dict):
-            continue
-        for key, value in FALLBACK_TUNING.items():
-            before = fallback.get(key)
-            if before != value:
-                changed[f"fallback.{index}.{key}"] = {"before": before, "after": value}
-                fallback[key] = value
+        fallback_migration = {
+            "from": type(fallback_value).__name__,
+            "to": "disabled_agnes_only",
+            "count": fallback_count,
+        }
+    data["fallback_providers"] = []
+    if data.get("fallback_model"):
+        changed["fallback_model"] = {"before": "configured", "after": "disabled_agnes_only"}
+        data["fallback_model"] = ""
 
     compression = data.setdefault("compression", {})
     if not isinstance(compression, dict):
@@ -254,32 +237,19 @@ def tune(config_file: Path, backup_dir: Path, *, apply: bool) -> dict[str, objec
     verified_v020_models = verified_custom.get("models") if isinstance(verified_custom, dict) else {}
     verified = verified and isinstance(verified_v020_models, dict)
     if isinstance(verified_v020_models, dict):
-        for model_name, tuning in (
-            ("agnes-2.5-flash", PRIMARY_TUNING),
-            ("deepseek-v4-flash", FALLBACK_TUNING),
-        ):
-            configured = verified_v020_models.get(model_name)
-            verified = verified and isinstance(configured, dict)
-            if isinstance(configured, dict):
-                verified = verified and configured.get("timeout_seconds") == tuning["request_timeout_seconds"]
-                verified = verified and configured.get("stale_timeout_seconds") == tuning["stale_timeout_seconds"]
+        configured = verified_v020_models.get("agnes-2.5-flash")
+        verified = verified and isinstance(configured, dict)
+        if isinstance(configured, dict):
+            verified = verified and configured.get("timeout_seconds") == PRIMARY_TUNING["request_timeout_seconds"]
+            verified = verified and configured.get("stale_timeout_seconds") == PRIMARY_TUNING["stale_timeout_seconds"]
+        verified = verified and "deepseek-v4-flash" not in verified_v020_models
     if verified_matches:
         verified = verified and all(verified_matches[0].get(key) == value for key, value in PRIMARY_TUNING.items())
     verified = verified and all(verified_data["model"].get(key) == value for key, value in PRIMARY_TUNING.items())
     verified = verified and all(verified_data["agent"].get(key) == value for key, value in AGENT_TUNING.items())
     verified = verified and all(verified_data["compression"].get(key) == value for key, value in COMPRESSION_TUNING.items())
-    verified_fallbacks = verified_data.get("fallback_providers")
-    if isinstance(verified_fallbacks, list):
-        verified = verified and all(
-            fallback.get(key) == FALLBACK_TUNING[key]
-            for fallback in verified_fallbacks
-            if isinstance(fallback, dict)
-            for key in FALLBACK_TUNING
-        )
-    elif fallback_migration:
-        verified = False
-    else:
-        verified = verified and verified_fallbacks == fallback_value
+    verified = verified and verified_data.get("fallback_providers") == []
+    verified = verified and not verified_data.get("fallback_model")
     permissions_preserved = (config_file.stat().st_mode & 0o777) == (original_mode or 0o600)
     verified = bool(verified and permissions_preserved and ownership_preserved)
     result.update({

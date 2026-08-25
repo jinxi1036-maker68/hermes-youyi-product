@@ -1,4 +1,4 @@
-"""Provider-scoped circuit breaker for real-time XiaoYou conversations.
+"""Provider-scoped health guard for real-time XiaoYou conversations.
 
 Hermes owns model selection and business reasoning.  This module only keeps a
 small, persistent health state for the known Agnes upstream and prevents a
@@ -32,6 +32,14 @@ PROBE_INTERVAL_SECONDS = 30
 PROBE_TIMEOUT_SECONDS = 6
 _LOCK = threading.RLock()
 _PATCHED = False
+
+
+def agnes_only_mode() -> bool:
+    """Keep Agnes as Xiaoyou's only production model unless explicitly disabled."""
+
+    return str(os.getenv("HERMES_XIAOYOU_AGNES_ONLY", "1") or "1").strip().lower() not in {
+        "0", "false", "no", "off",
+    }
 
 
 def _now() -> str:
@@ -163,7 +171,11 @@ def _public_entry(entry: dict[str, Any]) -> dict[str, Any]:
 
 
 def provider_health_snapshot() -> dict[str, Any]:
-    return {"agnes": circuit_state(), "fallback_model": "deepseek-v4-flash"}
+    return {
+        "agnes": circuit_state(),
+        "model_policy": "agnes_only" if agnes_only_mode() else "fallback_enabled",
+        "fallback_model": "" if agnes_only_mode() else "configured_by_hermes",
+    }
 
 
 def _mark_probe_result(*, success: bool, error: Any = None) -> dict[str, Any]:
@@ -313,13 +325,14 @@ def install_hermes_model_resilience_patch() -> bool:
                 self._xiaoyou_default_api_max_retries = getattr(self, "_api_max_retries", 2)
             self._api_max_retries = 1
             state = circuit_state()
-            if state["state"] == "open":
+            if state["state"] == "open" and not agnes_only_mode():
                 original_fallback(self, None)
                 _record_provider_event(self, outcome="circuit_fallback", error_class=state.get("last_error_class", ""))
             elif state["state"] == "half_open":
                 _start_recovery_probe(self)
-                original_fallback(self, None)
-                _record_provider_event(self, outcome="half_open_fallback", error_class="")
+                if not agnes_only_mode():
+                    original_fallback(self, None)
+                    _record_provider_event(self, outcome="half_open_fallback", error_class="")
             return restored
 
         def recover(self: Any, api_error: Exception, *, retry_count: int, max_retries: int) -> bool:
@@ -337,6 +350,9 @@ def install_hermes_model_resilience_patch() -> bool:
                 if any(token in reason_text.lower() for token in ("rate", "timeout", "transport", "upstream", "overload", "invalid")):
                     opened = open_circuit(RuntimeError(reason_text or "fallback_requested"))
                     _record_provider_event(self, outcome="circuit_opened", error_class=opened.get("last_error_class", ""))
+                if agnes_only_mode():
+                    _record_provider_event(self, outcome="fallback_blocked_agnes_only", error_class=reason_text)
+                    return False
             switched = original_fallback(self, reason)
             if switched:
                 _record_provider_event(self, outcome="fallback_activated", error_class="")
@@ -346,5 +362,8 @@ def install_hermes_model_resilience_patch() -> bool:
         agent_type._try_recover_primary_transport = recover
         agent_type._try_activate_fallback = fallback
         _PATCHED = True
-        logger.warning("XIAOYOU_PROVIDER_RESILIENCE_PATCH_ENABLED primary=agnes-2.5-flash fallback=deepseek-v4-flash")
+        logger.warning(
+            "XIAOYOU_PROVIDER_RESILIENCE_PATCH_ENABLED primary=agnes-2.5-flash model_policy=%s",
+            "agnes_only" if agnes_only_mode() else "fallback_enabled",
+        )
         return True
