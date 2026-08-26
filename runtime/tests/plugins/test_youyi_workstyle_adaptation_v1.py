@@ -149,6 +149,7 @@ def test_institution_workstyle_scope_repair_preserves_history_and_repairs_only_s
             "normalized_rule": "一次只问一个关键问题。",
             "status": "active",
             "source_text": "请一次只问一个关键问题。",
+            "source": "legacy_message_reference",
         })
 
     preview = repair_institution_workstyle_scope(store)

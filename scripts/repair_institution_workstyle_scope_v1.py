@@ -73,6 +73,7 @@ def repair_institution_workstyle_scope(store: TuoguanStore, *, apply: bool = Fal
         role=str(source.get("target_role") or "boss"),
         approval_state="approved",
     )
+    source_metadata = source.get("source") if isinstance(source.get("source"), dict) else {}
     with authorized_system_write(
         store.data_dir,
         job_name="repair_institution_workstyle_scope_v1",
@@ -100,7 +101,7 @@ def repair_institution_workstyle_scope(store: TuoguanStore, *, apply: bool = Fal
             source_text=REPAIRED_RULE,
             dimension_key="interaction_pacing",
             confidence=1.0,
-            source_turn_id=str(((source.get("source") or {}).get("source_turn_id") or "")),
+            source_turn_id=str(source_metadata.get("source_turn_id") or ""),
             operation_id="repair_institution_workstyle_scope_v1",
         )
     direct = query_person_workstyle_profile(store, identity=identity, scope="direct_reply")
