@@ -386,8 +386,100 @@ def _workstyle_findings(store: TuoguanStore, *, now: datetime) -> list[dict[str,
     }]
 
 
+def _task_health(store: TuoguanStore, *, now: datetime) -> dict[str, Any]:
+    """Return task-chain facts without interpreting a teacher's work result.
+
+    The task ledger is authoritative. This helper deliberately reports only
+    technical lifecycle evidence, so the supervisor can repair projections but
+    never decide whether a real task should be completed or cancelled.
+    """
+
+    from .tasks import task_is_closed, task_is_open
+
+    tasks = [row for row in store.load_tasks() if isinstance(row, dict)]
+    outbox = store.read_json("notification_outbox.json", [])
+    outbox = outbox if isinstance(outbox, list) else []
+    notifications_by_task: dict[str, list[dict[str, Any]]] = {}
+    for row in outbox:
+        if not isinstance(row, dict):
+            continue
+        task_id = str(row.get("task_id") or "")
+        if task_id:
+            notifications_by_task.setdefault(task_id, []).append(row)
+
+    recent_open_without_delivery: list[str] = []
+    delivery_stuck: list[str] = []
+    closed_with_open_coach: list[str] = []
+    for task in tasks:
+        task_id = str(task.get("id") or "")
+        if not task_id:
+            continue
+        if task_is_closed(task) and str(task.get("coach_stage") or "") != "closed":
+            closed_with_open_coach.append(task_id)
+            continue
+        if not task_is_open(task):
+            continue
+        created_at = task.get("created_at") or task.get("updated_at")
+        # Historic tasks may predate delivery receipts. Only inspect recent
+        # tasks, where a missing queue entry is a current creation-chain fault.
+        if not _within(created_at, now=now, hours=48):
+            continue
+        notifications = notifications_by_task.get(task_id, [])
+        statuses = {str(item.get("status") or "") for item in notifications}
+        if not notifications and str(task.get("delivery_status") or "") not in {"sent", "suppressed"}:
+            recent_open_without_delivery.append(task_id)
+        if statuses & {"pending", "queued", "sending", "retry_pending", "result_unknown", "failed"}:
+            delivery_stuck.append(task_id)
+
+    return {
+        "as_of": _iso(now),
+        "total_task_count": len(tasks),
+        "open_task_count": sum(1 for task in tasks if task_is_open(task)),
+        "closed_task_count": sum(1 for task in tasks if task_is_closed(task)),
+        "recent_open_without_delivery": recent_open_without_delivery,
+        "delivery_stuck": delivery_stuck,
+        "closed_with_open_coach": closed_with_open_coach,
+    }
+
+
+def _task_chain_findings(store: TuoguanStore, *, now: datetime) -> list[dict[str, Any]]:
+    """Find task lifecycle faults without modifying a task's business state."""
+
+    health = _task_health(store, now=now)
+    findings: list[dict[str, Any]] = []
+    no_delivery = health["recent_open_without_delivery"]
+    if no_delivery:
+        findings.append({
+            "category": "task_created_without_notification_receipt",
+            "severity": "p1",
+            "scope": "tasks:recent_creation_delivery",
+            "summary": f"有 {len(no_delivery)} 个近48小时创建的开放任务没有通知入队或送达证据。",
+            "evidence": [_evidence_ref("tasks", "recent_open_without_delivery", count=len(no_delivery), detail=",".join(no_delivery[:8]))],
+        })
+    delivery_stuck = health["delivery_stuck"]
+    if delivery_stuck:
+        findings.append({
+            "category": "task_notification_nonterminal",
+            "severity": "p1",
+            "scope": "notification_outbox:task_delivery",
+            "summary": f"有 {len(delivery_stuck)} 个开放任务的通知仍未到达终态。",
+            "evidence": [_evidence_ref("notification_outbox", "task_delivery_nonterminal", count=len(delivery_stuck), detail=",".join(delivery_stuck[:8]))],
+        })
+    open_coach = health["closed_with_open_coach"]
+    if open_coach:
+        findings.append({
+            "category": "closed_task_coach_projection_open",
+            "severity": "p1",
+            "scope": "tasks:coach_stage",
+            "summary": f"有 {len(open_coach)} 个已关闭任务仍保持开放陪伴投影。",
+            "evidence": [_evidence_ref("tasks", "closed_task_coach_stage", count=len(open_coach), detail=",".join(open_coach[:8]))],
+        })
+    return findings
+
+
 def build_supervision_snapshot(store: TuoguanStore, *, now: datetime | None = None) -> dict[str, Any]:
     timestamp = now or _now()
+    task_health = _task_health(store, now=timestamp)
     return {
         "schema_version": 1,
         "tenant_id": current_tenant_id(),
@@ -398,6 +490,7 @@ def build_supervision_snapshot(store: TuoguanStore, *, now: datetime | None = No
             "reply_ledger_last_24h": sum(1 for row in _read_jsonl(store, "reply_ledger.jsonl") if _within(row.get("completed_at") or row.get("created_at"), now=timestamp, hours=24)),
             "outbox_rows": len(store.read_json("notification_outbox.json", []) if isinstance(store.read_json("notification_outbox.json", []), list) else []),
             "work_items": len(_read_jsonl(store, "hermes_work_items.jsonl")),
+            "tasks": task_health["total_task_count"],
         },
         "boundary": {
             "sends_messages": False,
@@ -426,6 +519,7 @@ def scan_supervision(
     detected: list[dict[str, Any]] = []
     detected.extend(_commitment_findings(store, now=timestamp))
     detected.extend(_workstyle_findings(store, now=timestamp))
+    detected.extend(_task_chain_findings(store, now=timestamp))
     detected.extend(_stale_context_findings(store, now=timestamp))
     detected.extend(_duplicate_unsent_candidate_findings(store))
     detected.extend(_dashboard_divergence_findings(store, now=timestamp))
@@ -649,6 +743,7 @@ def query_supervision_status(store: TuoguanStore, *, limit: int = 20) -> dict[st
             for row in repairs[:5]
         ],
         "findings": rows,
+        "task_health": _task_health(store, now=_now()),
         "boundary": {
             "supervisor_changes_business_facts": False,
             "supervisor_sends_messages": False,

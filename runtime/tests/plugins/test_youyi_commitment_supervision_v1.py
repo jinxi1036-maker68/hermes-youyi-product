@@ -128,6 +128,39 @@ def test_supervision_repairs_only_derived_state_and_unsent_duplicates(tmp_path):
     assert "rebuild_context_projection" in repairs
 
 
+def test_supervision_detects_task_delivery_and_closed_coaching_without_changing_tasks(tmp_path):
+    from plugins.tuoguan_core.supervision_runner import run_supervision_once
+
+    store = _store(tmp_path)
+    _write_json(tmp_path, "tasks.json", [{
+        "id": "recent-open-no-delivery",
+        "title": "联系家长",
+        "status": "active",
+        "owner_user_id": "teacher1",
+        "created_at": "2026-08-25T10:00:00+08:00",
+    }, {
+        "id": "closed-coach-open",
+        "title": "已完成沟通",
+        "status": "completed",
+        "owner_user_id": "teacher1",
+        "coach_stage": "collecting_evidence",
+    }])
+    _write_json(tmp_path, "notification_outbox.json", [])
+
+    result = run_supervision_once(
+        store,
+        now=datetime(2026, 8, 25, 10, 10, tzinfo=CN_TZ),
+        apply_repairs=False,
+        write_report=False,
+    )
+
+    categories = {row["category"] for row in result["findings"]}
+    assert "task_created_without_notification_receipt" in categories
+    assert "closed_task_coach_projection_open" in categories
+    tasks = json.loads((tmp_path / "tasks.json").read_text(encoding="utf-8"))
+    assert tasks[1]["coach_stage"] == "collecting_evidence"
+
+
 def test_supervision_accepts_legacy_naive_ledger_timestamps(tmp_path):
     from plugins.tuoguan_core.supervision_runner import run_supervision_once
 
