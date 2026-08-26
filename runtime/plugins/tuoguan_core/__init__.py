@@ -504,12 +504,12 @@ def _xiaoyou_core_skill_context(*, identity: Any) -> str:
 
 def _workstyle_context(store: TuoguanStore, *, identity: Any, raw_text: str) -> str:
     try:
-        from .workstyle_profiles import workstyle_context_for_user
+        from .workstyle_profiles import infer_workstyle_scope, workstyle_context_for_user
 
         return workstyle_context_for_user(
             store,
             identity=identity,
-            scope="",
+            scope=infer_workstyle_scope(raw_text),
             raw_text=raw_text,
         )
     except Exception:

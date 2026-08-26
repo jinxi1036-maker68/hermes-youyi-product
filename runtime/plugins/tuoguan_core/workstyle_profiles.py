@@ -54,6 +54,7 @@ ALLOWED_SCOPES = {
     "proactive_question",
     "teacher_support",
     "manager_support",
+    "institution_work",
     "all_communication",
 }
 
@@ -137,6 +138,27 @@ def _normalize_preference_type(value: str) -> str:
 def _normalize_scope(value: str) -> str:
     normalized = str(value or "").strip().lower()
     return normalized if normalized in ALLOWED_SCOPES else "all_communication"
+
+
+def infer_workstyle_scope(raw_text: str) -> str:
+    """Choose a service-style scope from the current request, not old memory.
+
+    This is only context selection for an already saved personal preference. It
+    never picks a business action or changes an institution rule. In
+    particular, a pacing preference for policy discussions must not make a
+    normal conversation fail merely because it contains two questions.
+    """
+
+    compact = "".join(str(raw_text or "").split())
+    if any(term in compact for term in ("制度", "流程", "机构工作", "执行方案", "落实方案")):
+        return "institution_work"
+    if any(term in compact for term in ("早报", "晚报", "日报", "汇报")):
+        return "daily_report"
+    if any(term in compact for term in ("任务", "跟进", "提醒", "催")):
+        return "task_followup"
+    if "主动" in compact and any(term in compact for term in ("问", "提问", "找")):
+        return "proactive_question"
+    return "direct_reply"
 
 
 def _normalize_dimension_key(value: str) -> str:
@@ -942,13 +964,9 @@ def _classify_feedback_for_autosave(raw_text: str) -> dict[str, Any]:
     if high_risk:
         return {"ok": False, "risk_level": "high", "blocked_term": term}
     compact = "".join(text.split())
-    scope = "all_communication"
-    if any(term in compact for term in ("早报", "晚报", "日报", "汇报")):
-        scope = "daily_report"
-    elif any(term in compact for term in ("任务", "跟进", "提醒", "催")):
-        scope = "task_followup"
-    elif "主动" in compact and any(term in compact for term in ("问", "提问", "找")):
-        scope = "proactive_question"
+    scope = infer_workstyle_scope(text)
+    if scope == "direct_reply":
+        scope = "all_communication"
     elif "老师" in compact:
         scope = "teacher_support"
     elif "店长" in compact:
@@ -1247,6 +1265,7 @@ def _scope_label(value: str) -> str:
         "proactive_question": "主动提问",
         "teacher_support": "老师支持",
         "manager_support": "店长支持",
+        "institution_work": "机构工作讨论",
         "all_communication": "所有沟通",
     }.get(value, value)
 

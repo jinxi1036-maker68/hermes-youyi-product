@@ -93,6 +93,75 @@ def test_workstyle_feedback_guard_blocks_high_risk_autosave(tmp_path):
     assert not (tmp_path / "person_workstyle_events.jsonl").exists()
 
 
+def test_institution_discussion_pacing_does_not_leak_into_normal_replies(tmp_path):
+    from plugins.tuoguan_core.store import TuoguanStore
+    from plugins.tuoguan_core.workstyle_profiles import (
+        infer_workstyle_scope,
+        resolve_workstyle_for,
+        submit_person_workstyle_preference,
+    )
+    from plugins.tuoguan_core.write_guard import authorized_system_write
+
+    _write_json(tmp_path, "write_guard_config.json", {"enabled": True})
+    store = TuoguanStore(tmp_path)
+    identity = _identity("boss")
+    with authorized_system_write(store.data_dir, job_name="test_institution_pacing", allowed_files={"person_workstyle_events.jsonl"}):
+        saved = submit_person_workstyle_preference(
+            store,
+            identity=identity,
+            preference_type="other_low_risk",
+            scope="institution_work",
+            preference_text="制度讨论一项一项推进，一次只讲一个章节、只问一个关键问题。",
+            normalized_rule="制度讨论一次只推进一个章节和一个关键问题。",
+            operation_id="institution-pacing-1",
+        )
+
+    assert saved["ok"] is True
+    assert infer_workstyle_scope("继续讨论安全制度") == "institution_work"
+    assert infer_workstyle_scope("老师今天有什么任务") == "task_followup"
+    assert "interaction_pacing" not in set(resolve_workstyle_for(store, identity=identity, scope="direct_reply")["applied_dimensions"])
+    assert "interaction_pacing" in set(resolve_workstyle_for(store, identity=identity, scope="institution_work")["applied_dimensions"])
+
+
+def test_institution_workstyle_scope_repair_preserves_history_and_repairs_only_scope(tmp_path):
+    from scripts.repair_institution_workstyle_scope_v1 import (
+        SOURCE_PREFERENCE_ID,
+        repair_institution_workstyle_scope,
+    )
+    from plugins.tuoguan_core.store import TuoguanStore
+    from plugins.tuoguan_core.workstyle_profiles import WORKSTYLE_EVENTS_FILE
+    from plugins.tuoguan_core.write_guard import authorized_system_write
+
+    _write_json(tmp_path, "write_guard_config.json", {"enabled": True})
+    store = TuoguanStore(tmp_path)
+    with authorized_system_write(store.data_dir, job_name="test_scope_repair_source", allowed_files={WORKSTYLE_EVENTS_FILE}):
+        store.append_jsonl_verified(WORKSTYLE_EVENTS_FILE, {
+            "record_type": "person_workstyle_preference",
+            "preference_id": SOURCE_PREFERENCE_ID,
+            "tenant_id": "youyi_tuoguan",
+            "target_user_id": "boss1",
+            "target_name": "金总",
+            "target_role": "boss",
+            "preference_type": "other_low_risk",
+            "dimension_key": "interaction_pacing",
+            "scope": "all_communication",
+            "preference_text": "一次只问一个关键问题。",
+            "normalized_rule": "一次只问一个关键问题。",
+            "status": "active",
+            "source_text": "请一次只问一个关键问题。",
+        })
+
+    preview = repair_institution_workstyle_scope(store)
+    assert preview["preview_verified"] is True
+    repaired = repair_institution_workstyle_scope(store, apply=True)
+    assert repaired["writeback_verified"] is True
+    assert repaired["direct_reply_has_pacing"] is False
+    assert repaired["institution_work_has_pacing"] is True
+    rows = (tmp_path / WORKSTYLE_EVENTS_FILE).read_text(encoding="utf-8")
+    assert SOURCE_PREFERENCE_ID in rows
+    assert "person_workstyle_semantic_mismatch" in rows
+
+
 def test_workstyle_dimensions_stack_and_same_dimension_replaces(tmp_path):
     from plugins.tuoguan_core.store import TuoguanStore
     from plugins.tuoguan_core.workstyle_profiles import (

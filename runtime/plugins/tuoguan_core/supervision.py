@@ -368,11 +368,51 @@ def _commitment_findings(store: TuoguanStore, *, now: datetime) -> list[dict[str
 
 
 def _workstyle_findings(store: TuoguanStore, *, now: datetime) -> list[dict[str, Any]]:
+    from .workstyle_profiles import _active_preferences, _read_events
+
+    def failure_dimensions(application: dict[str, Any]) -> set[str]:
+        compliance = application.get("compliance") if isinstance(application.get("compliance"), dict) else {}
+        failures = compliance.get("failures") if isinstance(compliance.get("failures"), list) else []
+        dimensions: set[str] = set()
+        for failure in failures:
+            text = str(failure or "")
+            if text.startswith("interaction_pacing_"):
+                dimensions.add("interaction_pacing")
+            elif text.startswith("reply_too_long_for_saved_length_"):
+                dimensions.add("length")
+            elif text.startswith("avoidance_term_present:"):
+                dimensions.add("avoidance")
+        return dimensions
+
+    def still_applies(application: dict[str, Any]) -> bool:
+        """Do not page on an old failed application after its rule was retired.
+
+        The event ledger is intentionally append-only. A historical failed
+        output remains valuable audit evidence, but it is no longer a current
+        adaptation failure once the exact preference dimension is superseded.
+        """
+
+        target_user_id = str(application.get("target_user_id") or "")
+        scope = str(application.get("scope") or "direct_reply")
+        failed_dimensions = failure_dimensions(application)
+        if not target_user_id or not failed_dimensions:
+            return True
+        active_dimensions = {
+            str(item.get("dimension_key") or "")
+            for item in _active_preferences(
+                _read_events(store),
+                target_user_id=target_user_id,
+                scope=scope,
+            )
+        }
+        return bool(failed_dimensions & active_dimensions)
+
     rows = [row for row in _read_jsonl(store, "reply_ledger.jsonl") if _within(row.get("completed_at") or row.get("created_at"), now=now, hours=24)]
     failed = [
         row for row in rows
         if isinstance(((row.get("workstyle_adaptation") or {}).get("application_result") or {}).get("application"), dict)
         and ((((row.get("workstyle_adaptation") or {}).get("application_result") or {}).get("application") or {}).get("compliance") or {}).get("ok") is False
+        and still_applies(((row.get("workstyle_adaptation") or {}).get("application_result") or {}).get("application") or {})
     ]
     if not failed:
         return []
@@ -384,6 +424,42 @@ def _workstyle_findings(store: TuoguanStore, *, now: datetime) -> list[dict[str,
         "summary": f"最近24小时有 {len(failed)} 次已保存工作方式未在真实输出中生效。",
         "evidence": [_evidence_ref("reply_ledger", "workstyle_compliance", count=len(failed))],
     }]
+
+
+def _verify_cleared_findings(
+    store: TuoguanStore,
+    *,
+    detected: list[dict[str, Any]],
+    categories: set[str],
+    now: datetime,
+    operation_id: str,
+) -> list[dict[str, Any]]:
+    """Record a technical finding as verified when its detector is now clean."""
+
+    active_fingerprints = {
+        _fingerprint(current_tenant_id(), item.get("category"), item.get("scope"))
+        for item in detected
+        if str(item.get("category") or "") in categories
+    }
+    verified: list[dict[str, Any]] = []
+    for finding in _fold_findings(store).values():
+        category = str(finding.get("category") or "")
+        state = str(finding.get("state") or "")
+        fingerprint = str(finding.get("fingerprint") or "")
+        if category not in categories or state == "verified" or fingerprint in active_fingerprints:
+            continue
+        verified.append(_update_finding(
+            store,
+            finding,
+            state="verified",
+            operation_id=operation_id,
+            patch={
+                "verified_at": _iso(now),
+                "verification": "deterministic_detector_clear",
+                "resolution_note": "当前有效工作方式已不再复现该失败；历史审计记录保留。",
+            },
+        ))
+    return verified
 
 
 def _task_health(store: TuoguanStore, *, now: datetime) -> dict[str, Any]:
@@ -530,6 +606,13 @@ def scan_supervision(
         finding, created = _open_or_recur_finding(store, now=timestamp, operation_id=op_id, **item)
         findings.append(finding)
         new_count += int(created)
+    verified_findings = _verify_cleared_findings(
+        store,
+        detected=detected,
+        categories={"workstyle_saved_not_applied"},
+        now=timestamp,
+        operation_id=op_id,
+    )
     repairs: list[dict[str, Any]] = []
     if apply_repairs:
         for finding in findings:
@@ -551,6 +634,7 @@ def scan_supervision(
         "snapshot": snapshot,
         "detected_count": len(findings),
         "new_finding_count": new_count,
+        "verified_finding_count": len(verified_findings),
         "repair_count": len(repairs),
         "model_advisors": council,
         "boundary": snapshot["boundary"],
@@ -560,6 +644,7 @@ def scan_supervision(
         "ok": True,
         "run": run,
         "findings": [_public_finding(item) for item in findings],
+        "verified_findings": [_public_finding(item) for item in verified_findings],
         "repairs": repairs,
         "writeback_verified": True,
         "rendered_text": f"监督巡检完成：发现 {len(findings)} 项，已执行 {len(repairs)} 项低风险技术修复。",

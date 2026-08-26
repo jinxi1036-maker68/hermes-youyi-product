@@ -200,6 +200,59 @@ def test_supervision_accepts_legacy_naive_dashboard_timestamp(tmp_path):
     assert not any(row["category"] == "dashboard_projection_stale" for row in result["findings"])
 
 
+def test_supervision_closes_historical_workstyle_failure_after_preference_is_superseded(tmp_path):
+    from plugins.tuoguan_core.supervision import _fold_findings
+    from plugins.tuoguan_core.supervision_runner import run_supervision_once
+    from plugins.tuoguan_core.workstyle_profiles import WORKSTYLE_EVENTS_FILE, submit_person_workstyle_preference
+    from plugins.tuoguan_core.write_guard import authorized_system_write
+
+    store = _store(tmp_path)
+    now = datetime(2026, 8, 25, 10, 10, tzinfo=CN_TZ)
+    with authorized_system_write(store.data_dir, job_name="test_workstyle_failure", allowed_files={WORKSTYLE_EVENTS_FILE, "reply_ledger.jsonl"}):
+        saved = submit_person_workstyle_preference(
+            store,
+            identity=_boss(),
+            preference_type="other_low_risk",
+            scope="direct_reply",
+            preference_text="一次只问一个关键问题。",
+            normalized_rule="一次只问一个关键问题。",
+            dimension_key="interaction_pacing",
+            operation_id="test-workstyle-pacing",
+        )
+        assert saved["ok"] is True
+        store.append_jsonl_verified("reply_ledger.jsonl", {
+            "tenant_id": "youyi_tuoguan",
+            "message_id": "reply-workstyle-failure",
+            "completed_at": "2026-08-25T10:05:00+08:00",
+            "workstyle_adaptation": {"application_result": {"application": {
+                "target_user_id": "boss1",
+                "scope": "direct_reply",
+                "compliance": {"ok": False, "failures": ["interaction_pacing_multiple_questions"]},
+            }}},
+        })
+    first = run_supervision_once(store, now=now, apply_repairs=False, write_report=False)
+    assert any(row["category"] == "workstyle_saved_not_applied" for row in first["findings"])
+
+    with authorized_system_write(store.data_dir, job_name="test_workstyle_supersede", allowed_files={WORKSTYLE_EVENTS_FILE}):
+        store.append_jsonl_verified(WORKSTYLE_EVENTS_FILE, {
+            "record_type": "person_workstyle_semantic_mismatch",
+            "preference_id": saved["preference"]["preference_id"],
+            "status": "superseded",
+        })
+    second = run_supervision_once(
+        store,
+        now=datetime(2026, 8, 25, 10, 15, tzinfo=CN_TZ),
+        apply_repairs=False,
+        write_report=False,
+    )
+    assert not any(row["category"] == "workstyle_saved_not_applied" for row in second["findings"])
+    assert any(row["category"] == "workstyle_saved_not_applied" for row in second["verified_findings"])
+    assert any(
+        row.get("category") == "workstyle_saved_not_applied" and row.get("state") == "verified"
+        for row in _fold_findings(store).values()
+    )
+
+
 def test_supervision_council_is_read_only_and_rejects_incomplete_advice(tmp_path):
     from plugins.tuoguan_core.supervision import run_supervision_council
 
