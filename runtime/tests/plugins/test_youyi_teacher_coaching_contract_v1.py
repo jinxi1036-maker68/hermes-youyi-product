@@ -65,7 +65,7 @@ def test_task_contract_contains_full_employee_execution_material(tmp_path):
     assert result["ok"] is True
     task = store.load_tasks()[0]
     contract = task["task_contract"]
-    assert contract["version"] == 2
+    assert contract["version"] == 3
     assert contract["original_instruction"] == "联系李依晨家长，了解续费顾虑并约定下次跟进"
     assert contract["business_goal"]
     assert contract["task_object"] == {"object_type": "student", "student_name": "李依晨"}

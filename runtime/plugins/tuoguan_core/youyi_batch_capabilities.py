@@ -16,6 +16,7 @@ from typing import Any
 from .programs import student_program_ids
 from .store import TuoguanStore
 from .tenant_context import current_tenant_id
+from .tasks import task_is_open
 
 
 SUMMER_PROGRAM_ID = "summer_2026"
@@ -239,10 +240,13 @@ def create_assigned_task(
     business_goal: str = "",
     known_facts: list[str] | None = None,
     assignee_role: str = "",
+    assignee_name: str = "",
+    operation_id: str = "",
 ) -> dict[str, Any]:
     if not str(title).strip() or not str(assignee_user_id).strip():
         return {"ok": False, "reason_code": "missing_required_fields", "writeback_verified": False}
     signature = (str(title).strip(), assignee_user_id, due_at, student_name)
+    creation_key = str(operation_id or "").strip()
     task_id = f"task_{uuid.uuid4().hex[:12]}"
     from .tasks import build_task_contract
 
@@ -263,6 +267,8 @@ def create_assigned_task(
         "tenant_id": current_tenant_id(),
         "channel": channel,
         "source_text": original_text,
+        "original_instruction": original_text,
+        "creation_idempotency_key": creation_key,
         "evidence_requirement": str(evidence_requirement or "").strip(),
         "task_contract": build_task_contract(
             title=str(title).strip(),
@@ -272,6 +278,7 @@ def create_assigned_task(
             evidence_requirement=evidence_requirement,
             business_goal=business_goal,
             assignee_user_id=assignee_user_id,
+            assignee_name=assignee_name,
             assignee_role=assignee_role,
             assigned_by_user_id=created_by,
             assigned_by_role=created_by_role,
@@ -283,7 +290,27 @@ def create_assigned_task(
 
     def append_if_absent(tasks: list[dict[str, Any]]) -> None:
         nonlocal selected, already_applied
-        existing = next((item for item in tasks if (str(item.get("title") or "").strip(), str(item.get("assignee_userid") or ""), str(item.get("due_at") or ""), str(item.get("student_name") or "")) == signature and item.get("status") not in {"cancelled", "closed"}), None)
+        existing = next(
+            (
+                item
+                for item in tasks
+                if (
+                    creation_key
+                    and str(item.get("creation_idempotency_key") or "") == creation_key
+                )
+                or (
+                    not creation_key
+                    and (
+                        str(item.get("title") or "").strip(),
+                        str(item.get("assignee_userid") or ""),
+                        str(item.get("due_at") or ""),
+                        str(item.get("student_name") or ""),
+                    ) == signature
+                    and task_is_open(item)
+                )
+            ),
+            None,
+        )
         if existing is not None:
             selected = deepcopy(existing)
             already_applied = True
@@ -309,7 +336,7 @@ def operations_report(store: TuoguanStore, *, report_type: str) -> dict[str, Any
     students = students if isinstance(students, dict) else {}
     today = _now().date().isoformat()
     today_records = [item for item in records if isinstance(item, dict) and str(item.get("created_at") or item.get("timestamp") or "")[:10] == today]
-    open_tasks = [item for item in tasks if item.get("status") not in {"completed", "closed", "cancelled", "done", "completed_by_admin", "closed_by_admin"}]
+    open_tasks = [item for item in tasks if task_is_open(item)]
     safety_tasks = [item for item in tasks if item.get("level") == "S" or item.get("type") == "safety_incident"]
     summary = {"student_count": len(students), "today_record_count": len(today_records), "trial_lead_count": len(leads), "task_count": len(tasks), "open_task_count": len(open_tasks), "safety_task_count": len(safety_tasks)}
     labels = {"operations": "当前经营情况", "teacher_workload": "今天老师记录情况", "trial_follow_up": "试听线索与跟进", "daily": "经营日报", "weekly": "经营周报"}

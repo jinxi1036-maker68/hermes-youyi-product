@@ -18,6 +18,7 @@ from typing import Any
 from .models import UserIdentity
 from .store import JSON_NO_CHANGE, TuoguanStore
 from .tenant_context import current_tenant_id
+from .tasks import task_is_closed
 
 
 PROACTIVE_AUTHORIZATIONS_FILE = "proactive_authorizations.jsonl"
@@ -447,7 +448,7 @@ def _active_task_collaboration_allowed(
         ),
         None,
     )
-    if not task or str(task.get("status") or "") in {"completed", "cancelled", "closed", "done", "superseded", "expired"}:
+    if not task or task_is_closed(task):
         return False
     if str(task.get("assignee_userid") or "") != str(user_id or ""):
         return False
@@ -1478,7 +1479,7 @@ def _execute_low_risk_goal_task(
         task for task in tasks if isinstance(task, dict)
         and str(task.get("goal_id") or "") == str(action.get("goal_id") or "")
         and str(task.get("created_at") or "").startswith(today)
-        and str(task.get("status") or "") not in {"completed", "cancelled", "closed", "done"}
+        and not task_is_closed(task)
     ]
     if sum(str(task.get("assignee_userid") or "") == target_id for task in open_today) >= 1:
         return {"ok": False, "error": "goal_task_person_daily_limit", "message": "该老师今天已有一个目标子任务。"}

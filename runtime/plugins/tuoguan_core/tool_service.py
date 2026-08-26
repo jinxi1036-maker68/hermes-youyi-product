@@ -37,6 +37,7 @@ from .tasks import (
     closure_missing_fields,
     current_task_for_user,
     task_is_closed,
+    task_is_open,
 )
 from .temporal_grounding import parse_business_due_at
 from .youyi_batch_capabilities import (
@@ -429,6 +430,57 @@ class TuoguanToolService:
         if user_id:
             return UserIdentity(self.platform, user_id, user_id, requested, "teacher", "approved")
         return None
+
+    def _resolve_task_assignee(
+        self,
+        *,
+        assignee_user_id: str = "",
+        teacher_name: str = "",
+    ) -> tuple[dict[str, Any] | None, dict[str, Any] | None]:
+        """Resolve a real, active WeCom person for a task assignment.
+
+        Model turns should be able to use the human name the boss supplied.
+        The directory remains the authority for the eventual user id and
+        delivery eligibility; this helper does not infer an identity from a
+        previous conversation.
+        """
+
+        from .staff_directory import _build_entries
+
+        requested_id = str(assignee_user_id or "").strip()
+        requested_name = str(teacher_name or "").strip()
+        entries = [row for row in _build_entries(self.store) if isinstance(row, dict)]
+        by_id = [row for row in entries if str(row.get("user_id") or "") == requested_id] if requested_id else []
+        normalized_name = "".join(requested_name.casefold().split())
+        by_name = [
+            row
+            for row in entries
+            if normalized_name
+            and normalized_name in {
+                "".join(str(value or "").casefold().split())
+                for value in (
+                    row.get("business_name"), row.get("staff_name"), row.get("directory_name"), row.get("user_id"),
+                    *(row.get("known_aliases") or []),
+                )
+                if str(value or "").strip()
+            }
+        ]
+        if requested_id and requested_name and by_id and by_name and str(by_id[0].get("user_id") or "") != str(by_name[0].get("user_id") or ""):
+            return None, self._error("ambiguous_target", "老师姓名和企业微信账号指向不同人员，本轮没有创建任务。")
+        candidates = by_id or by_name
+        if not candidates:
+            return None, self._error("teacher_not_found", "没有在当前可信人员目录中找到这位执行人，本轮没有创建任务。")
+        if len({str(row.get("user_id") or "") for row in candidates}) != 1:
+            return None, self._error("ambiguous_target", "找到多位可能的执行人，请补充完整姓名或企业微信账号后再创建任务。")
+        entry = candidates[0]
+        if not bool(entry.get("is_active_staff")):
+            return None, self._error("target_staff_inactive", "该员工已离职、停用或不在可用人员目录中，不能再分配任务。")
+        if not bool(entry.get("in_wecom_directory") or entry.get("is_whitelisted")):
+            return None, self._error("target_wecom_unreachable", "该员工没有可信企业微信可达记录，任务没有创建，避免出现只建任务却无法通知。")
+        role = str(entry.get("role") or "")
+        if role not in {"teacher", "manager", "boss"}:
+            return None, self._error("target_role_invalid", "任务执行人角色不明确，本轮没有创建任务。")
+        return entry, None
 
     def _teacher_name_from_current_raw_text(self) -> str:
         try:
@@ -1103,8 +1155,9 @@ class TuoguanToolService:
             self.store.update_json("tool_operations.json", {}, finish_receipt)
         return result
 
-    def _enqueue_notifications(self, notifications: list[dict[str, Any]]) -> None:
+    def _enqueue_notifications(self, notifications: list[dict[str, Any]]) -> dict[str, Any]:
         stamp = datetime.now().isoformat(timespec="seconds")
+        requested_ids: list[str] = []
 
         def append_notifications(outbox: Any) -> list[dict[str, Any]]:
             outbox = outbox if isinstance(outbox, list) else []
@@ -1121,6 +1174,8 @@ class TuoguanToolService:
                         str(item.get("action") or ""),
                     )
                 )
+                if notification_id:
+                    requested_ids.append(notification_id)
                 if not notification_id or notification_id in existing:
                     continue
                 outbox.append(
@@ -1137,6 +1192,27 @@ class TuoguanToolService:
             return outbox[-2000:]
 
         self.store.update_json("notification_outbox.json", [], append_notifications)
+        rows = self.store.read_json("notification_outbox.json", [])
+        rows = rows if isinstance(rows, list) else []
+        requested = set(requested_ids)
+        queued = {
+            str(item.get("id") or "")
+            for item in rows
+            if isinstance(item, dict)
+            and str(item.get("id") or "") in requested
+            and str(item.get("status") or "") in {"pending", "retry_pending", "sending", "sent"}
+        }
+        queued_actions = [
+            str(item.get("action") or "")
+            for item in rows
+            if isinstance(item, dict) and str(item.get("id") or "") in queued
+        ]
+        return {
+            "requested_notification_ids": requested_ids,
+            "queued_notification_ids": sorted(queued),
+            "queued_actions": queued_actions,
+            "writeback_verified": bool(requested) and queued == requested,
+        }
 
     def context(self) -> dict[str, Any]:
         denied = self._approved()
@@ -1268,6 +1344,26 @@ class TuoguanToolService:
             requested_grade = _normalize_grade(grade)
             if requested_grade:
                 names = [name for name in names if requested_grade in _student_grades(visible.get(name, {}))]
+        # `business_signals.open_task_count` is a legacy display cache.  Never
+        # return it as fact: derive the count from the authoritative tasks
+        # ledger for this read instead.
+        open_task_counts: dict[str, int] = {}
+        for task in self.store.load_tasks():
+            if isinstance(task, dict) and task_is_open(task):
+                task_student = str(task.get("student_name") or "").strip()
+                if task_student:
+                    open_task_counts[task_student] = int(open_task_counts.get(task_student) or 0) + 1
+
+        def student_payload(name: str, recent_records: list[dict[str, Any]]) -> dict[str, Any]:
+            profile = deepcopy(visible[name])
+            signals = profile.get("business_signals") if isinstance(profile.get("business_signals"), dict) else {}
+            profile["business_signals"] = {
+                **signals,
+                "open_task_count": int(open_task_counts.get(name) or 0),
+                "open_task_count_source": "tasks.json",
+            }
+            return {"name": name, "profile": profile, "recent_records": recent_records}
+
         payload = []
         if requested:
             records = self.store.read_json("records.json", [])
@@ -1282,10 +1378,10 @@ class TuoguanToolService:
                     == name
                 ]
                 recent = sorted(recent, key=_record_time, reverse=True)[:5]
-                payload.append({"name": name, "profile": visible[name], "recent_records": recent})
+                payload.append(student_payload(name, recent))
             rendered_text = _render_student_records(payload)
         else:
-            payload = [{"name": name, "profile": visible[name], "recent_records": []} for name in names[:safe_limit]]
+            payload = [student_payload(name, []) for name in names[:safe_limit]]
             if scope == "summer":
                 title = "暑假班"
             elif scope == "regular":
@@ -1495,8 +1591,9 @@ class TuoguanToolService:
         self,
         *,
         title: str,
-        assignee_user_id: str,
-        operation_id: str,
+        assignee_user_id: str = "",
+        teacher_name: str = "",
+        operation_id: str = "",
         due_at: str = "",
         level: str = "A",
         student_name: str = "",
@@ -1511,11 +1608,18 @@ class TuoguanToolService:
             return denied
         if not self.permissions.can_manage_tasks(self.identity):
             return self._error("permission_denied", "只有老板或店长可以创建并分配任务。")
-        if staff_is_offboarded(self.store, assignee_user_id):
-            return self._error("target_staff_inactive", "该员工已经离职停用，不能再分配任务或发送提醒。")
+        assignee, assignee_error = self._resolve_task_assignee(
+            assignee_user_id=assignee_user_id,
+            teacher_name=teacher_name,
+        )
+        if assignee_error:
+            return assignee_error
+        assert isinstance(assignee, dict)
+        assignee_user_id = str(assignee.get("user_id") or "")
+        assignee_name = str(assignee.get("business_name") or assignee.get("staff_name") or teacher_name or assignee_user_id)
         responsibility: dict[str, Any] = {"evidence": []}
         institutional_item: dict[str, Any] = {}
-        assignee_role = ""
+        assignee_role = str(assignee.get("role") or "")
         if parent_work_item_id:
             institutional_item = query_institution_work(
                 self.store,
@@ -1540,9 +1644,6 @@ class TuoguanToolService:
             # approved boss/test-teacher sandbox until the owner expands it.
             if str(assignee_user_id) not in {"JinWenJie", "CeShi"}:
                 return self._error("institution_rollout_target_not_authorized", "当前机构制度落实灰度只允许金总和李老师测试号。")
-            from .staff_directory import _build_entries
-            entry = next((row for row in _build_entries(self.store) if str(row.get("user_id") or "") == str(assignee_user_id)), {})
-            assignee_role = str(entry.get("role") or "")
             if not assignee_role or assignee_role == "boss":
                 return self._error("institution_task_responsible_role_invalid", "机构落实任务必须由可信目录中的实际执行人承担，不能把老板误写成老师或执行人。")
         if goal_id:
@@ -1597,11 +1698,7 @@ class TuoguanToolService:
             due_at = self._relative_due_at(raw_text_for_boundary) if raw_text_for_boundary else ""
         trusted_task_source = str(title or "").strip()
         candidate_source = str(raw_text_for_boundary or "").strip()
-        if candidate_source and (
-            (student_name and str(student_name) in candidate_source)
-            or trusted_task_source in candidate_source
-            or candidate_source in trusted_task_source
-        ):
+        if candidate_source:
             trusted_task_source = candidate_source
         def execute() -> dict[str, Any]:
             result = create_assigned_task(
@@ -1619,6 +1716,8 @@ class TuoguanToolService:
                 created_by_name=self.identity.person_name,
                 business_goal=str(title or "").strip(),
                 assignee_role=assignee_role,
+                assignee_name=assignee_name,
+                operation_id=operation_id,
             )
             if result.get("ok") and not result.get("already_applied"):
                 task = result.get("task") if isinstance(result.get("task"), dict) else {}
@@ -1645,7 +1744,7 @@ class TuoguanToolService:
                             and (not parent_work_item_id or (str(persisted.get("parent_work_item_id") or "") == str(parent_work_item_id) and str(persisted.get("artifact_version_id") or "") == str(artifact_version_id or institutional_item.get("current_artifact_version_id") or "")))
                         )
                 task_contract = task.get("task_contract") if isinstance(task.get("task_contract"), dict) else {}
-                criteria = [str(value) for value in task_contract.get("success_criteria") or [] if str(value)]
+                criteria = [str(value) for value in task_contract.get("guidance_points") or [] if str(value)]
                 content = (
                     f"你收到一项新任务：{task.get('title') or title}\n"
                     f"原始要求：{task_contract.get('original_instruction') or task.get('source_text') or title}\n"
@@ -1657,8 +1756,8 @@ class TuoguanToolService:
                     "回复“开始”后，小优会结合这项任务陪你一步一步处理；遇到不会说或不会做的地方可以直接问。"
                 )
                 if criteria:
-                    content += "\n完成时至少需要说明：" + "；".join(criteria[:4])
-                    content += "\n以上是最低闭环证据，不会缩窄老板原要求；实际处理仍以原始要求和现场事实为准。"
+                    content += "\n处理时可参考：" + "；".join(criteria[:3])
+                    content += "\n这些是小优陪你完成任务的参考，不会替代老板原始要求，也不是额外填表。"
                 try:
                     from .runtime_foundation import current_ledger_id
                     ledger_id = current_ledger_id(self.identity.canonical_user_id)
@@ -1682,11 +1781,24 @@ class TuoguanToolService:
                         "content": f"任务到期提醒：{task.get('title') or title}\n请及时处理并回复进展。",
                         "ledger_id": ledger_id,
                     })
-                self._enqueue_notifications(notifications)
+                queue_receipt = self._enqueue_notifications(notifications)
                 result.setdefault("notifications", []).extend(
-                    {"task_id": task_id, "touser": assignee_user_id, "action": item["action"], "status": "scheduled"}
+                    {
+                        "task_id": task_id,
+                        "touser": assignee_user_id,
+                        "action": item["action"],
+                        "status": "queued" if item["action"] in set(queue_receipt.get("queued_actions") or []) else "queue_failed",
+                    }
                     for item in notifications
                 )
+                result["delivery"] = {
+                    "task_created": "task_created",
+                    "notification_queued": bool(queue_receipt.get("writeback_verified")),
+                    "notification_sent": False,
+                    "delivery_status": "queued" if queue_receipt.get("writeback_verified") else "delivery_failed",
+                    "queued_notification_ids": list(queue_receipt.get("queued_notification_ids") or []),
+                }
+                result["writeback_verified"] = bool(result.get("writeback_verified") and queue_receipt.get("writeback_verified"))
                 focus_expires_at = (datetime.now().astimezone() + timedelta(hours=36)).isoformat(timespec="seconds")
                 self._write_focus(
                     task_id=task_id,
@@ -1703,9 +1815,42 @@ class TuoguanToolService:
                     focus_expires_at=focus_expires_at,
                 )
                 self._remember_user_task_context(assignee_user_id, task, ttl_hours=36)
-            return result
+            if not result.get("ok"):
+                return result
+            task = result.get("task") if isinstance(result.get("task"), dict) else {}
+            delivery = result.get("delivery") if isinstance(result.get("delivery"), dict) else {}
+            queued = bool(delivery.get("notification_queued"))
+            message = (
+                f"任务已建立，已安排向{assignee_name}发送提醒；目前只有入队回执，是否送达还在等待。"
+                if queued
+                else f"任务已建立，但提醒没有成功入队；我不能说{assignee_name}已经收到。"
+            )
+            return self._ok(
+                "create_task",
+                data={
+                    "task_id": str(result.get("task_id") or task.get("id") or ""),
+                    "task": deepcopy(task),
+                    "task_created": True,
+                    "notification_queued": queued,
+                    "notification_sent": bool(delivery.get("notification_sent")),
+                    "delivery_status": str(delivery.get("delivery_status") or "delivery_failed"),
+                    "queued_notification_ids": list(delivery.get("queued_notification_ids") or []),
+                    "notifications": deepcopy(result.get("notifications") or []),
+                    "writeback_verified": bool(result.get("writeback_verified")),
+                },
+                message=message,
+                already_applied=bool(result.get("already_applied")),
+            )
 
-        return self._operation(operation_id, "create_task", execute)
+        receipt = self._operation(operation_id, "create_task", execute)
+        # Keep the legacy top-level fields for compatible callers while the
+        # canonical execution receipt remains in `data`.
+        data = receipt.get("data") if isinstance(receipt.get("data"), dict) else {}
+        if data:
+            for key in ("task_id", "task", "task_created", "notification_queued", "notification_sent", "delivery_status"):
+                if key in data:
+                    receipt[key] = deepcopy(data[key])
+        return receipt
 
     def query_operations_report(self, *, report_type: str = "operations", query_type: str = "", teacher_name: str = "") -> dict[str, Any]:
         denied = self._approved()
@@ -1851,8 +1996,13 @@ class TuoguanToolService:
                 for task in tasks
                 if str(task.get("student_name") or "") == student_name
             ]
-        if status:
-            tasks = [task for task in tasks if str(task.get("status") or "") == status]
+        requested_status = str(status or "").strip().lower()
+        if requested_status == "open":
+            tasks = [task for task in tasks if task_is_open(task)]
+        elif requested_status == "closed":
+            tasks = [task for task in tasks if task_is_closed(task)]
+        elif requested_status:
+            tasks = [task for task in tasks if str(task.get("status") or "").lower() == requested_status]
         if level:
             tasks = [task for task in tasks if str(task.get("level") or "") == level]
         tasks = sorted(
@@ -2428,6 +2578,7 @@ class TuoguanToolService:
         *,
         task_id: str = "",
         reply: str = "",
+        action: str = "",
         operation_id: str = "",
     ) -> dict[str, Any]:
         denied = self._approved()
@@ -2496,9 +2647,19 @@ class TuoguanToolService:
                 "完成了",
                 "处理完了",
             }
-            completion_intent = generic_complete or (
-                "任务" in compact_evidence
-                and any(word in compact_evidence for word in ("完成", "处理了", "处理完"))
+            requested_action = str(action or "").strip().lower()
+            completion_intent = (
+                requested_action == "request_completion"
+                or (
+                    requested_action != "progress"
+                    and (
+                        generic_complete
+                        or (
+                            "任务" in compact_evidence
+                            and any(word in compact_evidence for word in ("完成", "处理了", "处理完"))
+                        )
+                    )
+                )
             )
             ordinary_feedback = any(
                 phrase in compact_evidence
@@ -2566,6 +2727,12 @@ class TuoguanToolService:
                     ),
                     reverse=True,
                 )[0].get("id") or "")
+            elif supplied_task_id and supplied_task_id in {str(task.get("id") or "") for task in open_visible}:
+                # The model may receive a valid id from the current
+                # WorkContextSnapshot even though a teacher did not repeat the
+                # opaque id in natural language.  Visibility and openness are
+                # verified here, so this cannot select another person's task.
+                resolved_task_id = supplied_task_id
             elif supplied_task_id and supplied_task_id == active_context_task_id:
                 resolved_task_id = supplied_task_id
             elif active_context_task and (generic_complete or ordinary_feedback):
@@ -2663,8 +2830,18 @@ class TuoguanToolService:
                     if self.identity.role in {"manager", "boss"}
                     else self.identity.canonical_user_id
                 )
-                completion_requested = completion_intent
-                if current_was_closed and ordinary_feedback and not current_is_safety and not completion_requested:
+                contract = current.get("task_contract") if isinstance(current.get("task_contract"), dict) else {}
+                natural_parent_confirmation = bool(
+                    not current_is_safety
+                    and str(contract.get("completion_policy") or "") != "strict_evidence"
+                    and (
+                        str(current.get("type") or "") in {"parent_anxiety", "parent_complaint", "renewal_risk"}
+                        or "家长" in f"{current.get('title') or ''}{current.get('source_text') or ''}"
+                    )
+                    and any(term in compact_evidence for term in ("已沟通", "已经沟通", "联系过", "已联系", "已经联系", "妈妈说", "爸爸说", "家长说", "家长反馈"))
+                )
+                completion_requested = completion_intent or natural_parent_confirmation
+                if current_was_closed and evidence_text and not current_is_safety and not completion_requested:
                     previous = str(current.get("evidence_summary") or "").strip()
                     evidence_lines = [line.strip() for line in previous.splitlines() if line.strip()]
                     if evidence_text not in evidence_lines:
@@ -2679,7 +2856,12 @@ class TuoguanToolService:
                     result_action = "fact_added_after_completion"
                     result_reply = "已把这次回访情况补充到原任务记录中，任务仍保持已完成。"
                 else:
-                    current_result = apply_task_reply([current], actor, evidence_text)
+                    current_result = apply_task_reply(
+                        [current],
+                        actor,
+                        evidence_text,
+                        action=requested_action,
+                    )
                     result_action = current_result.action
                     result_reply = current_result.reply
                 closure_gaps = closure_missing_fields(
@@ -2706,6 +2888,7 @@ class TuoguanToolService:
                 if completion_requested and not current_is_safety and not current_missing:
                     stamp = datetime.now().isoformat(timespec="seconds")
                     current["status"] = "completed"
+                    current["coach_stage"] = "closed"
                     current["completed_at"] = stamp
                     current["updated_at"] = stamp
                     current["closure_summary"] = evidence_text

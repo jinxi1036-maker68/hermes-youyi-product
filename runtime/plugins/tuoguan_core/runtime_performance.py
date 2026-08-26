@@ -10,7 +10,10 @@ from typing import Any
 
 
 DEFAULT_TOOL_CALL_BUDGET = 4
-MAX_CORRECTABLE_FAILURES = 2
+# A real model may first omit a required field, then remove an unsupported
+# compatibility field, then make the corrected call.  Do not lock that third
+# call out; loops are still bounded separately by the per-turn tool budget.
+MAX_CORRECTABLE_FAILURES = 3
 _CORRECTABLE_ERRORS = {
     "unknown_facade_operation",
     "invalid_facade_arguments",
@@ -110,7 +113,7 @@ def guard_turn_tool_call(
 
 
 def observe_turn_tool_result(session_id: str, *, tool_name: str, result: Any) -> None:
-    """Track contract failures so one bad call gets only one correction attempt."""
+    """Track *consecutive* contract failures without poisoning later work."""
 
     key = str(session_id or "").strip()
     if not key:
@@ -131,6 +134,10 @@ def observe_turn_tool_result(session_id: str, *, tool_name: str, result: Any) ->
         state["last_error"] = error
         if error in _CORRECTABLE_ERRORS:
             state["correctable_failure_count"] = int(state.get("correctable_failure_count") or 0) + 1
+        elif not error and isinstance(parsed, dict) and parsed.get("ok") is True:
+            # A successful, verified read or write breaks the correction
+            # sequence.  A later unrelated typo must get its own correction.
+            state["correctable_failure_count"] = 0
 
 
 def turn_tool_budget_snapshot(session_id: str) -> dict[str, int]:

@@ -282,11 +282,14 @@ TUOGUAN_CREATE_TRIAL_LEAD_SCHEMA = _schema(
 )
 
 TUOGUAN_CREATE_TASK_SCHEMA = _schema(
-    "老板或店长创建并分配具体的一次性内部任务。老师不能调用。明确的一次性任务或低风险测试任务直接使用本工具，不需要先查询或创建机构目标。写入后必须反查负责人和任务ID。不要用本工具来确认机构级目标、月度目标或长期覆盖计划；只有老板刚拍板长期机构目标时才先使用 tuoguan_confirm_goal 保存目标，后续是否创建具体任务由模型在目标已保存后再判断。",
+    "老板或店长创建并分配具体的一次性内部任务。执行人可以传 teacher_name（优先，使用老板说出的姓名）或 assignee_user_id；系统会从可信企业微信目录解析在职且可达的人。title 写任务本身；老板当前原话由系统自动保存，不需要传 description。创建回执会区分任务已建立、提醒已入队和企业微信是否已经送达。不要用本工具来确认机构级目标、月度目标或长期覆盖计划。",
     _identity_props({
-        "title": {"type": "string"}, "assignee_user_id": {"type": "string"},
-        "due_at": {"type": "string"}, "level": {"type": "string", "enum": ["S", "A", "B", "C"]},
-        "student_name": {"type": "string"},
+        "title": {"type": "string", "description": "要执行的具体任务，不要重复整段工具说明。"},
+        "teacher_name": {"type": "string", "description": "优先填老板说出的执行人姓名、昵称或老师称呼；系统会解析企业微信账号。"},
+        "assignee_user_id": {"type": "string", "description": "已知企业微信 user_id 时填写；已知姓名时留空。"},
+        "due_at": {"type": "string", "description": "可选，使用北京时间的明确时间；如上午10点、今天16:00。"},
+        "level": {"type": "string", "enum": ["S", "A", "B", "C"], "description": "可选，默认 A。"},
+        "student_name": {"type": "string", "description": "可选，关联的真实学生姓名。"},
         "goal_id": {"type": "string", "description": "可选；小优自主创建目标内低风险子任务时必须填写已确认目标 id。"},
         "goal_action_id": {"type": "string", "description": "可选；关联持久目标行动。"},
         "parent_work_item_id": {"type": "string", "description": "可选：已获落实授权的机构工作事项 id。没有此关联不得把制度草案下发为员工任务。"},
@@ -294,7 +297,7 @@ TUOGUAN_CREATE_TASK_SCHEMA = _schema(
         "evidence_requirement": {"type": "string", "description": "可选；任务闭环必须拿到的真实证据。"},
         "operation_id": {"type": "string"},
     }),
-    ["user_id", "title", "assignee_user_id", "operation_id"],
+    ["user_id", "title", "operation_id"],
 )
 
 TUOGUAN_CANCEL_TASK_SCHEMA = _schema(
@@ -337,6 +340,7 @@ TUOGUAN_UPDATE_TASK_SCHEMA = _schema(
         {
             "task_id": {"type": "string", "description": "任务 id，可为空；为空时系统按本轮可信任务上下文解析。"},
             "reply": {"type": "string", "description": "老师或负责人本次补充内容。取消、关闭、删除或停止提醒类原话不要传给本工具，应调用 tuoguan_cancel_task。"},
+            "action": {"type": "string", "enum": ["progress", "request_completion"], "description": "汇报过程、提问或补充事实用 progress；老师明确说已做完、已联系、已处理好时用 request_completion。"},
             "operation_id": {"type": "string", "description": "幂等写入 id。"},
         }
     ),

@@ -14,7 +14,7 @@ from .student_resolver import active_summer_students
 from .tenant_context import current_tenant_id
 
 
-COMPLETED_STATUSES = {"completed", "done", "cancelled", "closed"}
+COMPLETED_STATUSES = {"completed", "done", "cancelled", "closed", "closed_by_admin", "completed_by_admin", "superseded", "expired"}
 
 
 def _today() -> str:

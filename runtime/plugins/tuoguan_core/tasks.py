@@ -134,8 +134,17 @@ def classify_task_reply(text: str) -> dict[str, str]:
         word in compact
         for word in (
             "完成了",
+            "做完了",
+            "都做完了",
+            "弄完了",
+            "已经弄完",
             "弄好了",
+            "处理好了",
+            "处理完了",
             "已处理",
+            "已经联系",
+            "联系过了",
+            "已经沟通",
             "给家长说了",
             "跟家长说了",
             "已沟通",
@@ -269,9 +278,11 @@ def build_task_contract(
         "student_name": str(student_name or "").strip(),
         "due_at": str(due_at or "").strip(),
     }
+    explicit_requirement = str(evidence_requirement or "").strip()
+    strict_completion = bool(explicit_requirement) or _task_type(task) == "safety_incident"
     if _is_renewal_task(task):
         domain = "renewal_conversation"
-        success_criteria = [
+        guidance_points = [
             "核实家长当前续费态度",
             "了解犹豫、暂缓或拒绝的真实原因；若家长未说明，要明确记录为待核实",
             "记录老师如何回应家长关切",
@@ -279,17 +290,15 @@ def build_task_contract(
         ]
     elif _is_parent_follow_up_task(task):
         domain = "parent_communication"
-        success_criteria = [
+        guidance_points = [
             "说明实际沟通动作",
             "记录家长的真实反馈和态度",
             "记录老师的回应及下一步安排",
         ]
     else:
         domain = "general_internal_task"
-        success_criteria = ["说明实际处理动作", "记录真实结果", "明确下一步安排"]
-    explicit_requirement = str(evidence_requirement or "").strip()
-    if explicit_requirement:
-        success_criteria.insert(0, explicit_requirement)
+        guidance_points = ["说明实际处理动作", "记录真实结果", "明确下一步安排"]
+    success_criteria = [explicit_requirement] if explicit_requirement else ["实际执行动作已经发生"]
     task_object = {
         "object_type": "student" if student_name else "institution_work",
         "student_name": str(student_name or "").strip(),
@@ -304,7 +313,7 @@ def build_task_contract(
         if value and value not in normalized_known_facts
     )
     return {
-        "version": 2,
+        "version": 3,
         "objective": str(title or "").strip(),
         "business_goal": str(business_goal or title or "").strip(),
         "original_instruction": str(source_text or title or "").strip(),
@@ -324,10 +333,12 @@ def build_task_contract(
         "known_facts": normalized_known_facts,
         "success_criteria": success_criteria,
         "success_evidence": success_criteria,
+        "guidance_points": guidance_points,
+        "completion_policy": "strict_evidence" if strict_completion else "natural_confirmation",
         "coaching_mode": "adaptive_companion",
         "coaching_stages": ["prepare_facts", "guide_next_step", "collect_result", "verify_closure"],
         "closure_conditions": {
-            "evidence_complete": True,
+            "evidence_complete": strict_completion,
             "writeback_verified": True,
             "closed_task_stops_followups": True,
         },
@@ -429,6 +440,17 @@ def _is_new_student_task(task: dict[str, Any], keyword: str) -> bool:
 
 
 def closure_missing_fields(task: dict[str, Any], evidence: str) -> list[str]:
+    # Ordinary work is closed by a credible confirmation that the requested
+    # action happened.  Details are coaching material, not a hidden form the
+    # teacher must finish.  Safety and explicitly requested evidence remain
+    # strict by contract.
+    contract = _as_dict(task.get("task_contract"))
+    if (
+        task.get("type") != "safety_incident"
+        and str(contract.get("completion_policy") or "") != "strict_evidence"
+        and not str(task.get("evidence_requirement") or "").strip()
+    ):
+        return []
     text = str(evidence or "").replace(" ", "")
     task_type = _task_type(task)
     missing: list[str] = []
@@ -470,7 +492,6 @@ def closure_missing_fields(task: dict[str, Any], evidence: str) -> list[str]:
         # response, and the next condition are known.  Why the parent hesitated
         # and the exact teacher wording are useful learning facts, but they are
         # not allowed to keep a finished conversation task open forever.
-        contract = _as_dict(task.get("task_contract"))
         requires_renewal_detail = bool(
             task.get("requires_renewal_detail")
             or contract.get("requires_renewal_detail")
@@ -892,10 +913,10 @@ def _help_script(task: dict[str, Any]) -> str:
         )
     if _is_parent_follow_up_task(task):
         return (
-            "可以，下面是老师可参考的话术。Hermes 不会替你转发，沟通后请把结果记录回来：\n\n"
+            "可以，下面是老师可参考的话术。小优不会替你转发，沟通后把你实际沟通到的情况告诉我：\n\n"
             f"{student}家长您好，您反馈的“{source}”我们已经重点关注。"
             "我会先核对孩子在托管里的实际表现，确认具体问题点后，再把观察结果和后续安排同步给您。\n\n"
-            "沟通后请补充：家长态度、你怎么回复、下一步何时跟进。"
+            "沟通后优先告诉我：你有没有联系上、家长最在意什么、下一步是否需要我继续帮你想。"
         )
     return (
         "可以，下面这段可直接发给家长：\n\n"
@@ -1048,10 +1069,10 @@ def _parent_safe_text(text: str) -> str:
 def _generic_task_prompt(task: dict[str, Any]) -> str:
     text = f"{task.get('title') or ''}{task.get('source_text') or ''}{task.get('type') or ''}"
     if _contains_any(text, ("午休", "睡觉", "休息", "坐不住", "行为", "情绪", "纪律")):
-        return "请补充孩子今天的午休表现、老师采取了什么处理、结果变化如何、明天是否继续观察。信息齐了再回复“完成了”。"
+        return "先做当前一步：看清孩子今天的午休表现，采取一个合适处理，再把实际结果告诉我。我会接着陪你判断下一步。"
     if _contains_any(text, ("学习", "作业", "数学", "计算", "订正", "阅读", "书写", "错题")):
-        return "请补充孩子今天的学习表现、错因或问题点、老师处理动作、订正/完成结果、下一步跟进安排。信息齐了再回复“完成了”。"
-    return "请补充实际处理动作、结果变化和下一步安排。信息齐了再回复“完成了”。"
+        return "先确认孩子今天卡在哪，再做一个具体处理动作；把实际结果告诉我，我会继续陪你决定是否要补下一步。"
+    return "先完成当前最关键的一步，完成后把实际结果告诉我；需要时我会继续陪你往下做。"
 
 
 def _append_closure_event(
@@ -1146,6 +1167,7 @@ def apply_task_reply(
     *,
     now: datetime | None = None,
     task_id: str | None = None,
+    action: str = "",
 ) -> TaskReplyResult:
     task = None
     if task_id:
@@ -1166,6 +1188,11 @@ def apply_task_reply(
     timestamp = now or datetime.now()
     task["updated_at"] = timestamp.isoformat(timespec="seconds")
     intent = classify_task_reply(reply_text)["intent"]
+    requested_action = str(action or "").strip().lower()
+    if requested_action == "request_completion":
+        intent = "complete_pending_confirmation"
+    elif requested_action == "progress" and intent == "complete_pending_confirmation":
+        intent = "fact_supplement"
     task_id = str(task.get("id") or "")
 
     def finish(action: str, reply: str, missing: list[str] | None = None) -> TaskReplyResult:
@@ -1226,6 +1253,7 @@ def apply_task_reply(
             )
         task["status"] = "completed"
         task["coach_stage"] = "closed"
+        task["evidence_summary"] = combined
         task["closure_summary"] = combined
         task["completed_at"] = timestamp.isoformat(timespec="seconds")
         return finish(
@@ -1253,7 +1281,11 @@ def apply_task_reply(
             _fact_added_reply(task, missing),
             missing,
         )
-    if _is_parent_follow_up_task(task):
+    if _is_parent_follow_up_task(task) and (
+        task.get("type") == "safety_incident"
+        or str(_as_dict(task.get("task_contract")).get("completion_policy") or "") == "strict_evidence"
+        or str(task.get("evidence_requirement") or "").strip()
+    ):
         missing = closure_missing_fields(task, task["evidence_summary"])
         if not missing:
             task["status"] = "completed"

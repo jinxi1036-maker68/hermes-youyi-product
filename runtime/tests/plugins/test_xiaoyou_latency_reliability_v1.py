@@ -65,7 +65,7 @@ def test_turn_tool_budget_blocks_duplicate_and_runaway_calls():
     assert turn_tool_budget_snapshot(session_id)["count"] == 4
 
 
-def test_turn_tool_budget_allows_one_contract_correction_then_stops():
+def test_turn_tool_budget_allows_two_contract_corrections_then_stops():
     from plugins.tuoguan_core.runtime_performance import (
         guard_turn_tool_call,
         observe_turn_tool_result,
@@ -89,11 +89,18 @@ def test_turn_tool_budget_allows_one_contract_correction_then_stops():
         session_id, tool_name="tuoguan_query_students",
         result={"ok": False, "error": "unsupported_arguments"},
     )
-    blocked = guard_turn_tool_call(
+    assert guard_turn_tool_call(
         session_id, tool_name="tuoguan_query_students", args={"query_scope": "visible"},
+    ) is None
+    observe_turn_tool_result(
+        session_id, tool_name="tuoguan_query_students",
+        result={"ok": False, "error": "unsupported_arguments"},
+    )
+    blocked = guard_turn_tool_call(
+        session_id, tool_name="tuoguan_query_students", args={"query_scope": "current"},
     )
     assert blocked and blocked["reason"] == "corrective_tool_retry_exhausted"
-    assert turn_tool_budget_snapshot(session_id)["correctable_failure_count"] == 2
+    assert turn_tool_budget_snapshot(session_id)["correctable_failure_count"] == 3
 
 
 def test_turn_trace_splits_model_and_tool_time_without_storing_content(tmp_path):

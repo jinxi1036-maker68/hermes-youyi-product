@@ -1765,6 +1765,12 @@ def _authoritative_task_write_reply(item: dict[str, Any]) -> str:
     rendered = _successful_rendered_text(item, "tuoguan_cancel_task")
     if rendered and _tool_results_have_verified_write(item.get("tool_results") or []):
         return rendered
+    rendered = _successful_rendered_text(item, "tuoguan_create_task")
+    if rendered and _tool_results_have_verified_write(item.get("tool_results") or []):
+        return rendered
+    rendered = _successful_rendered_text(item, "tuoguan_update_task")
+    if rendered and _tool_results_have_verified_write(item.get("tool_results") or []):
+        return rendered
     return ""
 
 

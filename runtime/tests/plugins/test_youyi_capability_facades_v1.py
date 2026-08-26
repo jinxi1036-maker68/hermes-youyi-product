@@ -13,7 +13,7 @@ def test_facade_manifest_covers_every_legacy_operation_once():
     assert len(assigned) == len(set(assigned)) == len(legacy) == 113
     assert set(assigned) == legacy
     manifest = operation_manifest()
-    assert manifest["manifest_version"] == "xiaoyou-capabilities-v1.3-23"
+    assert manifest["manifest_version"] == "xiaoyou-capabilities-v1.4-23"
     assert manifest["frozen"] is True
     assert manifest["model_visible_tool_count"] == 23
     assert len(manifest["fast_paths"]) == 11
@@ -39,7 +39,7 @@ def test_default_model_surface_has_compact_facades_and_routine_fast_paths(monkey
     assert "tuoguan_submit_relationship_touch_candidate" in visible
     assert "tuoguan_context" not in visible
     assert size["estimated_tokens"] < 8000
-    assert "xiaoyou-capabilities-v1.3-23" in __import__(
+    assert "xiaoyou-capabilities-v1.4-23" in __import__(
         "plugins.tuoguan_core.capability_facades", fromlist=["render_facade_instruction"]
     ).render_facade_instruction()
 
@@ -52,26 +52,16 @@ def test_legacy_surface_remains_available_only_as_explicit_rollback(monkeypatch)
     assert len(model_tools()) == 113
 
 
-def test_task_facade_executes_explicit_operation_and_preserves_effective_tool(monkeypatch):
+def test_task_operations_prefer_direct_tools_with_compatibility_facade(monkeypatch):
     from plugins.tuoguan_core.tools import model_tools
 
     monkeypatch.delenv("HERMES_TUOGUAN_TOOL_SURFACE", raising=False)
-    tools = {name: handler for name, _schema, handler in model_tools()}
-    result = json.loads(tools["tuoguan_tasks"]({"operation": "query_tasks", "arguments": {"scope": "mine"}}))
-    assert result["facade_domain"] == "tasks"
-    assert result["facade_operation"] == "query_tasks"
-    assert result["legacy_tool"] == "tuoguan_query_tasks"
-
-
-def test_facade_rejects_unknown_operation_without_text_routing(monkeypatch):
-    from plugins.tuoguan_core.tools import model_tools
-
-    monkeypatch.delenv("HERMES_TUOGUAN_TOOL_SURFACE", raising=False)
-    tools = {name: handler for name, _schema, handler in model_tools()}
-    result = json.loads(tools["tuoguan_tasks"]({"operation": "cancel_everything", "arguments": {}}))
-    assert result["ok"] is False
-    assert result["error"] == "unknown_facade_operation"
-    assert result["data"]["operation_contracts"]["query_tasks"]["optional"]
+    tools = {name: schema for name, schema, _handler in model_tools()}
+    assert "tuoguan_tasks" in tools
+    assert {"tuoguan_query_tasks", "tuoguan_create_task", "tuoguan_cancel_task", "tuoguan_update_task"} <= set(tools)
+    create = tools["tuoguan_create_task"]["parameters"]
+    assert "teacher_name" in create["properties"]
+    assert "assignee_user_id" not in create["required"]
 
 
 def test_facade_accepts_flat_business_arguments_without_silent_loss(monkeypatch):

@@ -8,7 +8,7 @@ from typing import Any, Callable
 
 from .models import EscalationDecision, Notification
 from .store import TuoguanStore
-from .tasks import closure_missing_fields
+from .tasks import closure_missing_fields, task_is_closed
 
 
 def _parse_datetime(value: Any) -> datetime | None:
@@ -25,7 +25,7 @@ def escalation_decision(
     now: datetime | None = None,
 ) -> EscalationDecision:
     timestamp = now or datetime.now()
-    if task.get("status") in {"completed", "cancelled", "closed", "done", "closed_by_admin", "completed_by_admin"}:
+    if task_is_closed(task):
         return EscalationDecision("none", (), "任务已结束")
     level = str(task.get("level") or "C")
     next_remind = _parse_datetime(task.get("next_remind_at"))

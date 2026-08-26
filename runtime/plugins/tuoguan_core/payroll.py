@@ -12,6 +12,7 @@ from typing import Any
 
 from .models import UserIdentity
 from .store import TuoguanStore
+from .tasks import task_is_closed, task_is_open
 
 
 PAYROLL_EVENTS_FILE = "payroll_events.json"
@@ -501,7 +502,7 @@ def validate_payroll_settlement_readiness(
         for task in tasks
         if isinstance(task, dict)
         and str(task.get("level") or "") in {"S", "A"}
-        and str(task.get("status") or "") not in {"completed", "cancelled", "closed", "done", "closed_by_admin", "completed_by_admin"}
+        and task_is_open(task)
     ]
     blocking: list[str] = []
     if missing_evaluation:
@@ -1472,7 +1473,7 @@ def _task_evidence_lines(records: list[dict[str, Any]]) -> list[str]:
         action = str(item.get("action") or "")
         status = str(item.get("status") or "")
         at = str(item.get("at") or "")
-        if action in {"completed", "completed_by_admin", "closed_by_admin"} or status in {"completed", "closed", "done", "closed_by_admin", "completed_by_admin"}:
+        if action in {"completed", "completed_by_admin", "closed_by_admin", "superseded", "expired"} or task_is_closed(status):
             lines.append(f"{prefix}{title}：已闭环 {at}".strip())
         elif item.get("missing_fields"):
             lines.append(f"{prefix}{title}：缺闭环证据 {len(item.get('missing_fields') or [])} 项")
@@ -1482,7 +1483,7 @@ def _task_evidence_lines(records: list[dict[str, Any]]) -> list[str]:
 
 
 def _task_closed(task: dict[str, Any]) -> bool:
-    return str(task.get("status") or "") in {"completed", "cancelled", "closed", "done", "closed_by_admin", "completed_by_admin"}
+    return task_is_closed(task)
 
 
 def _task_overdue(task: dict[str, Any]) -> bool:

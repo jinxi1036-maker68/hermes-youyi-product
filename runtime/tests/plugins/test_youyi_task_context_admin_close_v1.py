@@ -100,7 +100,8 @@ def test_renewal_task_persists_full_companion_contract(tmp_path):
     assert task["source_text"] == "今晚8点联系李依晨家长沟通下学期续费事宜"
     assert task["task_contract"]["task_domain"] == "renewal_conversation"
     assert task["task_contract"]["coaching_mode"] == "adaptive_companion"
-    assert any("真实原因" in item for item in task["task_contract"]["success_criteria"])
+    assert task["task_contract"]["completion_policy"] == "natural_confirmation"
+    assert any("真实原因" in item for item in task["task_contract"]["guidance_points"])
     assert any("陪你一步一步" in item["content"] for item in json.loads((tmp_path / "notification_outbox.json").read_text(encoding="utf-8")))
 
 
@@ -404,7 +405,9 @@ def test_parent_communication_manual_assignment_closes_from_natural_teacher_evid
     assert second["ok"] is True
     saved = store.load_tasks()[0]
     assert saved["status"] == "completed"
-    assert "下一步准备再继续跟进" in saved["evidence_summary"]
+    # A normal task closes when the credible contact result arrives; a later
+    # message without an active task focus is not silently attached to history.
+    assert "妈妈说孩子最近挺好" in saved["evidence_summary"]
 
 
 def test_boss_can_close_own_manual_assignment_and_suppress_pending_notifications(tmp_path):

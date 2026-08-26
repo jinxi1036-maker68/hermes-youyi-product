@@ -7,10 +7,11 @@ from typing import Any
 
 from .models import UserIdentity
 from .store import TuoguanStore
+from .tasks import task_is_open
 
 
 def _open(task: dict[str, Any]) -> bool:
-    return task.get("status") not in {"completed", "cancelled", "closed", "done", "closed_by_admin", "completed_by_admin"}
+    return task_is_open(task)
 
 
 def _display_names(store: TuoguanStore) -> dict[str, str]:

@@ -10,7 +10,7 @@ from typing import Any
 from .dashboard_builder import refresh_dashboard_cache
 from .record_evaluation import evaluate_record
 from .store import TuoguanStore
-from .tasks import build_task_contract
+from .tasks import build_task_contract, task_is_open
 
 
 class StudentRecognitionError(ValueError):
@@ -473,7 +473,7 @@ def save_analysis(
         existing = next(
             (
                 task for task in tasks
-                if task.get("status") not in {"completed", "cancelled", "closed", "done", "closed_by_admin", "completed_by_admin"}
+                if task_is_open(task)
                 and task.get("student_name") == draft["student_name"]
                 and task.get("type") == draft["type"]
             ),

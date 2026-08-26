@@ -85,6 +85,7 @@ PROTECTED_BUSINESS_FILES = {
     "runtime_status_events.jsonl",
     "tool_operations.json",
     "teacher_coaching_events.jsonl",
+    "task_unified_state_repair_events.jsonl",
     "staff_offboarding_events.jsonl",
     "supervision_runs.jsonl",
     "supervision_findings.jsonl",

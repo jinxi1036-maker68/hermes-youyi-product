@@ -55,7 +55,7 @@ MODULE_OWNERSHIP = (
         modules=(
             "acceptance_v1.py", "cleanup.py", "cli.py", "data_upgrade.py", "migrate.py",
             "repair_employee_closure_v1.py", "repair_latest_work_truth.py",
-            "repair_task_companion_state.py", "repair_task_context_v1.py", "storage_maintenance.py",
+            "repair_task_companion_state.py", "repair_task_context_v1.py", "repair_task_unified_state_v1.py", "storage_maintenance.py",
         ),
         boundary="offline checks, repair candidates, reversible maintenance; never own live business judgment",
     ),
@@ -184,6 +184,7 @@ STATE_RESOURCE_OWNERS: dict[str, str] = {
     "runtime_status_events.jsonl": "runtime_observability_domain",
     "tool_operations.json": "execution_receipt_domain",
     "teacher_coaching_events.jsonl": "teacher_coaching_domain",
+    "task_unified_state_repair_events.jsonl": "task_domain",
     "supervision_runs.jsonl": "supervision_domain",
     "supervision_findings.jsonl": "supervision_domain",
     "supervision_repairs.jsonl": "supervision_domain",

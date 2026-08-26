@@ -7,7 +7,7 @@ import json
 from typing import Any, Callable
 
 
-CAPABILITY_MANIFEST_VERSION = "xiaoyou-capabilities-v1.3-23"
+CAPABILITY_MANIFEST_VERSION = "xiaoyou-capabilities-v1.4-23"
 
 
 DOMAIN_OPERATIONS: dict[str, tuple[str, ...]] = {
@@ -120,6 +120,12 @@ FAST_PATH_TOOL_NAMES = (
     "tuoguan_query_active_work_context",
 )
 
+# The task facade remains in the fixed 23-tool surface for compatibility with
+# established Hermes sessions. The core contract tells the model to use the
+# direct task tools for create/update/cancel; this facade is the long-tail
+# fallback only and must not become a competing primary route.
+MODEL_VISIBLE_DOMAIN_NAMES = tuple(DOMAIN_OPERATIONS)
+
 _WRITE_PREFIXES = (
     "register_", "create_", "record_", "change_", "report_", "submit_", "update_",
     "cancel_", "confirm_", "execute_", "offboard_", "review_learning_", "review_project_",
@@ -143,9 +149,9 @@ def operation_manifest() -> dict[str, Any]:
         "manifest_version": CAPABILITY_MANIFEST_VERSION,
         "frozen": True,
         "surface": "11_fast_paths_plus_12_domain_facades",
-        "model_visible_tool_count": len(FAST_PATH_TOOL_NAMES) + len(DOMAIN_OPERATIONS),
+        "model_visible_tool_count": len(FAST_PATH_TOOL_NAMES) + len(MODEL_VISIBLE_DOMAIN_NAMES),
         "fast_paths": list(FAST_PATH_TOOL_NAMES),
-        "domains": len(DOMAIN_OPERATIONS),
+        "domains": len(MODEL_VISIBLE_DOMAIN_NAMES),
         "operations": operations,
     }
 
@@ -176,7 +182,14 @@ def _domain_schema(domain: str, legacy: dict[str, tuple[dict[str, Any], Callable
         if required:
             text += " required=" + ",".join(required)
         if optional:
-            text += f" optional_count={len(optional)}"
+            # Direct tools carry the complete interactive contract.  Facades
+            # are a compact long-tail index, so name the first useful fields
+            # and retain the total instead of spending the live prompt budget
+            # repeating every optional field for all 113 legacy operations.
+            preview = optional[:3]
+            text += " optional=" + ",".join(preview)
+            if len(optional) > len(preview):
+                text += f"+{len(optional) - len(preview)}"
         contracts.append(text)
     selection_hint = {
         "people": (
@@ -344,7 +357,7 @@ def build_facade_tools(
 
     return tuple(
         (f"tuoguan_{domain}", _domain_schema(domain, legacy), handler_for(domain))
-        for domain in DOMAIN_OPERATIONS
+        for domain in MODEL_VISIBLE_DOMAIN_NAMES
     )
 
 
@@ -358,7 +371,7 @@ def facade_schema_size(facade_tools: tuple[tuple[str, dict[str, Any], Callable[.
 
 
 def render_facade_instruction() -> str:
-    domains = "、".join(f"tuoguan_{name}" for name in DOMAIN_OPERATIONS)
+    domains = "、".join(f"tuoguan_{name}" for name in MODEL_VISIBLE_DOMAIN_NAMES)
     fast_paths = "、".join(FAST_PATH_TOOL_NAMES)
     return (
         f"【小优能力面｜{CAPABILITY_MANIFEST_VERSION}｜封版】高频工作优先使用直连工具：" + fast_paths + "。"
