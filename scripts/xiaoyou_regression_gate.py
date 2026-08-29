@@ -43,6 +43,7 @@ PY_COMPILE_TARGETS = [
     "runtime/plugins/tuoguan_core/project_opportunities.py",
     "runtime/plugins/tuoguan_core/supervision.py",
     "runtime/plugins/tuoguan_core/supervision_runner.py",
+    "runtime/plugins/tuoguan_core/dashboard_refresh_runner.py",
     "runtime/plugins/tuoguan_core/dashboard_workbench_v1.py",
     "scripts/xiaoyou_h5_preview_server.py",
     "scripts/project_opportunity_scan.py",

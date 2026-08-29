@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections import Counter, defaultdict
+from copy import deepcopy
 from datetime import datetime, timedelta, timezone
 import json
 import os
@@ -43,6 +44,17 @@ from .tasks import build_task_contract, closure_missing_fields, task_is_open
 
 
 CACHE_FILE = "dashboard_cache.json"
+CACHE_FRESHNESS_SECONDS = 45 * 60
+CACHE_SOURCE_FILES = (
+    "tasks.json",
+    "students.json",
+    "records.json",
+    "staff.json",
+    "hermes_work_items.jsonl",
+    "notification_outbox.json",
+    "person_workstyle_events.jsonl",
+    "self_evolution_events.jsonl",
+)
 RECORD_RULE_VERSION = "record_payroll_v3"
 COUPON_RULE_VERSION = "growth_coupon_v2"
 _POSITIVE_HINTS = ("进步", "认真", "主动", "完成好", "表扬", "优秀", "专注")
@@ -2920,7 +2932,14 @@ def refresh_dashboard_cache(
         created_priority_tasks = ensure_priority_followup_tasks(actual_store, now=now)
         created_periodic_tasks = ensure_periodic_operation_tasks(actual_store, now=now)
         ensure_friday_summer_weekly_feedbacks(actual_store, now=now)
-    snapshot = build_dashboard_snapshot(actual_store, now=now)
+    timestamp = now or datetime.now().astimezone()
+    snapshot = build_dashboard_snapshot(actual_store, now=timestamp)
+    snapshot["cache_metadata"] = {
+        "generated_at": snapshot["generated_at"],
+        "source_versions": _dashboard_source_versions(actual_store),
+        "freshness_state": "current",
+        "projection_mode": "authoritative_read_only_snapshot",
+    }
     from .write_guard import authorized_system_write
 
     with authorized_system_write(
@@ -2931,6 +2950,8 @@ def refresh_dashboard_cache(
         actual_store.write_json(CACHE_FILE, snapshot)
     return {
         "generated_at": snapshot["generated_at"],
+        "source_versions": deepcopy(snapshot["cache_metadata"]["source_versions"]),
+        "freshness_state": "current",
         "teacher_dashboards": len(snapshot.get("teacher_dashboards") or {}),
         "manager_dashboards": len(snapshot.get("manager_dashboards") or {}),
         "has_boss_dashboard": bool(snapshot.get("boss_dashboard")),
@@ -2943,11 +2964,76 @@ def load_dashboard_cache(
     store: TuoguanStore,
     *,
     build_if_missing: bool = True,
+    max_age_seconds: int | None = None,
+    now: datetime | None = None,
 ) -> dict[str, Any]:
     cache = store.read_json(CACHE_FILE, {})
-    if isinstance(cache, dict) and cache.get("schema_version") == 1:
+    stale = _dashboard_cache_is_stale(cache, now=now, max_age_seconds=max_age_seconds)
+    if isinstance(cache, dict) and cache.get("schema_version") == 1 and not stale:
         return cache
     if not build_if_missing:
         return {}
-    refresh_dashboard_cache(store)
+    refresh_dashboard_cache(store, now=now, create_operation_tasks=False)
     return store.read_json(CACHE_FILE, {})
+
+
+def dashboard_cache_freshness(
+    cache: dict[str, Any] | None,
+    *,
+    now: datetime | None = None,
+    max_age_seconds: int = CACHE_FRESHNESS_SECONDS,
+) -> dict[str, Any]:
+    """Describe cache age without interpreting any business data."""
+
+    timestamp = now or datetime.now().astimezone()
+    generated = ""
+    if isinstance(cache, dict):
+        generated = str(
+            ((cache.get("cache_metadata") or {}).get("generated_at"))
+            or cache.get("generated_at")
+            or ""
+        )
+    try:
+        parsed = datetime.fromisoformat(generated.replace("Z", "+00:00")) if generated else None
+    except ValueError:
+        parsed = None
+    if parsed is not None and parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timestamp.tzinfo)
+    if parsed is not None and timestamp.tzinfo is None:
+        timestamp = timestamp.replace(tzinfo=parsed.tzinfo)
+    age_seconds = int(max(0, (timestamp - parsed).total_seconds())) if parsed is not None else None
+    state = "current" if age_seconds is not None and age_seconds <= max(0, int(max_age_seconds or 0)) else "stale"
+    return {
+        "freshness_state": state,
+        "generated_at": generated,
+        "age_seconds": age_seconds,
+        "max_age_seconds": max(0, int(max_age_seconds or 0)),
+    }
+
+
+def _dashboard_cache_is_stale(
+    cache: Any,
+    *,
+    now: datetime | None,
+    max_age_seconds: int | None,
+) -> bool:
+    if not isinstance(cache, dict) or cache.get("schema_version") != 1:
+        return True
+    if max_age_seconds is None:
+        return False
+    return dashboard_cache_freshness(cache, now=now, max_age_seconds=max_age_seconds)["freshness_state"] != "current"
+
+
+def _dashboard_source_versions(store: TuoguanStore) -> dict[str, str]:
+    """Expose opaque file stamps so every role can prove one common snapshot."""
+
+    versions: dict[str, str] = {}
+    for filename in CACHE_SOURCE_FILES:
+        path = store.path_for(filename)
+        try:
+            stat = path.stat()
+        except OSError:
+            versions[filename] = "missing"
+            continue
+        versions[filename] = f"{stat.st_mtime_ns}:{stat.st_size}"
+    return versions

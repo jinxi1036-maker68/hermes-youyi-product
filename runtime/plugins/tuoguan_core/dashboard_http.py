@@ -13,7 +13,7 @@ from .dashboard_auth import (
     verify_dashboard_token,
     verify_parent_report_token,
 )
-from .dashboard_builder import load_dashboard_cache, refresh_dashboard_cache
+from .dashboard_builder import CACHE_FRESHNESS_SECONDS, load_dashboard_cache
 from .dashboard_workbench_v1 import DASHBOARD_WORKBENCH_V1_HTML
 from .growth_reports import (
     growth_report_by_id,
@@ -137,8 +137,7 @@ class TuoguanDashboardHttp:
             return _json_error(401, exc.code, exc.message)
         if principal.role != "teacher":
             return _json_error(403, "forbidden", "Only teacher dashboard tokens can access this API")
-        refresh_dashboard_cache(self.store)
-        cache = load_dashboard_cache(self.store)
+        cache = load_dashboard_cache(self.store, max_age_seconds=CACHE_FRESHNESS_SECONDS)
         data = (cache.get("teacher_dashboards") or {}).get(principal.user_id)
         if not isinstance(data, dict):
             data = {
@@ -162,8 +161,7 @@ class TuoguanDashboardHttp:
             return _json_error(401, exc.code, exc.message)
         if principal.role not in {"manager", "boss"}:
             return _json_error(403, "forbidden", "Only manager or boss dashboard tokens can access this API")
-        refresh_dashboard_cache(self.store)
-        cache = load_dashboard_cache(self.store)
+        cache = load_dashboard_cache(self.store, max_age_seconds=CACHE_FRESHNESS_SECONDS)
         if principal.role == "manager":
             data = (cache.get("manager_dashboards") or {}).get(principal.user_id)
         else:
@@ -788,4 +786,3 @@ _PARENT_REPORT_HTML = """<!doctype html>
   </script>
 </body>
 </html>"""
-
