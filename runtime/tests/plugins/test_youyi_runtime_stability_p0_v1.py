@@ -192,3 +192,27 @@ def test_supervision_verifies_a_stale_dashboard_finding_after_a_fresh_projection
 
     assert not any(row["category"] == "dashboard_projection_stale" for row in second["findings"])
     assert any(row["category"] == "dashboard_projection_stale" for row in second["verified_findings"])
+
+
+def test_supervision_health_does_not_count_terminal_p0_history_as_open(tmp_path):
+    from plugins.tuoguan_core.supervision import SUPERVISION_FINDINGS_FILE, query_supervision_status
+    from plugins.tuoguan_core.write_guard import authorized_system_write
+
+    store = _store(tmp_path)
+    with authorized_system_write(store.data_dir, job_name="test_supervision_history", allowed_files={SUPERVISION_FINDINGS_FILE}):
+        store.append_jsonl_verified(SUPERVISION_FINDINGS_FILE, {
+            "record_type": "supervision_finding",
+            "finding_id": "historical-p0",
+            "tenant_id": "youyi_tuoguan",
+            "fingerprint": "historical-p0",
+            "category": "dashboard_projection_stale",
+            "severity": "p0",
+            "state": "verified",
+            "summary": "historical resolved finding",
+            "created_at": "2026-08-28T10:00:00+08:00",
+        })
+
+    result = query_supervision_status(store)
+
+    assert result["active_finding_count"] == 0
+    assert result["p0_open_count"] == 0

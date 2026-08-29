@@ -984,7 +984,15 @@ def query_supervision_status(store: TuoguanStore, *, limit: int = 20) -> dict[st
     repairs.sort(key=lambda item: str(item.get("created_at") or ""), reverse=True)
     rows = [_public_finding(item) for item in findings[: max(1, min(int(limit or 20), 50))]]
     active = [item for item in findings if str(item.get("state") or "") not in TERMINAL_FINDING_STATES]
-    p0 = [item for item in findings if str(item.get("severity") or "") == "p0" and str(item.get("state") or "") not in {"verified", "false_positive"}]
+    # Use the same terminal-state definition as the active count.  A finding
+    # retained for audit after it was verified, deferred, failed, or escalated
+    # is history, not an open P0 for the owner dashboard.
+    p0 = [
+        item
+        for item in findings
+        if str(item.get("severity") or "") == "p0"
+        and str(item.get("state") or "") not in TERMINAL_FINDING_STATES
+    ]
     return {
         "ok": True,
         "report_type": "xiaoyou_supervision_v1",
