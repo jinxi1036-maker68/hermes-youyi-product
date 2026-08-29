@@ -45,6 +45,7 @@ REPORT_DELIVERY_WINDOWS = {
     "morning": (7 * 60 + 30, 10 * 60 + 30),
     "evening": (19 * 60 + 30, 23 * 60),
 }
+_DAILY_DELIVERY_TERMINAL_STATUSES = {"sent", "failed", "result_unknown", "suppressed", "superseded"}
 
 
 def queue_daily_boss_report(
@@ -1295,7 +1296,13 @@ def _wecom_config_from_env() -> Any:
         return config
 
 
-async def drain_notification_outbox_once(notification_id: str = "") -> dict[str, Any]:
+async def drain_notification_outbox_once(
+    notification_id: str = "",
+    *,
+    store: TuoguanStore | None = None,
+    wait_seconds: float = 5.0,
+    poll_interval_seconds: float = 0.25,
+) -> dict[str, Any]:
     """Best-effort oneshot drain for systemd timers in Hermes versions without startup hooks."""
 
     from plugins.platforms.wecom.callback_adapter import WecomCallbackAdapter
@@ -1323,25 +1330,120 @@ async def drain_notification_outbox_once(notification_id: str = "") -> dict[str,
             await adapter._http_client.aclose()
     normalized_id = str(notification_id or "").strip()
     if not normalized_id:
-        return {"ok": True, "drained": True}
-    store = TuoguanStore()
-    outbox = store.read_json(NOTIFICATION_OUTBOX_FILE, [])
-    matched = _find_outbox_item(outbox if isinstance(outbox, list) else [], normalized_id)
+        return {
+            "ok": True,
+            "terminal": True,
+            "drained": True,
+            "delivery_status": "not_scoped",
+            "lease_state": "not_scoped",
+            "verified_at": datetime.now().astimezone().isoformat(timespec="seconds"),
+        }
+    actual_store = store or TuoguanStore()
+    return await _await_daily_delivery_terminal(
+        actual_store,
+        normalized_id,
+        wait_seconds=wait_seconds,
+        poll_interval_seconds=poll_interval_seconds,
+    )
+
+
+async def _await_daily_delivery_terminal(
+    store: TuoguanStore,
+    notification_id: str,
+    *,
+    wait_seconds: float,
+    poll_interval_seconds: float,
+) -> dict[str, Any]:
+    """Read a daily delivery's terminal receipt without claiming it again."""
+
+    matched = _read_daily_delivery_item(store, notification_id)
     if not matched:
-        return {"ok": False, "drained": True, "error": "notification_missing_after_drain", "notification_id": normalized_id}
+        return {
+            "ok": False,
+            "terminal": True,
+            "drained": True,
+            "error": "notification_missing_after_drain",
+            "notification_id": notification_id,
+            "verified_at": datetime.now().astimezone().isoformat(timespec="seconds"),
+        }
+
+    deadline = asyncio.get_running_loop().time() + max(0.0, min(float(wait_seconds or 0), 5.0))
+    interval = max(0.05, min(float(poll_interval_seconds or 0.25), 1.0))
+    while str(matched.get("status") or "") == "sending" and _daily_delivery_lease_state(matched) == "sending_valid_lease":
+        if asyncio.get_running_loop().time() >= deadline:
+            break
+        await asyncio.sleep(interval)
+        refreshed = _read_daily_delivery_item(store, notification_id)
+        if not refreshed:
+            break
+        matched = refreshed
+
     status = str(matched.get("status") or "")
-    payload = {
+    lease_state = _daily_delivery_lease_state(matched)
+    verified_at = datetime.now().astimezone().isoformat(timespec="seconds")
+    payload: dict[str, Any] = {
         "ok": status == "sent",
+        "terminal": status in _DAILY_DELIVERY_TERMINAL_STATUSES,
         "drained": True,
-        "notification_id": normalized_id,
+        "notification_id": notification_id,
         "delivery_status": status,
+        "lease_state": lease_state,
         "sent_at": str(matched.get("sent_at") or ""),
         "message_id": str(matched.get("message_id") or ""),
         "last_error": str(matched.get("last_error") or ""),
+        "verified_at": verified_at,
     }
-    if status != "sent":
+    if status == "sending" and lease_state == "sending_valid_lease":
+        # Another trusted sender already owns the lease.  Treat this as a
+        # successful handoff, not a second send and not a failed daily report.
+        payload.update({
+            "ok": True,
+            "terminal": False,
+            "delivery_status": "delivery_in_progress",
+            "outbox_status": "sending",
+        })
+    elif status != "sent":
         payload["error"] = "daily_report_not_sent_after_drain"
     return payload
+
+
+def _read_daily_delivery_item(store: TuoguanStore, notification_id: str) -> dict[str, Any] | None:
+    outbox = store.read_json(NOTIFICATION_OUTBOX_FILE, [])
+    return _find_outbox_item(outbox if isinstance(outbox, list) else [], notification_id)
+
+
+def _daily_delivery_lease_state(item: dict[str, Any]) -> str:
+    status = str(item.get("status") or "")
+    if status != "sending":
+        return "not_sending"
+    raw_expiry = str(item.get("lease_expires_at") or "").strip()
+    if not raw_expiry:
+        return "sending_missing_lease"
+    try:
+        expiry = datetime.fromisoformat(raw_expiry.replace("Z", "+00:00"))
+    except ValueError:
+        return "sending_invalid_lease"
+    now = datetime.now().astimezone()
+    if expiry.tzinfo is None:
+        expiry = expiry.replace(tzinfo=now.tzinfo)
+    return "sending_valid_lease" if expiry > now else "sending_expired_lease"
+
+
+def _daily_runner_summary(result: dict[str, Any]) -> dict[str, Any]:
+    """Keep systemd logs operationally useful without dumping report materials."""
+
+    drain = result.get("outbox_drain") if isinstance(result.get("outbox_drain"), dict) else {}
+    return {
+        "ok": bool(result.get("ok")),
+        "report_kind": str((result.get("report") or {}).get("kind") or result.get("report_kind") or ""),
+        "queued": bool(result.get("queued")),
+        "notification_id": str(result.get("notification_id") or ""),
+        "writeback_verified": bool(result.get("writeback_verified")),
+        "delivery_status": str(drain.get("delivery_status") or "not_requested"),
+        "terminal": drain.get("terminal"),
+        "lease_state": str(drain.get("lease_state") or ""),
+        "error": str(drain.get("error") or result.get("error") or ""),
+    }
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -1356,7 +1458,7 @@ def main(argv: list[str] | None = None) -> int:
             result["outbox_drain"] = asyncio.run(drain_notification_outbox_once(str(result.get("notification_id") or "")))
         except Exception as exc:
             result["outbox_drain"] = {"ok": False, "error": f"{type(exc).__name__}:{exc}"}
-    print(json.dumps(result, ensure_ascii=False, indent=2, default=str))
+    print(json.dumps(_daily_runner_summary(result), ensure_ascii=False, separators=(",", ":"), default=str))
     if not result.get("ok"):
         return 1
     drain = result.get("outbox_drain")
