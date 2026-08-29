@@ -98,6 +98,8 @@ def run_autonomous_wakeup_once(
             "log_review_candidate_count": int(log_review.get("issue_candidate_count") or 0),
             "employee_loop_ran": 0,
             "employee_loop_write_count": 0,
+            "employee_loop_model_attempted": 0,
+            "employee_loop_outbound_count": 0,
         },
         "sections": {
             "due_wakeup_candidates": due,
@@ -124,8 +126,16 @@ def run_autonomous_wakeup_once(
     if employee_loop_enabled:
         employee_loop = run_autonomous_employee_loop(actual_store, now=timestamp, wakeup_summary=summary, write_state=True)
         summary["sections"]["employee_loop"] = employee_loop
-        summary["source_counts"]["employee_loop_ran"] = 1 if employee_loop.get("ok") else 0
+        summary["source_counts"]["employee_loop_ran"] = 1 if employee_loop.get("model_attempted") else 0
         summary["source_counts"]["employee_loop_write_count"] = len(employee_loop.get("writes") or [])
+        summary["source_counts"]["employee_loop_model_attempted"] = 1 if employee_loop.get("model_attempted") else 0
+        summary["source_counts"]["employee_loop_outbound_count"] = int(employee_loop.get("outbound_count") or 0)
+        summary["run_status"] = str(employee_loop.get("run_status") or "completed")
+        summary["model_attempted"] = bool(employee_loop.get("model_attempted"))
+        summary["model_phase"] = str(employee_loop.get("model_phase") or "")
+        summary["model_error_class"] = str(employee_loop.get("model_error_class") or "")
+        summary["writes_count"] = int(employee_loop.get("writes_count") or 0)
+        summary["outbound_count"] = int(employee_loop.get("outbound_count") or 0)
         if not employee_loop.get("ok"):
             summary["ok"] = False
             summary["status"] = "degraded"

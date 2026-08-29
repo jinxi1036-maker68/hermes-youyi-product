@@ -175,11 +175,29 @@ def run_autonomous_employee_loop(
         "external_actions_taken": [],
         "owner_attention_queued": [],
         "writes": [],
+        "run_status": "completed",
+        "model_attempted": False,
+        "model_phase": "",
+        "model_error_class": "",
+        "writes_count": 0,
+        "outbound_count": 0,
         "materials_summary": materials.get("materials_summary") or {},
         "work_cadence": materials.get("work_cadence") or {},
         "boundary": _boundary(),
     }
+    preflight = autonomous_model_preflight(materials)
+    result["preflight"] = preflight
+    if decision_provider is None and not preflight["model_required"]:
+        result.update({
+            "run_status": "no_action_required",
+            "message": "确定性预检未发现到期承诺、目标行动、事实缺口或待复盘材料；本轮未调用模型。",
+            "rendered_text": "小优本轮自主唤醒完成确定性核验，当前没有需要模型推进的事项。",
+            "render_verified": True,
+        })
+        return result
     try:
+        result["model_attempted"] = True
+        result["model_phase"] = "diagnosis"
         decision = (decision_provider or _call_model_for_decision)(materials)
         decision = validate_employee_decision(decision)
         decision = normalize_employee_decision_for_materials(decision, materials)
@@ -189,8 +207,10 @@ def run_autonomous_employee_loop(
     except Exception as exc:
         result.update({
             "ok": False,
+            "run_status": "degraded_model_timeout" if _is_model_timeout(exc) else "degraded_model_failure",
             "error": "employee_loop_model_decision_failed",
             "message": _safe_error(exc),
+            "model_error_class": _model_error_class(exc),
             "rendered_text": "Hermes woke and read material, but model-led employee review did not complete. No internal work state changed.",
             "render_verified": True,
         })
@@ -215,6 +235,7 @@ def run_autonomous_employee_loop(
             ]
             if critical_failures:
                 result["ok"] = False
+                result["run_status"] = "degraded_action_execution"
                 result["error"] = "employee_loop_action_execution_failed"
                 result["message"] = "; ".join(
                     str(item.get("error") or item.get("message") or "action_failed")
@@ -222,12 +243,46 @@ def run_autonomous_employee_loop(
                 )[:500]
         except Exception as exc:
             result["ok"] = False
+            result["run_status"] = "degraded_materialize_failure"
             result["error"] = "employee_loop_materialize_failed"
             result["message"] = _safe_error(exc)
             result["writes"] = []
+    result["writes_count"] = len(result.get("writes") or [])
+    result["outbound_count"] = len(result.get("external_actions_taken") or [])
     result["rendered_text"] = render_employee_loop_report(result)
     result["render_verified"] = True
     return result
+
+
+def autonomous_model_preflight(materials: dict[str, Any]) -> dict[str, Any]:
+    """Decide whether this clock tick has evidence worth spending a model call on.
+
+    This is deliberately deterministic and only controls resource use. It
+    never selects a business action or synthesizes a work item.
+    """
+
+    summary = materials.get("materials_summary") if isinstance(materials, dict) else {}
+    summary = summary if isinstance(summary, dict) else {}
+    trigger_keys = (
+        "due_goal_action_count",
+        "pending_wakeup_count",
+        "result_unknown_action_count",
+        "work_commitment_count",
+        "onboarding_gap_count",
+        "institution_gap_count",
+        "proactive_radar_gap_count",
+        "proactive_radar_question_candidate_count",
+        "self_evolution_review_queue_count",
+        "project_opportunity_scan_due_count",
+        "project_opportunity_strong_bundle_count",
+    )
+    reasons = [key for key in trigger_keys if int(summary.get(key) or 0) > 0]
+    return {
+        "model_required": bool(reasons),
+        "reasons": reasons,
+        "checked_at": str(materials.get("timestamp") or ""),
+        "resource_boundary": "no model call when there is no due work, fact gap, recovery item, or night review material",
+    }
 
 
 def build_employee_loop_materials(store: TuoguanStore, *, identity: UserIdentity, timestamp: datetime, wakeup_summary: dict[str, Any] | None = None) -> dict[str, Any]:
@@ -1641,7 +1696,7 @@ def render_employee_loop_report(result: dict[str, Any]) -> str:
 
 
 def _call_model_for_decision(materials: dict[str, Any]) -> dict[str, Any]:
-    payload = _model_payload(materials)
+    payload = _fit_model_value(_model_payload(materials), 12000)
     diagnosis_input = {
         key: payload.get(key)
         for key in (
@@ -1674,11 +1729,15 @@ def _call_model_for_decision(materials: dict[str, Any]) -> dict[str, Any]:
         "operating_evidence": payload.get("operating_evidence"),
         "term_state": payload.get("term_state"),
     }
-    actions = _request_model_phase(
-        "actions",
-        _ACTIONS_PROMPT,
-        actions_input,
-        max_tokens=1800,
+    actions = (
+        _request_model_phase(
+            "actions",
+            _ACTIONS_PROMPT,
+            actions_input,
+            max_tokens=1800,
+        )
+        if _diagnosis_requires_action_phase(diagnosis)
+        else {}
     )
     opportunity_evidence = payload.get("project_opportunity_evidence")
     opportunity_bundles = (
@@ -1770,55 +1829,39 @@ def _request_model_phase(
         {"role": "user", "content": json.dumps(phase_payload, ensure_ascii=False)},
     ]
     errors: list[str] = []
-    for cfg in _load_model_configs()[:2]:
+    for cfg in _load_model_configs()[:1]:
         try:
-            for json_attempt in range(2):
-                active_messages = list(messages)
-                if json_attempt:
-                    active_messages.append({
-                        "role": "user",
-                        "content": "上次输出不是完整 JSON。重新返回更短的单个 JSON 对象；没有变化的字段用空数组或空对象。",
-                    })
-                content = _request_model_content(cfg, active_messages, max_tokens if not json_attempt else max(900, max_tokens - 300))
-                try:
-                    value = json.loads(_json_text(content))
-                except json.JSONDecodeError as exc:
-                    errors.append(f"{phase}:invalid_json:{str(exc)[:80]}")
-                    continue
-                if not isinstance(value, dict):
-                    errors.append(f"{phase}:response_not_object")
-                    continue
-                return value
+            content = _request_model_content(cfg, messages, max_tokens)
+            value = json.loads(_json_text(content))
+            if not isinstance(value, dict):
+                raise ValueError("response_not_object")
+            return value
+        except json.JSONDecodeError:
+            # Keep malformed or truncated model JSON observable without leaking
+            # a provider-specific parser error into the business runner.
+            errors.append(f"{phase}:invalid_json")
         except (httpx.HTTPError, KeyError, ValueError, RuntimeError) as exc:
             errors.append(f"{phase}:{_safe_error(exc)}")
-    raise RuntimeError(f"all_model_providers_failed:{phase}:" + "|".join(errors[-4:]))
+    # Keep the established failure contract for callers and audit tooling. In
+    # Agnes-only production this means the single permitted provider failed.
+    raise RuntimeError(f"all_model_providers_failed:{phase}:" + "|".join(errors[-1:]))
 
 
 def _request_model_content(cfg: dict[str, Any], messages: list[dict[str, str]], max_tokens: int) -> str:
-    for attempt in range(2):
-        response = httpx.post(
-            f"{cfg['base_url'].rstrip('/')}/chat/completions",
-            headers={"Authorization": f"Bearer {cfg['api_key']}", "Content-Type": "application/json"},
-            json={
-                "model": cfg["model"],
-                "temperature": 0.2,
-                "max_tokens": max_tokens,
-                "response_format": {"type": "json_object"},
-                "messages": messages,
-            },
-            timeout=float(cfg.get("timeout") or 60),
-        )
-        if response.status_code == 429 and attempt == 0:
-            retry_after = response.headers.get("Retry-After")
-            try:
-                delay = max(2.0, min(float(retry_after or 8), 15.0))
-            except ValueError:
-                delay = 8.0
-            time.sleep(delay)
-            continue
-        response.raise_for_status()
-        return str(response.json()["choices"][0]["message"]["content"] or "")
-    raise RuntimeError("model_request_exhausted")
+    response = httpx.post(
+        f"{cfg['base_url'].rstrip('/')}/chat/completions",
+        headers={"Authorization": f"Bearer {cfg['api_key']}", "Content-Type": "application/json"},
+        json={
+            "model": cfg["model"],
+            "temperature": 0.2,
+            "max_tokens": max_tokens,
+            "response_format": {"type": "json_object"},
+            "messages": messages,
+        },
+        timeout=float(cfg.get("timeout") or 25),
+    )
+    response.raise_for_status()
+    return str(response.json()["choices"][0]["message"]["content"] or "")
 
 
 _DIAGNOSIS_PROMPT = """你是托管机构数字员工小优，本轮只做事实诊断。
@@ -1872,14 +1915,6 @@ def _load_model_configs() -> list[dict[str, Any]]:
     model_cfg = data.get("model") or {}
     if isinstance(model_cfg, dict):
         candidates.append(model_cfg)
-    fallback = data.get("fallback_providers") or []
-    if isinstance(fallback, str):
-        try:
-            fallback = json.loads(fallback)
-        except json.JSONDecodeError:
-            fallback = []
-    if isinstance(fallback, list):
-        candidates.extend(item for item in fallback if isinstance(item, dict))
     normalized: list[dict[str, Any]] = []
     seen: set[tuple[str, str, str]] = set()
     for candidate in candidates:
@@ -1890,15 +1925,46 @@ def _load_model_configs() -> list[dict[str, Any]]:
         if not (base_url and api_key and model) or key in seen:
             continue
         seen.add(key)
+        if not model.lower().startswith("agnes"):
+            continue
+        try:
+            timeout = float(os.getenv("HERMES_AUTONOMOUS_MODEL_TIMEOUT_SECONDS") or 25)
+        except ValueError:
+            timeout = 25.0
         normalized.append({
             "base_url": base_url,
             "api_key": api_key,
             "model": model,
-            "timeout": float(candidate.get("request_timeout_seconds") or 60),
+            "timeout": max(5.0, min(timeout, 25.0)),
         })
     if not normalized:
         raise ValueError("model_config_incomplete")
     return normalized
+
+
+def _diagnosis_requires_action_phase(diagnosis: dict[str, Any]) -> bool:
+    if not isinstance(diagnosis, dict):
+        return False
+    return any(
+        bool(diagnosis.get(key))
+        for key in ("institution_fact_gaps", "institution_work_discoveries", "questions_to_humans")
+    )
+
+
+def _is_model_timeout(exc: Exception) -> bool:
+    text = f"{type(exc).__name__}:{exc}".lower()
+    return any(term in text for term in ("readtimeout", "timeout", "timed out", "deadline"))
+
+
+def _model_error_class(exc: Exception) -> str:
+    if _is_model_timeout(exc):
+        return "timeout"
+    text = f"{type(exc).__name__}:{exc}".lower()
+    if "429" in text:
+        return "rate_limited"
+    if any(term in text for term in ("json", "response_not_object")):
+        return "invalid_response"
+    return "request_failed"
 
 
 def _query_onboarding(store: TuoguanStore) -> dict[str, Any]:

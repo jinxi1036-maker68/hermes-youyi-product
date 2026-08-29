@@ -41,11 +41,14 @@ COMPRESSION_TUNING = {
     # cap is therefore the authority that keeps long WeCom conversations from
     # quietly growing to the model's full 512k context window.
     "threshold": 0.18,
-    "threshold_tokens": 32000,
+    # Begin session-aware compression before long business histories reach
+    # the request latency cliff. The provider's 512K capability remains a
+    # declaration, not the target size for a live WeCom turn.
+    "threshold_tokens": 24000,
     "target_ratio": 0.22,
     "protect_last_n": 8,
     "min_tail_user_messages": 2,
-    "proactive_prune_tokens": 24000,
+    "proactive_prune_tokens": 20000,
     "proactive_prune_min_result_chars": 6000,
     "proactive_prune_min_reclaim_tokens": 2048,
     # Gateway hygiene is a last-resort guard.  A 40-message cutoff made

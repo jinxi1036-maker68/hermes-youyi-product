@@ -676,7 +676,7 @@ def test_model_decision_uses_small_phases_and_skips_daytime_review(monkeypatch):
     monkeypatch.setattr(loop, "_request_model_phase", fake_phase)
     result = loop._call_model_for_decision({"work_cadence": {"mode": "daytime_goal_progress"}})
 
-    assert phases == ["diagnosis", "actions"]
+    assert phases == ["diagnosis"]
     assert result["employee_summary"] == "已核验当前事实。"
     assert result["evolution_candidates"] == []
     assert result["external_actions"] == []
@@ -698,7 +698,7 @@ def test_model_decision_runs_review_only_at_night(monkeypatch):
     monkeypatch.setattr(loop, "_request_model_phase", fake_phase)
     result = loop._call_model_for_decision({"work_cadence": {"mode": "night_read_only_review"}})
 
-    assert phases == ["diagnosis", "actions", "review"]
+    assert phases == ["diagnosis", "review"]
     assert result["evolution_candidates"][0]["candidate_type"] == "tomorrow_focus"
 
 

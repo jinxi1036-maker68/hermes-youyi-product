@@ -15,9 +15,11 @@ import json
 import os
 from pathlib import Path
 from typing import Any, Callable
+from urllib.parse import urlparse
 import uuid
 
 import httpx
+import yaml
 
 from .store import JSON_NO_CHANGE, TuoguanStore
 from .tenant_context import current_tenant_id
@@ -57,6 +59,7 @@ P0_CATEGORIES = {
     "illegal_task_transition",
     "continuous_service_failure",
 }
+_RECURRENCE_MANAGED_CATEGORIES = {"autonomous_consecutive_timeout"}
 
 
 def _now() -> datetime:
@@ -206,7 +209,10 @@ def _open_or_recur_finding(
         prior_state = str(existing.get("state") or "detected")
         regression = prior_state in {"verified", "false_positive"}
         next_state = "reproduced" if recurrence < 3 and not regression else "escalated"
-        next_severity = "p0" if category in P0_CATEGORIES or recurrence >= 3 or regression else severity
+        next_severity = "p0" if (
+            category in P0_CATEGORIES
+            or (category not in _RECURRENCE_MANAGED_CATEGORIES and (recurrence >= 3 or regression))
+        ) else severity
         updated = _update_finding(
             store,
             existing,
@@ -317,20 +323,25 @@ def _dashboard_divergence_findings(store: TuoguanStore, *, now: datetime) -> lis
     """Detect only stale cache timestamps here; never interpret business data twice."""
 
     cache = store.read_json("dashboard_cache.json", {})
-    generated = _parse_time(cache.get("generated_at")) if isinstance(cache, dict) else None
-    if not generated or now - generated > timedelta(hours=2):
+    metadata = cache.get("cache_metadata") if isinstance(cache, dict) and isinstance(cache.get("cache_metadata"), dict) else {}
+    generated = _parse_time(metadata.get("generated_at") or cache.get("generated_at")) if isinstance(cache, dict) else None
+    generated_text = ""
+    if isinstance(cache, dict):
+        generated_text = str((metadata or {}).get("generated_at") or cache.get("generated_at") or "")
+    if not generated or now - generated > timedelta(minutes=45):
         return [{
             "category": "dashboard_projection_stale",
             "severity": "p1",
             "scope": "dashboard_cache",
             "repair_action": "rebuild_dashboard_cache",
-            "summary": "H5 看板缓存不存在或超过两小时未重建。",
-            "evidence": [_evidence_ref("dashboard_cache", "generated_at", detail=str(cache.get("generated_at") if isinstance(cache, dict) else ""))],
+            "summary": "H5 看板缓存不存在或超过45分钟未按权威账本重建。",
+            "evidence": [_evidence_ref("dashboard_cache", "generated_at", detail=generated_text)],
         }]
     return []
 
 
 def _runtime_findings(store: TuoguanStore, *, now: datetime) -> list[dict[str, Any]]:
+    findings: list[dict[str, Any]] = []
     traces = [row for row in _read_jsonl(store, "turn_traces.jsonl") if _within(row.get("completed_at") or row.get("started_at"), now=now, hours=1)]
     timeouts = [
         row for row in traces
@@ -338,14 +349,165 @@ def _runtime_findings(store: TuoguanStore, *, now: datetime) -> list[dict[str, A
         or str(row.get("final_outcome") or "") == "failed" and "timeout" in json.dumps(row.get("provider_events") or [], ensure_ascii=False).lower()
     ]
     if len(timeouts) >= 2:
-        return [{
+        findings.append({
             "category": "model_consecutive_timeout",
             "severity": "p0" if len(timeouts) >= 4 else "p1",
             "scope": "turn_traces:last_hour",
             "summary": f"最近一小时有 {len(timeouts)} 次模型超时或中断。",
             "evidence": [_evidence_ref("turn_trace", "provider_timeout_or_interruption", count=len(timeouts))],
+        })
+    findings.extend(_autonomous_timeout_findings(store, now=now))
+    findings.extend(_daily_report_delivery_findings(store, now=now))
+    findings.extend(_runtime_config_drift_findings(store))
+    return findings
+
+
+def _read_runtime_reports(store: TuoguanStore, *, prefix: str, now: datetime, hours: int = 24) -> list[dict[str, Any]]:
+    reports_dir = store.data_dir / "reports"
+    if not reports_dir.exists():
+        return []
+    rows: list[dict[str, Any]] = []
+    for path in sorted(reports_dir.glob(f"{prefix}*.json")):
+        try:
+            item = json.loads(path.read_text(encoding="utf-8-sig"))
+        except (OSError, ValueError):
+            continue
+        if not isinstance(item, dict):
+            continue
+        stamp = _parse_time(item.get("generated_at"))
+        if stamp is None or not _within(item.get("generated_at"), now=now, hours=hours):
+            continue
+        item["_report_path"] = path.name
+        rows.append(item)
+    rows.sort(key=lambda row: str(row.get("generated_at") or ""))
+    return rows
+
+
+def _autonomous_timeout_findings(store: TuoguanStore, *, now: datetime) -> list[dict[str, Any]]:
+    reports = _read_runtime_reports(store, prefix="autonomous-wakeup-v1-", now=now, hours=24)
+    consecutive: list[dict[str, Any]] = []
+    for report in reversed(reports):
+        status = str(report.get("run_status") or "")
+        error_class = str(report.get("model_error_class") or "")
+        failed = status == "degraded_model_timeout" or error_class == "timeout"
+        if failed:
+            consecutive.append(report)
+            continue
+        # A no-action tick is a healthy resource decision, so it ends a timeout streak.
+        if status in {"completed", "no_action_required", ""} and report.get("ok") is not False:
+            break
+        break
+    if len(consecutive) < 3:
+        return []
+    oldest = _parse_time(consecutive[-1].get("generated_at"))
+    duration_seconds = int(max(0, (now - oldest).total_seconds())) if oldest else 0
+    severity = "p0" if len(consecutive) >= 6 or duration_seconds >= 3 * 3600 else "p1"
+    return [{
+        "category": "autonomous_consecutive_timeout",
+        "severity": severity,
+        "scope": "autonomous_wakeup:consecutive_timeouts",
+        "summary": f"自主唤醒连续 {len(consecutive)} 次模型超时，持续约 {duration_seconds // 60} 分钟；本轮均无业务写入或外发。",
+        "evidence": [_evidence_ref("autonomous_wakeup_report", "consecutive_model_timeout", count=len(consecutive), detail=",".join(str(row.get("_report_path") or "") for row in consecutive[:6]))],
+    }]
+
+
+def _daily_report_delivery_findings(store: TuoguanStore, *, now: datetime) -> list[dict[str, Any]]:
+    rows = _read_jsonl(store, "daily_report_runs.jsonl")
+    if not rows:
+        return []
+    outbox = store.read_json("notification_outbox.json", [])
+    outbox_rows = outbox if isinstance(outbox, list) else []
+    findings: list[dict[str, Any]] = []
+    schedule = {"morning": (8, 40), "evening": (21, 10)}
+    day = now.strftime("%Y%m%d")
+    for kind, (hour, minute) in schedule.items():
+        due = now.replace(hour=hour, minute=minute, second=0, microsecond=0)
+        if now < due:
+            continue
+        notification_id = f"autonomous_daily_report:{day}:{kind}"
+        matching = [
+            row for row in rows
+            if str(row.get("notification_id") or "") == notification_id
+            or str(row.get("run_id") or "") == f"daily_report_run:{day}:{kind}"
+        ]
+        statuses = [str(row.get("delivery_status") or row.get("status") or "") for row in matching]
+        if "sent" in statuses:
+            continue
+        item = next((row for row in outbox_rows if isinstance(row, dict) and str(row.get("id") or "") == notification_id), {})
+        status = str(item.get("status") or (statuses[-1] if statuses else "missing"))
+        if status == "sending":
+            lease_started = _parse_time(item.get("lease_started_at") or item.get("updated_at") or item.get("created_at"))
+            age = (now - lease_started).total_seconds() if lease_started else 999999
+            if age <= 120:
+                continue
+            findings.append({
+                "category": "daily_report_delivery_stuck",
+                "severity": "p1",
+                "scope": f"daily_report:{day}:{kind}",
+                "summary": f"{kind} 日报已被发送执行者接管超过两分钟，尚无终态回执。",
+                "evidence": [_evidence_ref("notification_outbox", notification_id, detail="sending")],
+            })
+            continue
+        findings.append({
+            "category": "daily_report_delivery_missing_terminal",
+            "severity": "p0",
+            "scope": f"daily_report:{day}:{kind}",
+            "summary": f"{kind} 日报超过计划时间10分钟仍没有 sent/failed/result_unknown 终态。",
+            "evidence": [_evidence_ref("daily_report_runs", notification_id, detail=status)],
+        })
+    return findings
+
+
+def _runtime_config_drift_findings(store: TuoguanStore) -> list[dict[str, Any]]:
+    raw_path = str(os.getenv("HERMES_CONFIG_PATH") or "").strip()
+    if not raw_path:
+        if str(os.getenv("HERMES_SUPERVISION_REQUIRE_CONFIG_PATH") or "").strip() not in {"1", "true", "yes", "on"}:
+            return []
+        return [{
+            "category": "runtime_config_drift",
+            "severity": "p1",
+            "scope": "HERMES_CONFIG_PATH",
+            "summary": "运行服务未显式指定唯一 HERMES_CONFIG_PATH。",
+            "evidence": [_evidence_ref("runtime_config", "HERMES_CONFIG_PATH", detail="missing")],
         }]
-    return []
+    path = Path(raw_path)
+    try:
+        data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+    except (OSError, ValueError, yaml.YAMLError):
+        return [{
+            "category": "runtime_config_drift",
+            "severity": "p1",
+            "scope": "runtime_config",
+            "summary": "唯一运行配置不可读取或格式无效。",
+            "evidence": [_evidence_ref("runtime_config", path.name, detail="unreadable")],
+        }]
+    model = data.get("model") if isinstance(data, dict) and isinstance(data.get("model"), dict) else {}
+    endpoint_host = urlparse(str(model.get("base_url") or "")).hostname or ""
+    providers = data.get("providers") if isinstance(data, dict) and isinstance(data.get("providers"), dict) else {}
+    custom = providers.get("custom") if isinstance(providers.get("custom"), dict) else {}
+    models = custom.get("models") if isinstance(custom.get("models"), dict) else {}
+    agnes = models.get("agnes-2.5-flash") if isinstance(models.get("agnes-2.5-flash"), dict) else {}
+    compression = data.get("compression") if isinstance(data, dict) and isinstance(data.get("compression"), dict) else {}
+    issues: list[str] = []
+    if str(model.get("model") or "") != "agnes-2.5-flash":
+        issues.append("model")
+    if endpoint_host != "apihub.agnes-ai.cn":
+        issues.append("endpoint_host")
+    if int(model.get("request_timeout_seconds") or 0) != 9 or int(agnes.get("timeout_seconds") or 0) != 9:
+        issues.append("timeout")
+    if int(compression.get("threshold_tokens") or 0) != 24000:
+        issues.append("context_budget")
+    if data.get("fallback_providers") not in (None, [], ""):
+        issues.append("agnes_only")
+    if not issues:
+        return []
+    return [{
+        "category": "runtime_config_drift",
+        "severity": "p1",
+        "scope": "runtime_config:nonsecret_effective_fields",
+        "summary": "生产有效配置存在非敏感漂移：" + "、".join(issues) + "。",
+        "evidence": [_evidence_ref("runtime_config", path.name, count=len(issues), detail=",".join(issues))],
+    }]
 
 
 def _commitment_findings(store: TuoguanStore, *, now: datetime) -> list[dict[str, Any]]:
@@ -456,7 +618,7 @@ def _verify_cleared_findings(
             patch={
                 "verified_at": _iso(now),
                 "verification": "deterministic_detector_clear",
-                "resolution_note": "当前有效工作方式已不再复现该失败；历史审计记录保留。",
+                "resolution_note": "当前确定性巡检已不再复现该问题；历史审计记录保留。",
             },
         ))
     return verified
@@ -609,7 +771,15 @@ def scan_supervision(
     verified_findings = _verify_cleared_findings(
         store,
         detected=detected,
-        categories={"workstyle_saved_not_applied"},
+        categories={
+            "workstyle_saved_not_applied",
+            "dashboard_projection_stale",
+            "model_consecutive_timeout",
+            "autonomous_consecutive_timeout",
+            "daily_report_delivery_stuck",
+            "daily_report_delivery_missing_terminal",
+            "runtime_config_drift",
+        },
         now=timestamp,
         operation_id=op_id,
     )
