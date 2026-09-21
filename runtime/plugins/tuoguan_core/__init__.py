@@ -248,7 +248,7 @@ def _open_owner_attention_context(store: TuoguanStore, *, identity: Any, current
         return ""
     compact_current = " ".join(str(current_message or "").split())
     lines = [
-        "【示例机构主动提问回复锚点】",
+        "【本机构主动提问回复锚点】",
         "Hermes 之前主动向老板发出过下面的未解决问题。它们是当前轮高优先级材料，不是 Router，系统不替模型判断答案。",
         f"老板本轮原话：{compact_current[:800]}",
         "请 Hermes 在继续旧会话话题之前，先自主判断老板本轮原话是否在回答、追问或修正下面某一条主动问题。",
@@ -386,12 +386,12 @@ def _recent_owner_outbound_context(store: TuoguanStore, *, identity: Any, curren
     candidates.sort(key=lambda pair: pair[0], reverse=True)
     role_label = {"boss": "老板", "manager": "店长", "teacher": "老师"}.get(role, "当前用户")
     lines = [
-        "【示例机构最近主动外发消息锚点】",
+        "【本机构最近主动外发消息锚点】",
         f"下面是小优最近主动发给{role_label}的消息。它们形成短时临时会话线程，只是衔接材料，不是 Router，也不替模型判断用户意图。",
         f"{role_label}本轮原话：{' '.join(str(current_message or '').split())[:800]}",
         "强衔接规则：用户说“它/里面/这个/这些/链接/网址/内容/讲讲/解释/总结/什么意思/你发的/你推的”时，优先把本轮理解为追问最近一条主动外发消息。",
         "除非用户本轮明确点名其他对象（例如明确说看板、某个老师、某项任务编号），不要把模糊代词接到更早的旧会话、旧看板链接、旧偏好或旧工作项。",
-        "如果相关：先围绕对应外发消息解释清楚；如果这是外部学习/市场报告，要解释资料讲了什么、对示例机构有什么用、哪些只是外部资料不能当成机构事实。",
+        "如果相关：先围绕对应外发消息解释清楚；如果这是外部学习/市场报告，要解释资料讲了什么、对本机构有什么用、哪些只是外部资料不能当成机构事实。",
         "如果需要查更完整来源，再由模型自主决定是否调用可信只读工具；不要在没有核验时说已经浏览了网页全文。",
         "如果无关：把这些当背景材料，自然回答当前问题。",
     ]
@@ -486,7 +486,7 @@ def _term_boundary_context(store: TuoguanStore, *, raw_text: str, include_for_at
     start = str(term_state.get("confirmation_window_start") or "2026-08-25")
     end = str(term_state.get("confirmation_window_end") or "2026-09-10")
     return "\n".join([
-        "【示例机构当前学期边界材料】",
+        "【本机构当前学期边界材料】",
         "当前 service_relation_policy=defer_until_new_term。旧学生名单、旧责任老师、旧服务类型只可作为历史分析材料，不是新学期确认事实。",
         f"新学期名单、服务类型、主责老师/责任关系的主动确认窗口：{start} 至 {end}。",
         "除非老板本轮明确要求提前处理新学期服务关系，否则不要在当前回复里追问具体学生的主责老师、服务类型或开学后责任归属。",
@@ -521,7 +521,7 @@ def _public_identity_context(store: TuoguanStore) -> str:
         source_text = str(item.get("source_text") or "机构负责人已确认数字员工对外称呼为小优。")
         confirmed_at = str(item.get("confirmed_at") or item.get("updated_at") or "")
         return "\n".join([
-            "【示例机构数字员工身份称呼】",
+            "【本机构数字员工身份称呼】",
             "已确认运营事实：老板给数字员工起名为“小优”。",
             "对外面向老板、店长、老师自然沟通时，优先自称“小优”；不要再主动自称 Hermes。",
             "Hermes 只作为内部产品/架构名称保留；当用户问技术实现、代码、系统架构时才可说明内部名 Hermes。",
@@ -2114,7 +2114,7 @@ def _on_pre_llm_call(**kwargs: Any) -> dict[str, str] | None:
         return context_result()
     if write_like:
         append_context(
-            "【示例机构当前轮写入规则】如果用户本轮明确要求记录、修改、加扣分、创建、完成、确认、提交或上报，"
+            "【本机构当前轮写入规则】如果用户本轮明确要求记录、修改、加扣分、创建、完成、确认、提交或上报，"
             "必须调用对应 tuoguan_ 可信工具，以本轮工具结果为唯一执行依据。"
             "模型仍负责理解用户、判断是否追问、是否写入或是否先说明边界；系统只负责权限、审计、幂等和写后核验。"
             "如果要声明记录、修改、加扣分、创建、完成、确认、提交、上报、保存偏好、记住工作方式已经真实发生，必须先看到本轮可信工具返回成功。"

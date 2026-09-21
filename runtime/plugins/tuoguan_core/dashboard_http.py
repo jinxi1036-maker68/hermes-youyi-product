@@ -774,7 +774,7 @@ _PARENT_REPORT_HTML = """<!doctype html>
 <body>
   <main class="app">
     <div class="cover">
-      <div class="brand">示例机构托管 · 阶段成长反馈</div>
+      <div class="brand">本机构托管 · 阶段成长反馈</div>
       <div class="seal">老师整理</div>
       <h1 id="title">孩子成长反馈</h1>
       <div class="meta" id="meta">正在读取老师审核后的报告</div>

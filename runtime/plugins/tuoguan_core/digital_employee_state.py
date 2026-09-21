@@ -1553,7 +1553,7 @@ def query_proactive_work_radar(
         add_question(
             ask_role="boss",
             question="请确认小优对外应称呼当前机构的正式名称是什么？",
-            reason="员工手册要求小优先建立机构基本信息，不能套用示例机构或历史样板。",
+            reason="员工手册要求小优先建立机构基本信息，不能套用本机构或历史样板。",
             domain_key="institution_work_map",
             urgency="high",
         )
@@ -3609,17 +3609,9 @@ def _normalize_staff_voice_role(value: Any, *, fallback: str = "") -> str:
 
 
 def _staff_voice_owner_user_id(store: TuoguanStore) -> str:
-    whitelist = store.read_json("wecom_whitelist.json", {})
-    if isinstance(whitelist, dict):
-        for item in whitelist.get("super_users") or []:
-            if str(item or "").strip():
-                return str(item).strip()
-    mapping = store.read_json("teacher_wecom_map.json", {})
-    if isinstance(mapping, dict):
-        for name in ("机构负责人", "老板", "owner_test"):
-            if str(mapping.get(name) or "").strip():
-                return str(mapping[name]).strip()
-    return ""
+    from .employee_identity import owner_user_id
+
+    return owner_user_id(store)
 
 
 def _staff_voice_outbox_statuses(store: TuoguanStore) -> dict[str, dict[str, Any]]:

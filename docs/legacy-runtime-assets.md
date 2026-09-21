@@ -12,8 +12,9 @@ manifest and `deploy/` templates. A later, separately reviewed retirement
 change may delete or archive obsolete assets after direct call-graph and
 deployment review; this baseline does not silently do so.
 
-The inherited `systemd/` units are not carried forward because deployment
-inspection showed that they describe superseded 0.19/0.20 services and legacy
-notification/autonomous paths. Their production-specific paths are unsuitable
-as a reusable source baseline. The clean, version-neutral templates in
-`deploy/systemd/` document the current three-process topology instead.
+The inherited `systemd/` units are retained for historical review even though
+deployment inspection showed that they describe superseded 0.19/0.20 services
+and legacy notification/autonomous paths.  They are not deployable templates.
+The version-neutral templates in `deploy/systemd/` document the current
+three-process topology; only those templates are candidates for a fresh
+deployment.

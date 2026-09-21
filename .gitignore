@@ -54,8 +54,6 @@ cache/
 validation/work/
 validation/workspace/
 validation/home/
-/work/
-/systemd/
 dashboard_cache.json
 dashboard_secret.json
 notification_outbox.json
@@ -105,26 +103,3 @@ SOUL.md
 /hermes-youyi-autonomous-wakeup.timer
 gateway_patch/
 hermes_patch*/
-work/*.py
-work/*.sh
-work/*.txt
-work/*_artifacts/
-work/server_pull/
-work/youyi-digital-employee/
-work/youyi-digital-employee-SKILL.md
-work/*audit*/
-work/*dryrun*
-work/hermes-prod-sync/
-work/rendered_*/
-work/*.pdf
-work/*.png
-work/*.jpg
-work/*.jpeg
-work/*.docx
-work/*.xlsx
-work/*.pptx
-work/data_samples/
-
-# Commercialization generated demo tenant output
-work/commercialization/demo_output/
-work/commercialization/deliverables/rendered_*/

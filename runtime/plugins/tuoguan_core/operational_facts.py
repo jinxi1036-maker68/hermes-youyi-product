@@ -364,7 +364,7 @@ def _render_facts(facts: list[dict[str, Any]], pending: list[dict[str, Any]]) ->
 
 def _render_gap_audit(student_count: int, staff_count: int, business_lines: list[str], gaps: list[dict[str, Any]]) -> str:
     lines = [
-        "我先按“新入职数字员工”的方式盘点示例机构：",
+        "我先按“新入职数字员工”的方式盘点本机构：",
         f"- 已看到员工 {staff_count} 人、正式托管学生约 {student_count} 人。",
         f"- 当前业务线：{', '.join(business_lines)}。",
     ]

@@ -485,7 +485,7 @@ def _review_candidate(store: TuoguanStore, index: int, decision: str, reviewer: 
                 lesson[key] = deepcopy(updated[key])
         lessons.append(lesson)
         _write_lessons(store, lessons)
-        return "已确认这条经验。它已进入示例机构经验库，但不会自动改代码、不会扩白名单。"
+        return "已确认这条经验。它已进入本机构经验库，但不会自动改代码、不会扩白名单。"
     return "已拒绝这条经验，运行时规则不受影响。"
 
 

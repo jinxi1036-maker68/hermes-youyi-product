@@ -57,7 +57,7 @@ def test_owner_attention_context_anchors_current_short_reply(tmp_path):
         current_message="同意，你先整理候选材料",
     )
 
-    assert "【示例机构主动提问回复锚点】" in context
+    assert "【本机构主动提问回复锚点】" in context
     assert "老板本轮原话：同意，你先整理候选材料" in context
     assert "先自主判断老板本轮原话是否在回答" in context
     assert "tuoguan_update_attention_thread" in context
@@ -122,7 +122,7 @@ def test_recent_outbound_context_anchors_owner_what_does_it_mean(tmp_path):
         current_message="什么意思",
     )
 
-    assert "【示例机构最近主动外发消息锚点】" in context
+    assert "【本机构最近主动外发消息锚点】" in context
     assert "老板本轮原话：什么意思" in context
     assert "两个进度卡在同一个点" in context
     assert "不要把模糊代词接到更早的旧会话" in context
@@ -174,7 +174,7 @@ def test_recent_external_learning_anchor_wins_for_it_inside_follow_up(tmp_path):
         current_message="你给讲讲，它里面都具体讲了什么内容",
     )
 
-    assert "【示例机构最近主动外发消息锚点】" in context
+    assert "【本机构最近主动外发消息锚点】" in context
     assert "anchor_priority: latest_active_outbound_thread" in context
     assert "external_learning_report:20260810:weekly_industry" in context
     assert "它/里面/这个/这些/链接/网址/内容/讲讲" in context
@@ -210,7 +210,7 @@ def test_recent_outbound_context_anchors_teacher_task_created_short_question(tmp
         current_message="什么意思",
     )
 
-    assert "【示例机构最近主动外发消息锚点】" in context
+    assert "【本机构最近主动外发消息锚点】" in context
     assert "老师本轮原话：什么意思" in context
     assert "今天放学前反馈学生丙沟通结果" in context
     assert "task_created" in context

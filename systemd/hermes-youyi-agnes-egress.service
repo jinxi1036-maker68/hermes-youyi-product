@@ -1,0 +1,23 @@
+[Unit]
+Description=Hermes Youyi restricted Agnes HTTPS egress
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=hermes-youyi
+Group=hermes-youyi
+WorkingDirectory=/opt/hermes-youyi-current
+ExecStart=/opt/hermes-youyi-current/.venv/bin/python /opt/hermes-youyi-current/scripts/agnes_egress_proxy.py --listen-host 127.0.0.1 --listen-port 18889 --upstream-secret-file /opt/hermes-youyi/config/agnes-upstream-proxy.secret
+Restart=on-failure
+RestartSec=3
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=true
+ProtectSystem=full
+ReadOnlyPaths=/opt/hermes-youyi-current /opt/hermes-youyi/config/agnes-upstream-proxy.secret
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+UMask=0077
+
+[Install]
+WantedBy=multi-user.target

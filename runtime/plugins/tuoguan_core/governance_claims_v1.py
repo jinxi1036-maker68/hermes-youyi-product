@@ -340,7 +340,7 @@ class GovernanceClaimService:
         if kind == "student_service":
             assignee_user_id = str(payload.get("assignee_user_id") or "")
             if not assignee_user_id:
-                # A human may state “午托归示例老师”. Resolve that display name
+                # A human may state “午托归相关老师”. Resolve that display name
                 # only against one already-authoritative active v1 person;
                 # never against a legacy teacher field or model guess.
                 assignee_user_id = str(self.governance.resolve_active_person_by_display_name(

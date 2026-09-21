@@ -601,7 +601,7 @@ def _assert_decision_uses_public_employee_identity(decision: dict[str, Any]) -> 
     provider_terms = ("sapiens", "agnes", "chatgpt", "openai", "claude", "gemini")
     if any(term in lowered for term in provider_terms):
         raise ValueError("invalid_public_employee_identity:model_or_provider_identity")
-    if "数字员工" in summary and not any(term in summary for term in ("示例机构", "托管机构", "托管班")):
+    if "数字员工" in summary and not any(term in summary for term in ("本机构", "托管机构", "托管班")):
         raise ValueError("invalid_public_employee_identity:institution_role_missing")
 
 
@@ -1188,7 +1188,10 @@ def _has_explicit_owner_confirmation_need(text: str) -> bool:
 def _question_targets_owner(item: dict[str, Any]) -> bool:
     target = " ".join(str(item.get(key) or "") for key in ("ask_role", "target_role", "target", "ask_who"))
     text = f"{target} {item.get('reason') or ''} {item.get('question') or item.get('summary') or ''}"
-    return any(term in text for term in ("boss", "owner", "老板", "机构负责人", "金文杰"))
+    # A human name is not a trusted routing or escalation signal.  Formal
+    # Agenda items carry ``target_role``/``ask_role``; legacy free text may only
+    # use the role labels below.
+    return any(term in text for term in ("boss", "owner", "老板", "机构负责人"))
 
 
 def _attention_focus_key_for_question(item: dict[str, Any], decision: dict[str, Any], materials: dict[str, Any]) -> str:
@@ -1823,7 +1826,7 @@ def _request_model_content(cfg: dict[str, Any], messages: list[dict[str, str]], 
 
 _DIAGNOSIS_PROMPT = """你是托管机构数字员工小优，本轮只做事实诊断。
 根据材料判断机构现状、目标进度、真实缺口和需要询问的事实归属人。模型负责判断，材料和工具结果是事实依据。
-employee_summary 必须保持身份为“小优，示例机构托管机构数字员工”；不得自称 Sapiens、Agnes、Hermes 助手、模型厂商或通用 AI 助手。
+employee_summary 必须保持身份为“小优，本机构托管机构数字员工”；不得自称 Sapiens、Agnes、Hermes 助手、模型厂商或通用 AI 助手。
 不得声称已经外发、写入或完成动作；不得联系家长；不得把历史名单当作新学期事实；没有变化是有效结论。
 人员身份只认 trusted_staff_identities：称呼、别名、企业微信显示名和 user_id 不能推导真实全名；没有 full_name_confirmed=true 时必须写“全名未确认”，不得自行补全姓名。历史工作项只作审计，不能覆盖当前可信目录或复活旧卡点。
 只返回一个精简 JSON 对象，字段固定为 employee_summary、institution_understanding、goal_progress_view、observations、institution_fact_gaps、institution_work_discoveries、questions_to_humans。
@@ -2264,9 +2267,9 @@ def _owner_attention_terms(text: str) -> set[str]:
     terms = {
         "一直发",
         "明天早上",
-        "示例老师",
+        "相关老师",
         "沟通结果",
-        "学生丙",
+        "示例学生",
         "家长",
         "续费",
         "安全任务",
@@ -2583,19 +2586,11 @@ def _resolve_staff_user_id(store: TuoguanStore, *, role: str, target_name: str) 
 
 
 def _owner_user_id(store: TuoguanStore) -> str:
-    whitelist = store.read_json("wecom_whitelist.json", {})
-    if isinstance(whitelist, dict):
-        super_users = whitelist.get("super_users")
-        if isinstance(super_users, list):
-            for item in super_users:
-                if str(item or "").strip():
-                    return str(item).strip()
-    mapping = store.read_json("teacher_wecom_map.json", {})
-    if isinstance(mapping, dict):
-        for name in ("机构负责人", "老板", "owner_test"):
-            if str(mapping.get(name) or "").strip():
-                return str(mapping[name]).strip()
-    return ""
+    # Keep autonomous delivery bound to the same trusted identity resolver as
+    # every other runtime path; aliases are presentation data, never authority.
+    from .employee_identity import owner_user_id
+
+    return owner_user_id(store)
 
 
 def _safe_focus(value: Any) -> str:

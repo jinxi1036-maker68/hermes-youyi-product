@@ -1,0 +1,11 @@
+[Unit]
+Description=Run Hermes Youyi daily morning boss report at 08:30
+
+[Timer]
+OnCalendar=*-*-* 08:30:00
+Persistent=true
+Unit=hermes-youyi-daily-morning-report.service
+
+[Install]
+WantedBy=timers.target
+

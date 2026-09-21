@@ -1,0 +1,17 @@
+[Unit]
+Description=Xiaoyou deterministic supervision and safe repair pass
+After=network-online.target
+
+[Service]
+Type=oneshot
+User=hermes-youyi
+WorkingDirectory=/opt/hermes-youyi-current/runtime
+EnvironmentFile=-/opt/hermes-youyi-current/home-proddata/.env
+Environment=HERMES_CONFIG_PATH=/opt/hermes-youyi-current/home-proddata/config.yaml
+Environment=HERMES_TUOGUAN_TOOL_SURFACE=facade
+Environment=HERMES_TUOGUAN_DATA_DIR=/opt/hermes-youyi/data/tuoguan-data
+Environment=HERMES_SUPERVISION_APPLY_REPAIRS=0
+Environment=HERMES_SUPERVISION_COUNCIL_ENABLED=0
+Environment=HERMES_XIAOYOU_AGNES_ONLY=1
+Environment=HERMES_SUPERVISION_REQUIRE_CONFIG_PATH=1
+ExecStart=/opt/hermes-youyi-current/.venv/bin/python -m plugins.tuoguan_core.supervision_runner

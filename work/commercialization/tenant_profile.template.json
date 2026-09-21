@@ -1,0 +1,160 @@
+{
+  "schema_version": "tenant_profile_v1",
+  "tenant": {
+    "tenant_id": "replace_with_short_ascii_id",
+    "institution_name": "",
+    "brand_name": "",
+    "campuses": [
+      {
+        "campus_id": "",
+        "campus_name": "",
+        "address": "",
+        "timezone": "Asia/Shanghai"
+      }
+    ],
+    "business_lines": [
+      "午托",
+      "晚托",
+      "全托"
+    ],
+    "current_top_goals": []
+  },
+  "roles": {
+    "bosses": [
+      {
+        "name": "",
+        "wecom_user_id": "",
+        "permissions": [
+          "global_read",
+          "confirm_goals",
+          "confirm_institution_facts",
+          "approve_high_risk"
+        ]
+      }
+    ],
+    "managers": [],
+    "teachers": []
+  },
+  "wecom": {
+    "corp_id": "",
+    "agent_id": "",
+    "secret_ref": "store_secret_outside_template",
+    "callback_url": "",
+    "token_ref": "store_secret_outside_template",
+    "encoding_aes_key_ref": "store_secret_outside_template",
+    "allowed_user_ids": [],
+    "super_user_ids": [],
+    "role_map": {}
+  },
+  "operation_policy": {
+    "timezone": "Asia/Shanghai",
+    "business_hours": {
+      "weekday": {
+        "start": "08:00",
+        "end": "19:00"
+      },
+      "weekend": {
+        "start": "09:00",
+        "end": "18:00"
+      }
+    },
+    "quiet_hours": {
+      "start": "22:30",
+      "end": "08:00"
+    },
+    "busy_periods": [],
+    "morning_report_time": "08:30",
+    "evening_report_time": "21:00",
+    "autonomous_wakeup_minutes": 30
+  },
+  "service_relations": {
+    "service_types": [
+      "午托",
+      "晚托",
+      "全托",
+      "寒暑假班",
+      "临时托管"
+    ],
+    "new_term_confirmation_window": {
+      "start": "",
+      "end": ""
+    },
+    "students_import_source": "",
+    "responsibility_rules": ""
+  },
+  "parent_communication_policy": {
+    "monthly_real_communication_required": false,
+    "weekly_student_record_required": false,
+    "auto_send_parent_messages": false,
+    "parent_message_requires_human_approval": true
+  },
+  "performance_policy": {
+    "enabled_as_candidate": true,
+    "final_salary_auto_update": false,
+    "default_caps": {
+      "half_class_teacher": 200,
+      "full_class_teacher": 400,
+      "manager": 600
+    },
+    "score_weights": {
+      "timely_response": 30,
+      "completeness": 30,
+      "student_detail_quality": 20,
+      "material_reusability": 15,
+      "consistency": 5
+    },
+    "private_chat_enters_boss_material": false
+  },
+  "proactive_contact_policy": {
+    "boss": {
+      "mode": "direct",
+      "allowed_time_start": "08:00",
+      "allowed_time_end": "19:00",
+      "daily_limit": 2
+    },
+    "manager": {
+      "mode": "candidate",
+      "allowed_time_start": "10:00",
+      "allowed_time_end": "18:30",
+      "daily_limit": 1
+    },
+    "teacher": {
+      "mode": "candidate",
+      "allowed_time_start": "10:30",
+      "allowed_time_end": "18:30",
+      "daily_limit": 1
+    },
+    "parent": {
+      "mode": "disabled"
+    }
+  },
+  "dashboard_policy": {
+    "boss_dashboard_enabled": true,
+    "manager_dashboard_enabled": true,
+    "teacher_dashboard_enabled": true,
+    "teacher_performance_tree_enabled": true,
+    "show_salary_estimate_to_teacher": true
+  },
+  "data_retention_policy": {
+    "wakeup_report_detail_days": 7,
+    "prewrite_backup_detail_days": 7,
+    "archive_after_days": 7,
+    "delete_business_ledger": false
+  },
+  "import_files": {
+    "students": "",
+    "teachers": "",
+    "records": "",
+    "tasks": "",
+    "parent_communications": "",
+    "historical_goals": ""
+  },
+  "opening_questions_for_hermes": [
+    "这家机构当前最重要的经营目标是什么？",
+    "老板最希望 Hermes 先解决什么问题？",
+    "哪些学生和老师关系已经确认？哪些还不确定？",
+    "老师最头疼、最重复、最希望减负的事情是什么？"
+  ],
+  "notes": ""
+}
+

@@ -23,6 +23,7 @@ from .digital_employee_state import (
     query_weekly_record_coverage,
 )
 from .models import UserIdentity
+from .employee_identity import owner_user_id
 from .store import TuoguanStore
 from .tenant_context import current_tenant_id
 from .tools import TOOLS
@@ -218,19 +219,20 @@ def _target_accounts(store: TuoguanStore, overrides: dict[str, str] | None) -> d
     configured = store.read_json("acceptance_v1_config.json", {})
     result = dict(DEFAULT_TARGET_ACCOUNTS)
     wecom = store.read_json("wecom_whitelist.json", {})
-    name_map = store.read_json("teacher_wecom_map.json", {})
-    if isinstance(name_map, dict):
-        result["boss"] = str(name_map.get("机构负责人") or name_map.get("老板") or result["boss"])
-        result["teacher"] = str(name_map.get("示例老师") or result["teacher"])
+    resolved_owner = owner_user_id(store)
+    if resolved_owner:
+        result["boss"] = resolved_owner
     if isinstance(wecom, dict):
         managers = wecom.get("manager_ids")
         if isinstance(managers, list) and managers:
             result["manager"] = str(managers[0])
         elif wecom.get("manager_id"):
             result["manager"] = str(wecom.get("manager_id"))
-        super_users = wecom.get("super_users")
-        if not (isinstance(name_map, dict) and name_map.get("机构负责人")) and isinstance(super_users, list) and super_users:
-            result["boss"] = str(super_users[0])
+        roles = wecom.get("user_roles") if isinstance(wecom.get("user_roles"), dict) else {}
+        allowed = [str(item) for item in wecom.get("allowed_users") or [] if str(item or "").strip()]
+        teacher = next((user_id for user_id in allowed if str(roles.get(user_id) or "") == "teacher"), "")
+        if teacher:
+            result["teacher"] = teacher
     if isinstance(configured, dict) and isinstance(configured.get("target_accounts"), dict):
         result.update({str(k): str(v) for k, v in configured["target_accounts"].items() if str(v or "").strip()})
     if overrides:
@@ -352,9 +354,9 @@ def _data_reason(scenario_id: str, sources: dict[str, Any], term: dict[str, Any]
 def _recommended_scope(ready: list[dict[str, Any]], blocking: list[dict[str, Any]]) -> str:
     ready_ids = {str(item.get("id") or "") for item in ready}
     if blocking:
-        return "先限老板账号和示例老师账号做人工观察验收，暂不扩大到更多老师。"
+        return "先限老板账号和相关老师账号做人工观察验收，暂不扩大到更多老师。"
     if {"boss_goal", "teacher_record", "manager_gap_query"} <= ready_ids:
-        return "可进入老板、店长、示例老师小范围真实渠道灰度，仍需人工观察。"
+        return "可进入老板、店长、相关老师小范围真实渠道灰度，仍需人工观察。"
     return "先做老板账号只读/低风险写入验收，暂不扩大。"
 
 
@@ -406,7 +408,11 @@ def _runtime_capability_cards_ready(config: Any) -> bool:
     runtime = config.get("runtime_foundation")
     if isinstance(runtime, dict) and runtime.get("enabled") is True:
         return True
-    return _user_allowed(config, "boss1") or _user_allowed(config, "owner_test")
+    for key in ("approved_user_ids", "allowed_user_ids", "allowed_users", "super_users", "model_context_allowed_user_ids"):
+        values = config.get(key)
+        if isinstance(values, list) and any(str(value or "").strip() for value in values):
+            return True
+    return False
 
 
 def _yes_no(value: Any) -> str:

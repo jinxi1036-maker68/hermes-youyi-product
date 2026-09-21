@@ -540,7 +540,7 @@ class WecomCallbackAdapter(BasePlatformAdapter):
             # The command itself succeeded, but its model/provider/context
             # cockpit belongs in logs.  This product-facing control response
             # asserts no business result and never enters Reply Recovery.
-            content = "新会话已开始。您的身份、权限和示例机构工作上下文会继续保留。"
+            content = "新会话已开始。您的身份、权限和本机构工作上下文会继续保留。"
         if _is_internal_context_status(content):
             _record_suppressed_context_status()
             logger.info("[WecomCallback] Suppressed internal context lifecycle status")

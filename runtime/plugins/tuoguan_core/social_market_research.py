@@ -247,7 +247,7 @@ def query_social_market_research(
         "rendered_text": (
             f"查到 {len(rows)} 条有来源的社交平台市场观察候选；"
             f"另有 {quarantined_count} 条因来源、时间或证据等级不完整而隔离。"
-            "它们只是外部平台观察，不是示例机构已确认事实。"
+            "它们只是外部平台观察，不是本机构已确认事实。"
         ),
         "render_verified": True,
     }

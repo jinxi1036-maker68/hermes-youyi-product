@@ -107,7 +107,7 @@ def test_social_market_success_persists_source_candidates(tmp_path):
     identity = UserIdentity("wecom", "boss1", "boss1", "机构负责人", "boss", "approved")
     queried = query_social_market_research(store, identity=identity, platform="xiaohongshu")
     assert queried["candidate_count"] == 1
-    assert "不是示例机构已确认事实" in queried["rendered_text"]
+    assert "不是本机构已确认事实" in queried["rendered_text"]
 
 
 def test_social_market_falls_back_to_browser_backend(tmp_path):

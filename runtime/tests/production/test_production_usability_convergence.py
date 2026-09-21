@@ -27,9 +27,9 @@ os.environ.setdefault("XIAOYOU_INSTITUTION_WORKSPACE", str(WORKSPACE))
 os.environ.setdefault("HERMES_TUOGUAN_DATA_DIR", str(WORKSPACE / "data"))
 os.environ.setdefault("HERMES_TENANT_ID", "example_institution")
 
-OWNER_USER_ID = os.environ.get("XIAOYOU_TEST_OWNER_ID", "owner_test")
-OWNER_DISPLAY_NAME = os.environ.get("XIAOYOU_TEST_OWNER_NAME", "机构老板")
-HISTORICAL_TEACHER_ID = os.environ.get("XIAOYOU_TEST_HISTORICAL_TEACHER_ID", "historical_test_teacher")
+OWNER_USER_ID = os.environ.get("XIAOYOU_TEST_OWNER_ID", "owner-test")
+OWNER_DISPLAY_NAME = os.environ.get("XIAOYOU_TEST_OWNER_NAME", "机构负责人")
+HISTORICAL_TEACHER_ID = os.environ.get("XIAOYOU_TEST_HISTORICAL_TEACHER_ID", "teacher-historical")
 HISTORICAL_TEACHER_ALIAS = os.environ.get("XIAOYOU_TEST_HISTORICAL_TEACHER_ALIAS", "历史测试老师")
 UNCLAIMED_TEACHER_ALIAS = os.environ.get("XIAOYOU_TEST_UNCLAIMED_TEACHER_ALIAS", "unclaimed.teacher")
 ACTIVE_TEACHER_NAME = os.environ.get("XIAOYOU_TEST_ACTIVE_TEACHER_NAME", "示例老师")
@@ -65,12 +65,12 @@ check(_staff_role(store, OWNER_USER_ID) == "boss", "proactive policy canonicaliz
 check(_staff_is_active(store, OWNER_USER_ID, "boss"), "active boss passes proactive role and employment recheck")
 
 staff = query_staff_directory(store, query=HISTORICAL_TEACHER_ALIAS, role="teacher", limit=5)
-check(staff.get("result_count") == 0, "unconfirmed Li teacher does not resolve to a formal business identity")
+check(staff.get("result_count") == 0, "unconfirmed historical identity does not resolve to a formal business identity")
 historical = query_staff_directory(store, query=HISTORICAL_TEACHER_ALIAS, role="teacher", include_inactive=True, limit=5)
-check(historical.get("result_count") == 1, "historical Li test mapping remains auditable")
-li = historical["staff"][0]
-check(li.get("user_id") == HISTORICAL_TEACHER_ID and li.get("is_active_staff") is False, "historical test identity remains inactive")
-check(li.get("has_wecom_recipient_binding") is False and li.get("outbound_eligible") is False, "historical test identity is not a formal outbound recipient")
+check(historical.get("result_count") == 1, "historical test mapping remains auditable")
+historical_identity = historical["staff"][0]
+check(historical_identity.get("user_id") == HISTORICAL_TEACHER_ID and historical_identity.get("is_active_staff") is False, "historical test identity remains inactive")
+check(historical_identity.get("has_wecom_recipient_binding") is False and historical_identity.get("outbound_eligible") is False, "historical test identity is not a formal outbound recipient")
 formal = query_staff_directory(store, query=UNCLAIMED_TEACHER_ALIAS, role="teacher", include_inactive=True, limit=5)
 check(formal.get("result_count") == 0, "unclaimed identity is not auto-claimed into the business roster")
 check(not _staff_is_active(store, HISTORICAL_TEACHER_ID, "teacher"), "historical identity cannot pass formal proactive identity recheck")
@@ -92,18 +92,18 @@ unconfirmed_touch = service.submit_relationship_touch_candidate(
     touch_type="owner_progress",
     message="请反馈当前任务进度。",
     reason="验证未确认身份不会被自动绑定或创建外发。",
-    operation_id="production-usability:unconfirmed-li-binding",
+    operation_id="production-usability:unconfirmed-historical-binding",
     work_related=True,
     execute_if_authorized=True,
 )
-check(unconfirmed_touch.get("ok") is False, "unconfirmed Li identity cannot create an outbound candidate")
+check(unconfirmed_touch.get("ok") is False, "unconfirmed historical identity cannot create an outbound candidate")
 check(
     str(unconfirmed_touch.get("error") or "") in {"relationship_touch_target_not_found", "relationship_touch_target_identity_unconfirmed"},
-    "unconfirmed Li identity fails at the trusted identity boundary",
+    "unconfirmed historical identity fails at the trusted identity boundary",
 )
 full = service.query_students(teacher_name=ACTIVE_TEACHER_NAME, query_scope="visible", limit=100)
 data = full.get("data") or {}
-check(full.get("ok") is True and data.get("total_count") == 36, "authoritative Liu teacher total is 36")
+check(full.get("ok") is True and data.get("total_count") == 36, "authoritative teacher total is 36")
 check(data.get("returned_count") == 36 and len(data.get("students") or []) == 36, "Tool returns all 36 requested students")
 check(data.get("has_more") is False and data.get("next_offset") is None, "complete roster reports no missing page")
 

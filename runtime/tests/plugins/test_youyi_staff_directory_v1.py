@@ -26,7 +26,7 @@ def _seed_staff_directory(path: Path) -> None:
                 {"user_id": "ShiLiLi", "name": "示例机构 🍋柠檬老师", "department_names": ["示例机构托管"], "status": 1},
                 {"user_id": "FengJuCai", "name": "示例机构🌈🌈🌈彩虹老师", "department_names": ["示例机构托管"], "status": 1},
                 {"user_id": "CuiXiaoXia", "name": "崔老师", "department_names": ["示例机构托管"], "status": 1},
-                {"user_id": "owner_test", "name": "金文杰", "department_names": ["示例机构托管"], "status": 1},
+                {"user_id": "owner_test", "name": "负责人甲", "department_names": ["示例机构托管"], "status": 1},
             ],
         },
     )

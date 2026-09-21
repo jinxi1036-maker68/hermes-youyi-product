@@ -9,12 +9,12 @@ def _write_json(path: Path, name: str, payload) -> None:
     (path / name).write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
 
 
-def test_current_tenant_id_defaults_to_youyi(monkeypatch):
+def test_current_tenant_id_defaults_to_safe_generic_tenant(monkeypatch):
     from plugins.tuoguan_core.tenant_context import current_tenant_id
 
     monkeypatch.delenv("HERMES_TENANT_ID", raising=False)
 
-    assert current_tenant_id() == "example_institution"
+    assert current_tenant_id() == "default_tenant"
 
 
 def test_current_tenant_id_uses_env(monkeypatch):

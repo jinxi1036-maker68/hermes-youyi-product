@@ -22,6 +22,7 @@ from .operations_focus import active_operations_focus
 from .payroll import build_payroll_snapshot, load_payroll_rules
 from .record_evaluation import evaluate_monthly_record_performance, evaluate_record
 from .store import TuoguanStore
+from .tenant_context import institution_display_names
 from .summer_enrollment import summer_import_dashboard
 from .summer_records import summer_lesson_dashboard
 from .summer_reports import ensure_friday_summer_weekly_feedbacks, summer_report_dashboard
@@ -938,7 +939,7 @@ def _teacher_names(store: TuoguanStore) -> dict[str, str]:
         return {}
     result: dict[str, str] = {}
     score_by_user: dict[str, int] = {}
-    blocked = {"未分配", "示例机构托管", "执行校长"}
+    blocked = {"未分配", "执行校长", *institution_display_names(store)}
 
     def score(name: str) -> int:
         if not name or name in blocked:

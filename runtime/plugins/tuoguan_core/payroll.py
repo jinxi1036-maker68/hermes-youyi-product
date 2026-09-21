@@ -12,6 +12,7 @@ from typing import Any
 
 from .models import UserIdentity
 from .store import TuoguanStore
+from .tenant_context import institution_display_names
 from .tasks import task_is_closed, task_is_open
 
 
@@ -1018,7 +1019,7 @@ def _payroll_people(store: TuoguanStore, rules: dict[str, Any]) -> dict[str, dic
         staff = {}
     people_config = _as_dict(rules.get("people"))
     if people_config:
-        reverse_names = _best_names_by_user(mapping)
+        reverse_names = _best_names_by_user(mapping, blocked_names=set(institution_display_names(store)))
         people: dict[str, dict[str, Any]] = {}
         for uid, configured_raw in people_config.items():
             configured = _as_dict(configured_raw)
@@ -1033,8 +1034,9 @@ def _payroll_people(store: TuoguanStore, rules: dict[str, Any]) -> dict[str, dic
                 "admission_target": configured.get("admission_target"),
             }
         return people
-    best_names = _best_names_by_user(mapping)
-    best_scores = {uid: _name_score(name) for uid, name in best_names.items()}
+    blocked_names = set(institution_display_names(store))
+    best_names = _best_names_by_user(mapping, blocked_names=blocked_names)
+    best_scores = {uid: _name_score(name, blocked_names=blocked_names) for uid, name in best_names.items()}
     people: dict[str, dict[str, Any]] = {}
     for uid, label in best_names.items():
         if best_scores.get(uid, -999) < 0:
@@ -1079,21 +1081,21 @@ def _detail(
     }
 
 
-def _best_names_by_user(mapping: dict[str, Any]) -> dict[str, str]:
+def _best_names_by_user(mapping: dict[str, Any], *, blocked_names: set[str] | None = None) -> dict[str, str]:
     best_names: dict[str, str] = {}
     best_scores: dict[str, int] = {}
     for name, user_id in mapping.items():
         uid = str(user_id).strip()
         label = str(name).strip()
-        item_score = _name_score(label)
+        item_score = _name_score(label, blocked_names=blocked_names)
         if uid and item_score > best_scores.get(uid, -999):
             best_names[uid] = label
             best_scores[uid] = item_score
     return best_names
 
 
-def _name_score(name: str) -> int:
-    blocked = {"未分配", "示例机构托管", "执行校长", "老板"}
+def _name_score(name: str, *, blocked_names: set[str] | None = None) -> int:
+    blocked = {"未分配", "执行校长", "老板", *(blocked_names or set())}
     if not name or name in blocked:
         return -100
     if "?" in name or "\ufffd" in name:

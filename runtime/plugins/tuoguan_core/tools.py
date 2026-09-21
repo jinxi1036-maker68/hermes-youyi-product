@@ -515,7 +515,7 @@ TUOGUAN_QUERY_GOAL_PROGRESS_SCHEMA = _schema(
 
 
 TUOGUAN_RESOLVE_STUDENT_RESPONSIBILITY_SCHEMA = _schema(
-    "只读查询示例机构正式托管学生的责任归属：午托、晚托、全托、主责老师以及缺失字段。用于模型需要判断该问哪位老师、是否应先问店长/老板补责任时；不得用于自动分组或凭空安排。",
+    "只读查询本机构正式托管学生的责任归属：午托、晚托、全托、主责老师以及缺失字段。用于模型需要判断该问哪位老师、是否应先问店长/老板补责任时；不得用于自动分组或凭空安排。",
     _identity_props({
         "student_name": {"type": "string", "description": "学生姓名。"},
         "purpose": {"type": "string", "enum": ["parent_communication", "meal_nap_pickup_safety", "homework_learning_evening"], "default": "parent_communication"},
@@ -907,7 +907,7 @@ TUOGUAN_SUBMIT_GRAY_ROLLOUT_DECISION_SCHEMA = _schema(
             "enum": ["continue_small_gray", "pause", "expand_candidate", "defer_item", "rollback_candidate", "note"],
         },
         "decision_text": {"type": "string", "description": "老板明确拍板内容。"},
-        "scope": {"type": "string", "description": "适用范围，如老板/店长/示例老师、某场景或某校区。"},
+        "scope": {"type": "string", "description": "适用范围，如老板/店长/相关老师、某场景或某校区。"},
         "reason": {"type": "string", "description": "决策原因，可为空。"},
         "source_report_path": {"type": "string", "description": "关联复盘报告路径，可为空。"},
         "source_text": {"type": "string", "description": "老板原话或确认来源。"},
@@ -993,7 +993,7 @@ TUOGUAN_SUBMIT_DUE_WAKEUP_CANDIDATE_SCHEMA = _schema(
 TUOGUAN_GENERATE_AUTONOMOUS_ACCEPTANCE_PACK_SCHEMA = _schema(
     "生成 Hermes 自主工作真实渠道验收包，包含老板/老师测试话术、观察点、禁止自动发生事项和剩余阶段说明。只读参考，不限制模型、不路由、不写业务数据。",
     _identity_props({
-        "include_teacher": {"type": "boolean", "description": "是否包含示例老师账号测试步骤。"},
+        "include_teacher": {"type": "boolean", "description": "是否包含相关老师账号测试步骤。"},
     }),
     ["user_id"],
 )
@@ -1412,9 +1412,9 @@ TUOGUAN_SUBMIT_GOAL_ACTION_SCHEMA = _schema(
 )
 
 TUOGUAN_QUERY_RELATIONSHIP_TOUCH_CANDIDATES_SCHEMA = _schema(
-    "只读查询小优主动找老板/店长/老师的关系触达候选和当前策略。老板问“现在能不能主动找示例老师/准备问谁/为什么没问”时应先用本工具核对候选、白名单和策略状态，不能凭旧认知回答。",
+    "只读查询小优主动找老板/店长/老师的关系触达候选和当前策略。老板问“现在能不能主动找相关老师/准备问谁/为什么没问”时应先用本工具核对候选、白名单和策略状态，不能凭旧认知回答。",
     _identity_props({
-        "target_user_id": {"type": "string", "description": "可选，按目标企业微信 user_id 筛选，如 teacher_test。"},
+        "target_user_id": {"type": "string", "description": "可选，按目标企业微信 user_id 筛选，如 teacher-id。"},
         "target_role": {"type": "string", "enum": ["", "boss", "manager", "teacher"], "default": ""},
         "include_closed": {"type": "boolean", "default": False},
         "limit": {"type": "integer", "default": 30},
@@ -1597,7 +1597,7 @@ TUOGUAN_QUERY_EXTERNAL_LEARNING_BRIEF_SCHEMA = _schema(
 )
 
 TUOGUAN_QUERY_SOCIAL_MARKET_RESEARCH_SCHEMA = _schema(
-    "只读查询小优收集的抖音/小红书本地托管市场观察候选。结果只是外部平台观察，不是示例机构已确认事实；本工具不发布、不评论、不点赞、不关注、不改机构事实。",
+    "只读查询小优收集的抖音/小红书本地托管市场观察候选。结果只是外部平台观察，不是本机构已确认事实；本工具不发布、不评论、不点赞、不关注、不改机构事实。",
     _identity_props({
         "platform": {"type": "string", "enum": ["", "xiaohongshu", "douyin"], "default": ""},
         "status": {"type": "string", "description": "可选：pending_review、source_failed、backend_unavailable。"},
@@ -1633,7 +1633,7 @@ TUOGUAN_REVIEW_PROJECT_OPPORTUNITY_SCHEMA = _schema(
 )
 
 TUOGUAN_SUBMIT_INDUSTRY_LEARNING_CANDIDATE_SCHEMA = _schema(
-    "提交带来源的行业学习候选。老板审核前不会进入正式手册、长期记忆或示例机构机构事实；写入必须提供 operation_id。",
+    "提交带来源的行业学习候选。老板审核前不会进入正式手册、长期记忆或本机构机构事实；写入必须提供 operation_id。",
     _identity_props({
         "topic": {"type": "string", "description": "学习主题。"},
         "summary": {"type": "string", "description": "候选摘要，必须说明来源和不确定项。"},

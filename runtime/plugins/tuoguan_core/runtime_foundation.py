@@ -348,6 +348,7 @@ def _sanitize_external_reply(
     future_execution_verified: bool = False,
     commitment_write_verified: bool = False,
     technical_query: bool = False,
+    protected_owner_names: tuple[str, ...] = (),
 ) -> str:
     value = str(text or "")
     # Direct callers that explicitly supply an outreach state are testing an
@@ -382,9 +383,13 @@ def _sanitize_external_reply(
     if str(actor_role or "") != "boss" and str(actor_name or "").strip():
         # A fresh Hermes session may still receive shared long-term memory.
         # Only repair a direct salutation, never a legitimate reference such
-        # as "机构负责人安排的任务" in the body of a staff reply.
+        # as "老板安排的任务" in the body of a staff reply.  The protected
+        # labels come from the trusted owner directory; source code does not
+        # carry a particular institution's owner name.
+        owner_names = tuple(name for name in protected_owner_names if str(name or "").strip()) or ("老板", "机构负责人")
+        alternation = "|".join(re.escape(str(name)) for name in sorted(owner_names, key=len, reverse=True))
         salutation = re.compile(
-            r"(?m)^(\s*(?:(?:在的|好的|你好|您好|早上好|下午好|晚上好)[，,、\s]*)?)机构负责人(?=[，,。！!：:\s])"
+            rf"(?m)^(\s*(?:(?:在的|好的|你好|您好|早上好|下午好|晚上好)[，,、\s]*)?)(?:{alternation})(?=[，,。！!：:\s])"
         )
         value = salutation.sub(lambda match: f"{match.group(1)}{actor_name}", value)
     if identity_query and (str(actor_name or "").strip() or str(actor_role or "").strip()):
@@ -1251,11 +1256,11 @@ def inject_model_context(*, session_id: str, sender_id: str, user_message: str) 
         points_rule = "本轮只能调用 tuoguan_query_summer_points_ranking，最终逐字使用工具 rendered_text，不得改写排名。"
     autonomous_work_rule = _autonomous_work_context(str(sender_id or ""), str(item.get("actor_role") or item.get("role") or ""))
     foundation_rule = (
-        "【示例机构模型主导原则】由模型理解用户、结合上下文、决定是否追问或使用功能并负责最终回复；"
+        "【本机构模型主导原则】由模型理解用户、结合上下文、决定是否追问或使用功能并负责最终回复；"
         "系统只在实际执行时校验身份、权限和真实结果，不限制模型正常对话、分析和建议。"
         if item.get("model_intent") == "unclassified_message"
         else
-        "【示例机构执行边界】模型仍负责理解、分析、追问和选择下一步；系统不因业务流程偏好限制模型思考。"
+        "【本机构执行边界】模型仍负责理解、分析、追问和选择下一步；系统不因业务流程偏好限制模型思考。"
         "当模型要声明真实业务数据或执行成功时，需要有可信工具结果；不得仅凭聊天历史声称成功。"
         "写操作只有工具返回 ok=true 且 writeback_verified=true 才能回复成功；"
         "任务反馈优先关联最近任务上下文；传给任务工具的 reply 必须保持用户原话，不得补充用户未说的事实；"
@@ -1889,6 +1894,7 @@ def transform_final_response(*, store: TuoguanStore, session_id: str, response_t
     future_execution_verified = False
     commitment_write_verified = False
     technical_query = False
+    protected_owner_names: tuple[str, ...] = ()
     with _LOCK:
         item = _TURN_BY_SESSION.get(str(session_id or "")) or {}
         actor_role = str(item.get("role") or "")
@@ -1914,6 +1920,11 @@ def transform_final_response(*, store: TuoguanStore, session_id: str, response_t
             term in raw
             for term in ("技术细节", "运行时细节", "调试信息", "模型版本", "provider", "context window", "上下文窗口")
         )
+        try:
+            from .employee_identity import owner_display_names
+            protected_owner_names = owner_display_names(store)
+        except Exception:
+            protected_owner_names = ()
         authoritative_reply = _authoritative_task_write_reply(item) or _authoritative_read_reply(item)
     if authoritative_reply:
         response_text = authoritative_reply
@@ -1931,6 +1942,7 @@ def transform_final_response(*, store: TuoguanStore, session_id: str, response_t
         future_execution_verified=future_execution_verified,
         commitment_write_verified=commitment_write_verified,
         technical_query=technical_query,
+        protected_owner_names=protected_owner_names,
     )
 
 

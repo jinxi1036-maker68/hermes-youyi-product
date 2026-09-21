@@ -1,0 +1,16 @@
+[Unit]
+Description=Hermes Youyi 14-day reliability observer
+After=hermes-youyi-019.service
+
+[Service]
+Type=oneshot
+User=hermes-youyi
+Group=hermes-youyi
+Environment=PYTHONPATH=/opt/hermes-youyi-current/runtime
+ExecStart=/opt/hermes-youyi-current/.venv/bin/python /opt/hermes-youyi-current/scripts/xiaoyou_reliability_observer.py --base /opt/hermes-youyi-current --data-dir /opt/hermes-youyi/data/tuoguan-data --state-file /opt/hermes-youyi-current/reports/reliability/observation-state.json --report-file /opt/hermes-youyi-current/reports/reliability/latest-report.json
+
+NoNewPrivileges=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

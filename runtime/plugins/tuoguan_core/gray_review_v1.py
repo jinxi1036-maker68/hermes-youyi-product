@@ -181,7 +181,7 @@ def _recommended_next_step(
     if int(outcome_counts.get("issue") or 0):
         return "先人工复盘问题观察，再决定是否优化手册或工具。"
     if not int(observations.get("observation_count") or 0):
-        return "继续老板、店长、示例老师小范围试用，并开始记录真实观察。"
+        return "继续老板、店长、相关老师小范围试用，并开始记录真实观察。"
     if wakeup.get("risks"):
         return "保持小范围灰度，同时由老板/店长查看巡店风险。"
     return "可继续小范围灰度，暂不自动扩大到更多老师。"

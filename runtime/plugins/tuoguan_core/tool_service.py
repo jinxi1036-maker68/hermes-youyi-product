@@ -61,6 +61,25 @@ from .youyi_batch_capabilities import (
     register_summer_student,
     verify_dashboard_visibility,
 )
+
+
+def _legacy_institution_rollout_target_allowed(store: TuoguanStore, user_id: str) -> bool:
+    """Read the historical rollout sandbox from a server-owned policy.
+
+    This compatibility-only path is not part of the current Work Runtime.  It
+    deliberately fails closed until a deployment explicitly supplies a trusted
+    policy file, rather than embedding real people or anonymous stand-ins in
+    product source.
+    """
+
+    policy = store.read_json("institution_rollout_policy.json", {})
+    values = policy.get("allowed_user_ids") if isinstance(policy, dict) else []
+    if isinstance(values, str):
+        values = [values]
+    if not isinstance(values, (list, tuple, set)):
+        values = []
+    allowed = {str(value or "").strip() for value in values if str(value or "").strip()}
+    return bool(str(user_id or "").strip() and str(user_id).strip() in allowed)
 from .operations_query import query_operations
 from .responsibility_resolver import resolve_student_responsibility
 from .goal_operator import (
@@ -2255,10 +2274,11 @@ class TuoguanToolService:
                 return self._error("implementation_authorization_required", "机构草案必须经过内容确认和单独落实授权后，才能创建执行任务。")
             if artifact_version_id and str(institutional_item.get("current_artifact_version_id") or "") != str(artifact_version_id):
                 return self._error("artifact_version_mismatch", "任务必须关联当前已授权的成果版本。")
-            # This rollout deliberately keeps institutional execution inside the
-            # approved boss/test-teacher sandbox until the owner expands it.
-            if str(assignee_user_id) not in {"owner_test", "teacher_test"}:
-                return self._error("institution_rollout_target_not_authorized", "当前机构制度落实灰度只允许机构负责人和示例老师测试号。")
+            # This historical rollout is intentionally bound to an explicit,
+            # server-owned compatibility policy.  Display names and test-account
+            # placeholders are not delivery or permission authority.
+            if not _legacy_institution_rollout_target_allowed(self.store, str(assignee_user_id)):
+                return self._error("institution_rollout_target_not_authorized", "当前机构制度落实灰度目标未在已确认的兼容策略中。")
             if not assignee_role or assignee_role == "boss":
                 return self._error("institution_task_responsible_role_invalid", "机构落实任务必须由可信目录中的实际执行人承担，不能把老板误写成老师或执行人。")
         if goal_id:

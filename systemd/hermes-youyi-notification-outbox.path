@@ -1,0 +1,9 @@
+[Unit]
+Description=Watch Hermes Youyi notification outbox
+
+[Path]
+PathChanged=/opt/hermes-youyi/data/tuoguan-data/notification_outbox.json
+Unit=hermes-youyi-notification-outbox.service
+
+[Install]
+WantedBy=multi-user.target

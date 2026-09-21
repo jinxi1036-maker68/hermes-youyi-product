@@ -17,12 +17,13 @@ The imported plugin source deliberately excludes Python bytecode and patch
 residue (`*.orig`, `*.rej`). Hermes Core itself is not vendored: this package
 declares a Hermes 0.21 runtime contract instead.
 
-Known tenant-bound literal identifiers from historical source and tests have
-been mechanically replaced with neutral fixture identifiers in this candidate.
-That redaction keeps business logic and fixture structure reviewable while
-preventing a production identity, tenant, or address from being treated as
-source code. The running deployment remains unchanged; only this safe source
-candidate is parameterized.
+The candidate does not carry production people, account identifiers, tenant
+identifiers, or addresses in source.  Where an older source path had embedded
+identity constants, the candidate resolves the same authority from trusted
+server-owned identity facts (or fails closed for a retired compatibility path).
+Neutral fixtures are used only in tests and illustrative material.  The
+production deployment is unchanged; see
+`docs/production-baseline-integrity-audit.md` for the per-category review.
 
 ## Explicitly excluded
 
@@ -32,11 +33,11 @@ environment, live configuration, credential, or personal/business record is
 part of this branch. These exclusions are enforced in `.gitignore`; review
 before adding a new runtime path.
 
-The inherited `work/` dossier is deliberately removed from this candidate. It
-was historical, not part of the current runtime, and mixed dated production
-evidence, tenant-specific examples, generated files, and legacy proposals.
-This branch replaces it with source-level documentation that is safe to review
-and version.
+The inherited `work/` dossier is retained from the historical `main` branch.
+It is not part of the current runtime and may contain dated proposals,
+generated material, or tenant-specific examples.  Retention preserves review
+history; it must not be read as evidence that an item is loaded by the current
+production topology.
 
 ## Skill availability
 

@@ -8,6 +8,7 @@ import re
 import unicodedata
 
 from .store import TuoguanStore
+from .tenant_context import institution_display_names
 
 
 STAFF_DIRECTORY_FACT_TYPES = {
@@ -34,7 +35,7 @@ def query_staff_directory(
 
     entries = _build_entries(store)
     raw_query = str(query or "")
-    query_keys = _name_keys(raw_query)
+    query_keys = _name_keys(raw_query, institution_prefixes=institution_display_names(store))
     requested_role = str(role or "").strip().lower() or _infer_role(raw_query)
     filtered: list[dict[str, Any]] = []
     for entry in entries:
@@ -84,6 +85,7 @@ def _build_entries(store: TuoguanStore) -> list[dict[str, Any]]:
     directory = _dict(store.read_json("wecom_directory_cache.json", {}))
     recipient_bindings = _dict(whitelist.get("wecom_contacts"))
     operational_facts = _staff_facts(store)
+    institution_prefixes = institution_display_names(store)
     directory_members = {
         str(item.get("user_id") or item.get("userid") or ""): item
         for item in directory.get("members") or []
@@ -115,13 +117,17 @@ def _build_entries(store: TuoguanStore) -> list[dict[str, Any]]:
                 str(fact.get("business_name") or fact.get("confirmed_name") or ""),
             ]
         )
-        normalized_aliases = sorted({key for alias in raw_aliases for key in _name_keys(alias)})
+        normalized_aliases = sorted({
+            key
+            for alias in raw_aliases
+            for key in _name_keys(alias, institution_prefixes=institution_prefixes)
+        })
         directory_name = str(member.get("name") or "")
         staff_name = str(profile.get("name") or "")
         business_name = (
             str(fact.get("business_name") or fact.get("confirmed_name") or "").strip()
             or staff_name
-            or _clean_business_name(directory_name)
+            or _clean_business_name(directory_name, institution_prefixes=institution_prefixes)
             or user_id
         )
         in_directory = bool(member)
@@ -160,7 +166,7 @@ def _build_entries(store: TuoguanStore) -> list[dict[str, Any]]:
                 is_whitelisted, has_recipient_binding,
             ),
         }
-        repair = _repair_candidate(entry)
+        repair = _repair_candidate(entry, institution_prefixes=institution_prefixes)
         if repair:
             entry["repair_candidate"] = repair
         entries.append(entry)
@@ -200,13 +206,14 @@ def _match_score(entry: dict[str, Any], query_keys: set[str]) -> int:
     return best
 
 
-def _repair_candidate(entry: dict[str, Any]) -> dict[str, Any] | None:
+def _repair_candidate(entry: dict[str, Any], *, institution_prefixes: tuple[str, ...] = ()) -> dict[str, Any] | None:
     directory_name = str(entry.get("directory_name") or "")
     business_name = str(entry.get("business_name") or "")
     user_id = str(entry.get("user_id") or "")
     if not user_id:
         return None
-    needs_cleanup = bool(directory_name and _clean_business_name(directory_name) and _clean_business_name(directory_name) != directory_name)
+    clean_directory_name = _clean_business_name(directory_name, institution_prefixes=institution_prefixes)
+    needs_cleanup = bool(directory_name and clean_directory_name and clean_directory_name != directory_name)
     missing_staff_name = not str(entry.get("staff_name") or "")
     configured_without_directory = (
         bool(entry.get("is_whitelisted"))
@@ -389,11 +396,11 @@ def _is_directory_browse_query(value: Any) -> bool:
     )
 
 
-def _clean_business_name(value: Any) -> str:
-    keys = _name_keys(value)
+def _clean_business_name(value: Any, *, institution_prefixes: tuple[str, ...] = ()) -> str:
+    keys = _name_keys(value, institution_prefixes=institution_prefixes)
     if not keys:
         return ""
-    prefixed = (_ascii_cjk_key("示例机构"), _ascii_cjk_key("示例机构托管"))
+    prefixed = tuple(_ascii_cjk_key(item) for item in institution_prefixes if _ascii_cjk_key(item))
     unprefixed = [key for key in keys if not key.startswith(prefixed)]
     teacher_names = [key for key in unprefixed if key.endswith(_ascii_cjk_key("老师"))]
     if teacher_names:
@@ -403,7 +410,7 @@ def _clean_business_name(value: Any) -> str:
     return sorted(keys, key=len, reverse=True)[0]
 
 
-def _name_keys(value: Any) -> set[str]:
+def _name_keys(value: Any, *, institution_prefixes: tuple[str, ...] = ()) -> set[str]:
     text = unicodedata.normalize("NFKC", str(value or "")).strip()
     if not text:
         return set()
@@ -415,7 +422,7 @@ def _name_keys(value: Any) -> set[str]:
     if not compact:
         return set()
     variants = {compact}
-    for prefix in ("示例机构托管", "示例机构"):
+    for prefix in institution_prefixes:
         key = _ascii_cjk_key(prefix)
         variants.update(item.removeprefix(key) for item in list(variants) if item.startswith(key))
     for suffix in ("老师", "店长", "校长", "执行校长"):

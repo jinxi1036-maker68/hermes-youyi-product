@@ -639,7 +639,7 @@ def _applies_to_identity(item: dict[str, Any], identity: UserIdentity) -> bool:
 
 def _looks_identity_specific(item: dict[str, Any]) -> bool:
     text = "".join(str(item.get(key) or "") for key in ("summary", "proposed_effect", "next_effect"))
-    return any(term in text for term in ("老板", "机构负责人", "店长", "老师", "teacher_test", "owner_test"))
+    return any(term in text for term in ("老板", "机构负责人", "店长", "老师"))
 
 
 def _applies_to_scope(item: dict[str, Any], scope: str) -> bool:

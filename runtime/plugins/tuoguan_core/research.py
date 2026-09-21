@@ -373,7 +373,7 @@ def collect_industry_learning_candidates(
         if evidence:
             summary = f"本次公网学习找到 {len(evidence)} 条可复核资料，主题覆盖托管续费、招生、家校沟通、老师管理或增项机会。"
             status = "pending_review"
-            applicability = "只作为经营建议材料；老板审核前不得进入正式手册，也不得当成示例机构机构事实。"
+            applicability = "只作为经营建议材料；老板审核前不得进入正式手册，也不得当成本机构机构事实。"
         else:
             errors = result.get("errors") if isinstance(result.get("errors"), list) else []
             summary = "本次公网行业学习没有拿到可靠公开证据；Hermes 不能编造趋势或话术。"

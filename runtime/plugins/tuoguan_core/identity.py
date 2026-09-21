@@ -44,7 +44,7 @@ class IdentityService:
         # The legacy channel-name map is optional in the current Institution
         # Workspace.  A fresh Hermes session must still recover the person's
         # business display name from the trusted personnel record instead of
-        # exposing the transport userid (for example ``owner_test``).  This is
+        # exposing the transport userid (for example ``owner-id``).  This is
         # read-only identity presentation; role/approval remain sourced from
         # the server-owned channel directory below.
         staff = self.store.read_json("staff.json", {})
