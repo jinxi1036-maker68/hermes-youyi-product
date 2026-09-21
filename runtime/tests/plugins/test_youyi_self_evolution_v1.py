@@ -30,8 +30,8 @@ def _seed_store(tmp_path: Path):
             "user_roles": {"boss1": "boss", "teacher1": "teacher", "manager1": "manager"},
         },
     )
-    _write_json(tmp_path, "teacher_wecom_map.json", {"金总": "boss1", "李老师": "teacher1", "店长": "manager1"})
-    _write_json(tmp_path, "staff.json", {"teacher1": {"name": "李老师", "role": "teacher"}, "manager1": {"name": "店长", "role": "manager"}})
+    _write_json(tmp_path, "teacher_wecom_map.json", {"机构负责人": "boss1", "示例老师": "teacher1", "店长": "manager1"})
+    _write_json(tmp_path, "staff.json", {"teacher1": {"name": "示例老师", "role": "teacher"}, "manager1": {"name": "店长", "role": "manager"}})
     _write_json(tmp_path, "students.json", {})
     _write_json(tmp_path, "tasks.json", [])
     _write_json(tmp_path, "notification_outbox.json", [])
@@ -45,7 +45,7 @@ def _boss_identity():
         platform="system",
         platform_user_id="boss1",
         canonical_user_id="boss1",
-        person_name="金总",
+        person_name="机构负责人",
         role="boss",
         approval_state="approved",
     )
@@ -140,7 +140,7 @@ def test_next_day_context_anchors_relative_time_and_expires_old_ready_items(tmp_
                 "record_type": "self_evolution_event",
                 "evolution_event_id": "fresh-relative-time",
                 "semantic_fingerprint": "fresh-relative-time",
-                "tenant_id": "youyi_tuoguan",
+                "tenant_id": "example_institution",
                 "candidate_type": "self_correction",
                     "summary": "今日21:01老板反问后，应主动追问具体缺口。",
                     "evidence": [{"source": "conversation_replay", "text": "老板21:01反问当前事项。"}],
@@ -153,7 +153,7 @@ def test_next_day_context_anchors_relative_time_and_expires_old_ready_items(tmp_
                 "record_type": "self_evolution_event",
                 "evolution_event_id": "old-relative-time",
                 "semantic_fingerprint": "old-relative-time",
-                "tenant_id": "youyi_tuoguan",
+                "tenant_id": "example_institution",
                 "candidate_type": "self_correction",
                     "summary": "今天旧问题仍需继续追问。",
                     "evidence": [{"source": "conversation_replay", "text": "旧问题历史记录。"}],
@@ -163,7 +163,7 @@ def test_next_day_context_anchors_relative_time_and_expires_old_ready_items(tmp_
             },
         ],
     )
-    identity = UserIdentity("system", "boss1", "boss1", "金总", "boss", "approved")
+    identity = UserIdentity("system", "boss1", "boss1", "机构负责人", "boss", "approved")
     brief = build_self_evolution_brief(
         store,
         identity=identity,
@@ -244,7 +244,7 @@ def test_existing_similar_lessons_are_compacted_without_rewriting_history(tmp_pa
                 "record_type": "self_evolution_event",
                 "evolution_event_id": "format-1",
                 "semantic_fingerprint": "format-1",
-                "tenant_id": "youyi_tuoguan",
+                "tenant_id": "example_institution",
                 "candidate_type": "self_correction",
                     "summary": "老板反馈格式问题后，应主动先说明改进，再询问具体建议，避免只答问题。",
                     "evidence": [{"source": "conversation_replay", "text": "老板第一次反馈格式问题。"}],
@@ -257,7 +257,7 @@ def test_existing_similar_lessons_are_compacted_without_rewriting_history(tmp_pa
                 "record_type": "self_evolution_event",
                 "evolution_event_id": "format-2",
                 "semantic_fingerprint": "format-2",
-                "tenant_id": "youyi_tuoguan",
+                "tenant_id": "example_institution",
                 "candidate_type": "self_correction",
                     "summary": "老板反馈格式问题后，8月12日回复时应主动先说明改进，再询问具体建议，避免仅答问题导致追问。",
                     "evidence": [{"source": "conversation_replay", "text": "老板第二次反馈格式问题。"}],
@@ -270,7 +270,7 @@ def test_existing_similar_lessons_are_compacted_without_rewriting_history(tmp_pa
                 "record_type": "self_evolution_event",
                 "evolution_event_id": "format-incomplete",
                 "semantic_fingerprint": "format-incomplete",
-                "tenant_id": "youyi_tuoguan",
+                "tenant_id": "example_institution",
                 "candidate_type": "self_correction",
                     "summary": "老板反馈格式问题后，应先说明改进，避免只说",
                     "evidence": [{"source": "conversation_replay", "text": "老板反馈格式问题。"}],
@@ -304,7 +304,7 @@ def test_long_evolution_context_keeps_a_complete_first_sentence(tmp_path):
             "record_type": "self_evolution_event",
             "evolution_event_id": "long-summary",
             "semantic_fingerprint": "long-summary",
-            "tenant_id": "youyi_tuoguan",
+            "tenant_id": "example_institution",
             "candidate_type": "self_correction",
                 "summary": (
                     "老板反问但未提供信息时，应主动追问具体缺口，而非等待。"
@@ -494,12 +494,12 @@ def test_self_evolution_query_tool_is_registered_and_permission_scoped(tmp_path)
     names = {name for name, _schema, _handler in TOOLS}
     assert "tuoguan_query_self_evolution_ledger" in names
 
-    boss = TuoguanToolService(store, platform="wecom_callback", user_id="boss1", user_name="金总")
+    boss = TuoguanToolService(store, platform="wecom_callback", user_id="boss1", user_name="机构负责人")
     result = boss.query_self_evolution_ledger(limit=10)
     assert result["ok"] is True
     assert result["data"]["event_count"] == 1
 
-    teacher = TuoguanToolService(store, platform="wecom_callback", user_id="teacher1", user_name="李老师")
+    teacher = TuoguanToolService(store, platform="wecom_callback", user_id="teacher1", user_name="示例老师")
     denied = teacher.query_self_evolution_ledger(limit=10)
     assert denied["ok"] is False
     assert denied["error"] == "permission_denied"
@@ -555,7 +555,7 @@ def test_unscoped_person_specific_evolution_is_quarantined_from_every_identity(t
         "record_type": "self_evolution_event",
         "evolution_event_id": "legacy-unscoped-boss-style",
         "semantic_fingerprint": "legacy-unscoped-boss-style",
-        "tenant_id": "youyi_tuoguan",
+        "tenant_id": "example_institution",
         "candidate_type": "self_correction",
         "summary": "老板日报必须先说结论。",
         "evidence": [{"source": "conversation_replay", "text": "老板要求日报简短。"}],
@@ -564,7 +564,7 @@ def test_unscoped_person_specific_evolution_is_quarantined_from_every_identity(t
         "created_at": datetime.now().astimezone().isoformat(timespec="seconds"),
     }])
     boss = _boss_identity()
-    teacher = UserIdentity("wecom_callback", "teacher1", "teacher1", "李老师", "teacher", "approved")
+    teacher = UserIdentity("wecom_callback", "teacher1", "teacher1", "示例老师", "teacher", "approved")
 
     assert build_self_evolution_brief(store, identity=boss)["next_day_context"] == []
     assert build_self_evolution_brief(store, identity=teacher)["next_day_context"] == []

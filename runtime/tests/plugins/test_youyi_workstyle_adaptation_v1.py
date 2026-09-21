@@ -16,7 +16,7 @@ def _identity(role: str = "boss"):
         platform="wecom",
         platform_user_id=f"{role}1",
         canonical_user_id=f"{role}1",
-        person_name={"boss": "金总", "teacher": "李老师", "manager": "店长"}.get(role, role),
+        person_name={"boss": "机构负责人", "teacher": "示例老师", "manager": "店长"}.get(role, role),
         role=role,
         approval_state="approved",
     )
@@ -138,9 +138,9 @@ def test_institution_workstyle_scope_repair_preserves_history_and_repairs_only_s
         store.append_jsonl_verified(WORKSTYLE_EVENTS_FILE, {
             "record_type": "person_workstyle_preference",
             "preference_id": SOURCE_PREFERENCE_ID,
-            "tenant_id": "youyi_tuoguan",
+            "tenant_id": "example_institution",
             "target_user_id": "boss1",
-            "target_name": "金总",
+            "target_name": "机构负责人",
             "target_role": "boss",
             "preference_type": "other_low_risk",
             "dimension_key": "interaction_pacing",

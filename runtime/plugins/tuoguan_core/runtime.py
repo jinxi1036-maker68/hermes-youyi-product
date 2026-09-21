@@ -315,12 +315,12 @@ def desired_cron_jobs() -> list[dict[str, Any]]:
 
 REMINDERS = {
     "summer-opening": (
-        "JinWenJie",
+        "owner_test",
         "【暑假班开班提醒】\n今天是暑假班开班日，可以开始生成诊断卷了。\n"
         "请回复：生成诊断卷，一年级X个、三年级X个、四年级X个。"
     ),
     "summer-closing": (
-        "JinWenJie",
+        "owner_test",
         "【暑假班结业提醒】\n今天是暑假班最后一天，可以生成结业进步单了。\n"
         "请回复“结业了”，Hermes将根据本地学生记录逐一处理。"
     ),

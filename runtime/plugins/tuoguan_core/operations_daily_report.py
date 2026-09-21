@@ -60,7 +60,7 @@ def generate_operations_daily_report(
 
     value = lambda item, unit="": f"{item}{unit}" if item is not None else "unavailable"
     lines = [
-        f"优益托管经营日报｜{datetime.now().astimezone().date().isoformat()}",
+        f"示例机构托管经营日报｜{datetime.now().astimezone().date().isoformat()}",
         f"今日学生记录：{value(record_count, '条')}，有记录学生：{value(recorded_students, '人')}，记录老师：{value(teacher_count, '人')}",
         f"当前待办任务：{value(open_tasks, '条')}，S级安全任务：{value(safety_tasks, '条')}，其中未闭环：{value(open_safety_tasks, '条')}",
         f"有效暑假班学生：{value(summer_students, '人')}",

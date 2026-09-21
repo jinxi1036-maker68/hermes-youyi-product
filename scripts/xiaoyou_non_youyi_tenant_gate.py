@@ -16,7 +16,7 @@ from typing import Any
 ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_PROFILE = ROOT / "work/commercialization/demo_tenant_profile.json"
 FORBIDDEN_MARKERS = (
-    "youyi_tuoguan", "JinWenJie", "CeShi", "金总", "李老师", "优益",
+    "example_institution", "owner_test", "teacher_test", "机构负责人", "示例老师", "示例机构",
     "/opt/hermes-youyi/data/tuoguan-data",
 )
 

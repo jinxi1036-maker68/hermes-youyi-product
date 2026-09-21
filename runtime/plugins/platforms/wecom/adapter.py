@@ -72,6 +72,7 @@ from utils import env_float
 
 from agent.secret_scope import UnscopedSecretError as _UnscopedSecretError
 from agent.secret_scope import get_secret as _scoped_get_secret
+from plugins.platforms.http_policy import create_safe_async_client, is_safe_platform_url, platform_httpx_limits
 
 
 def _get_scoped_secret(name, default=None):
@@ -241,15 +242,10 @@ class WeComAdapter(BasePlatformAdapter):
             return False
 
         try:
-            # Tighter keepalive so idle CLOSE_WAIT drains promptly (#18451).
-            from gateway.platforms._http_client_limits import platform_httpx_limits
-            from gateway.platforms.base import _ssrf_redirect_guard
-            from tools.url_safety import create_ssrf_safe_async_client
-
-            self._http_client = create_ssrf_safe_async_client(
+            # XiaoYou-owned egress policy, not a private Hermes helper.
+            self._http_client = create_safe_async_client(
                 timeout=30.0,
                 follow_redirects=True,
-                event_hooks={"response": [_ssrf_redirect_guard]},
                 limits=platform_httpx_limits(),
             )
             await self._open_connection()
@@ -1125,19 +1121,15 @@ class WeComAdapter(BasePlatformAdapter):
         url: str,
         max_bytes: int,
     ) -> Tuple[bytes, Dict[str, str]]:
-        from gateway.platforms.base import _ssrf_redirect_guard
-        from tools.url_safety import create_ssrf_safe_async_client, is_safe_url
-
-        if not is_safe_url(url):
+        if not is_safe_platform_url(url):
             raise ValueError(f"Blocked unsafe URL (SSRF protection): {url[:80]}")
 
         if not HTTPX_AVAILABLE:
             raise RuntimeError("httpx is required for WeCom media download")
 
-        client = self._http_client or create_ssrf_safe_async_client(
+        client = self._http_client or create_safe_async_client(
             timeout=30.0,
             follow_redirects=True,
-            event_hooks={"response": [_ssrf_redirect_guard]},
         )
         created_client = client is not self._http_client
         try:

@@ -24,6 +24,7 @@ from .tenant_context import current_tenant_id
 
 SELF_EVOLUTION_EVENTS_FILE = "self_evolution_events.jsonl"
 WORKSTYLE_EVENTS_FILE = "person_workstyle_events.jsonl"
+SELF_EVOLUTION_APPLICATION_RECORD_TYPE = "self_evolution_application"
 
 EVOLUTION_CANDIDATE_TYPES = {
     "person_preference_candidate",
@@ -546,6 +547,36 @@ def conversation_evolution_context_for_user(
     limit: int = 5,
     now: datetime | None = None,
 ) -> str:
+    """Render the model context without turning it into an action plan.
+
+    Callers that need to prove a later application must use
+    :func:`conversation_evolution_context_bundle_for_user` and retain the
+    selected IDs.  A source label alone is not evidence that a particular
+    lesson reached the model.
+    """
+
+    return str(conversation_evolution_context_bundle_for_user(
+        store,
+        identity=identity,
+        limit=limit,
+        now=now,
+    ).get("text") or "")
+
+
+def conversation_evolution_context_bundle_for_user(
+    store: TuoguanStore,
+    *,
+    identity: UserIdentity,
+    limit: int = 5,
+    now: datetime | None = None,
+) -> dict[str, Any]:
+    """Return the rendered experience context and its selected ledger IDs.
+
+    This remains experience material only.  The IDs are correlation metadata
+    for the runtime trace and application ledger; they never select a tool or
+    dictate a business action.
+    """
+
     brief = build_self_evolution_brief(
         store,
         identity=identity,
@@ -564,7 +595,16 @@ def conversation_evolution_context_for_user(
     if identity.role == "boss" and int(health.get("open_review_count") or 0) > 0:
         lines.append(f"仍有 {health.get('open_review_count')} 条中高风险进化候选等待人工确认，不能擅自生效。")
     lines.append("如果本轮发现低风险工作方式反馈，可调用偏好工具保存；未写后反查成功前，不得说已保存或以后按这个来。")
-    return "\n".join(lines)
+    selected_ids = [
+        str(item or "").strip()
+        for item in (brief.get("next_day_application_ids") or [])
+        if str(item or "").strip()
+    ][:max(1, min(int(limit or 5), 12))]
+    return {
+        "text": "\n".join(lines),
+        "application_ids": selected_ids,
+        "selected_count": len(selected_ids),
+    }
 
 
 def _filtered_events(store: TuoguanStore, *, candidate_type: str = "", status: str = "") -> list[dict[str, Any]]:
@@ -599,7 +639,7 @@ def _applies_to_identity(item: dict[str, Any], identity: UserIdentity) -> bool:
 
 def _looks_identity_specific(item: dict[str, Any]) -> bool:
     text = "".join(str(item.get(key) or "") for key in ("summary", "proposed_effect", "next_effect"))
-    return any(term in text for term in ("老板", "金总", "店长", "老师", "CeShi", "JinWenJie"))
+    return any(term in text for term in ("老板", "机构负责人", "店长", "老师", "teacher_test", "owner_test"))
 
 
 def _applies_to_scope(item: dict[str, Any], scope: str) -> bool:
@@ -619,50 +659,103 @@ def record_self_evolution_application(
     tool_write_verified: bool = False,
     scope: str = "direct_reply",
     workstyle_adaptation: dict[str, Any] | None = None,
+    loaded_event_ids: list[str] | tuple[str, ...] | None = None,
+    trace_id: str = "",
     limit: int = 3,
 ) -> dict[str, Any]:
-    """Record that ready experience was actually carried into a real reply."""
+    """Record only experience that was evidenced as loaded into this turn.
 
-    reference = datetime.now().astimezone()
+    Older code re-selected every currently-ready lesson after a reply, which
+    could make a ledger say "applied" without proving that the same lesson was
+    present in the model context.  ``loaded_event_ids`` is deliberately
+    required: absence means an honest no-op, never a guessed application.
+    """
+
+    selected_ids = {
+        str(item or "").strip()
+        for item in (loaded_event_ids or [])
+        if str(item or "").strip()
+    }
+    if not selected_ids:
+        return {
+            "ok": True,
+            "applied_count": 0,
+            "verified_count": 0,
+            "failed_count": 0,
+            "verification_pending_count": 0,
+            "state_changed": False,
+            "writeback_verified": False,
+            "skipped": True,
+            "reason": "context_selection_evidence_required",
+        }
     candidates = [
         item for item in _filtered_events(store)
         if str(item.get("risk_level") or "") == "low"
-        and str(item.get("status") or "") == "ready_for_application"
-        and _is_next_context_candidate(item, now=reference)
+        and str(item.get("status") or "") in {"ready_for_application", "needs_retest"}
+        # Eligibility (including freshness) was established when this exact
+        # id was selected into the model/report context.  Re-evaluating its
+        # timestamp at reply completion can lose a real application merely
+        # because the turn or delivery crossed a time boundary.  The id is
+        # not caller-supplied: runtime code retains it in active trace memory
+        # or derives it from the just-rendered report.
+        and evolution_evidence_is_usable(item.get("evidence"))
         and _applies_to_identity(item, identity)
         and _applies_to_scope(item, scope)
+        and str(item.get("evolution_event_id") or "") in selected_ids
     ]
     candidates, _ = _dedupe_application_events(candidates)
     candidates = candidates[-max(1, min(int(limit or 3), 3)):]
     applied: list[dict[str, Any]] = []
     verified: list[dict[str, Any]] = []
     failed: list[dict[str, Any]] = []
+    application_records: list[dict[str, Any]] = []
     for candidate in candidates:
+        applied_at = now_iso()
+        application_id = f"evolution_application_{uuid.uuid4().hex[:12]}"
+        same_turn_observation = _same_turn_application_observation(
+            candidate,
+            workstyle_adaptation=workstyle_adaptation or {},
+        )
         row = deepcopy(candidate)
         row["status"] = "applied"
-        row["updated_at"] = now_iso()
+        row["updated_at"] = applied_at
         row["application_evidence"] = {
+            "application_id": application_id,
             "source_message_id": str(source_message_id or ""),
             "target_user_id": identity.canonical_user_id,
             "target_role": identity.role,
             "reply_excerpt": _limit_text(final_reply, 300),
             "tool_write_verified": bool(tool_write_verified),
             "scope": str(scope or "direct_reply"),
+            "context_selection_evidenced": True,
+            "applied_at": applied_at,
         }
         _append_jsonl(store, SELF_EVOLUTION_EVENTS_FILE, row)
         applied.append(row)
-        verification = _automatic_application_verification(
-            candidate,
-            workstyle_adaptation=workstyle_adaptation or {},
-        )
-        if verification is not None:
-            checked = deepcopy(row)
-            checked["status"] = "verified" if verification[0] else "failed"
-            checked["updated_at"] = now_iso()
-            checked["verification_evidence"] = verification[1]
-            checked["verification_mode"] = "deterministic_post_reply"
-            _append_jsonl(store, SELF_EVOLUTION_EVENTS_FILE, checked)
-            (verified if verification[0] else failed).append(checked)
+        application_record = {
+            "record_type": SELF_EVOLUTION_APPLICATION_RECORD_TYPE,
+            "application_id": application_id,
+            "tenant_id": current_tenant_id(),
+            "evolution_event_id": str(candidate.get("evolution_event_id") or ""),
+            "semantic_fingerprint": str(candidate.get("semantic_fingerprint") or ""),
+            "source_message_id": str(source_message_id or ""),
+            "trace_id_hash": hashlib.sha256(str(trace_id or "").encode("utf-8")).hexdigest()[:20] if trace_id else "",
+            "target_user_id": identity.canonical_user_id,
+            "target_role": identity.role,
+            "scope": str(scope or "direct_reply"),
+            "context_selection_evidenced": True,
+            "applied_at": applied_at,
+            "outcome": "pending_evidence",
+            "writeback_verified": True,
+        }
+        if same_turn_observation:
+            # A compliant reply or a Tool receipt in the application turn is
+            # useful evidence, but it is not an effect evaluation.  In
+            # particular, it cannot prove that loading the lesson changed the
+            # behavior or improved the later business result.
+            application_record["same_turn_observation"] = same_turn_observation
+        _append_jsonl(store, SELF_EVOLUTION_EVENTS_FILE, application_record)
+        application_records.append(application_record)
     return {
         "ok": True,
         "applied_count": len(applied),
@@ -670,17 +763,18 @@ def record_self_evolution_application(
         "verified_count": len(verified),
         "failed_count": len(failed),
         "verification_pending_count": len(applied) - len(verified) - len(failed),
+        "application_record_ids": [str(item.get("application_id") or "") for item in application_records],
         "state_changed": bool(applied),
         "writeback_verified": bool(applied),
     }
 
 
-def _automatic_application_verification(
+def _same_turn_application_observation(
     candidate: dict[str, Any],
     *,
     workstyle_adaptation: dict[str, Any],
-) -> tuple[bool, str] | None:
-    """Verify only outcomes for which the runtime has deterministic evidence."""
+) -> dict[str, Any]:
+    """Keep same-turn facts without promoting them to evolution success."""
 
     summary = "".join(
         str(candidate.get(key) or "")
@@ -691,7 +785,7 @@ def _automatic_application_verification(
         "先说结论", "格式", "语气", "提醒时间", "回复长度", WORKSTYLE_EVENTS_FILE,
     )
     if not any(term in summary for term in workstyle_terms):
-        return None
+        return {}
     application_result = workstyle_adaptation.get("application_result")
     application = (
         application_result.get("application")
@@ -700,23 +794,36 @@ def _automatic_application_verification(
     )
     compliance = application.get("compliance") if isinstance(application.get("compliance"), dict) else None
     if compliance is None:
-        return None
-    if workstyle_adaptation.get("unverified_commitment") is True:
-        return False, "本轮仍出现没有写后反查的保存承诺。"
-    if compliance.get("ok") is True:
-        return True, "工作方式应用记录已写后反查，且本轮输出约束检查通过。"
-    failures = ",".join(str(item) for item in compliance.get("failures") or [])
-    return False, _limit_text(f"本轮工作方式输出约束检查失败：{failures or 'unknown'}", 700)
+        return {}
+    return {
+        "source": "workstyle_application_observer",
+        "compliance_ok": bool(compliance.get("ok")),
+        "failures": [_limit_text(item, 120) for item in (compliance.get("failures") or [])[:8]],
+        "unverified_commitment": bool(workstyle_adaptation.get("unverified_commitment")),
+        "effect_verification": False,
+    }
 
 
 def verify_self_evolution_application(
     store: TuoguanStore,
     *,
     evolution_event_id: str,
+    application_id: str = "",
     succeeded: bool,
-    evidence: str,
+    evidence: str = "",
+    behavior_evidence: dict[str, Any] | None = None,
+    result_evidence: dict[str, Any] | None = None,
+    baseline_evidence: dict[str, Any] | None = None,
+    effect_evidence: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    """Close one applied experience only when a later check has real evidence."""
+    """Evaluate an application without treating state fields as proof.
+
+    ``verified`` requires an immutable application record, exact context
+    selection, observable behavior, a separately verified result, a real
+    baseline problem, and a measured improvement.  A successful-looking
+    reply, model self-assessment, or an ``applied`` flag alone becomes
+    ``needs_retest`` rather than evolution success.
+    """
 
     target = next(
         (item for item in reversed(_filtered_events(store)) if str(item.get("evolution_event_id") or "") == str(evolution_event_id or "")),
@@ -724,12 +831,227 @@ def verify_self_evolution_application(
     )
     if target is None:
         return {"ok": False, "error": "evolution_event_not_found", "writeback_verified": False}
+    selected_application = next(
+        (
+            item for item in reversed(_read_jsonl(store, SELF_EVOLUTION_EVENTS_FILE))
+            if str(item.get("record_type") or "") == SELF_EVOLUTION_APPLICATION_RECORD_TYPE
+            and str(item.get("evolution_event_id") or "") == str(evolution_event_id or "")
+            and str(item.get("application_id") or "") == str(application_id or "")
+            and not item.get("verification_event")
+        ),
+        {},
+    )
+    behavior = behavior_evidence if isinstance(behavior_evidence, dict) else {}
+    result = result_evidence if isinstance(result_evidence, dict) else {}
+    baseline = baseline_evidence if isinstance(baseline_evidence, dict) else {}
+    effect = effect_evidence if isinstance(effect_evidence, dict) else {}
+    gaps: list[str] = []
+    if not application_id or not selected_application:
+        gaps.append("immutable_application_record_required")
+    elif selected_application.get("context_selection_evidenced") is not True:
+        gaps.append("exact_context_selection_required")
+    application_trace_hash = str(selected_application.get("trace_id_hash") or "")
+    if not str(behavior.get("source") or "").strip():
+        gaps.append("behavior_source_required")
+    if behavior.get("behavior_changed") is not True:
+        gaps.append("observable_behavior_change_required")
+    if not str(behavior.get("expected_behavior") or "").strip() or not str(behavior.get("observed_behavior") or "").strip():
+        gaps.append("expected_and_observed_behavior_required")
+    if application_trace_hash and str(behavior.get("trace_id_hash") or "") != application_trace_hash:
+        gaps.append("application_trace_mismatch")
+    if not str(baseline.get("source") or "").strip() or baseline.get("problem_observed") is not True:
+        gaps.append("real_baseline_problem_required")
+    if not str(baseline.get("reference_id_hash") or "").strip():
+        gaps.append("baseline_reference_required")
+    if not str(result.get("source") or "").strip() or result.get("verified") is not True:
+        gaps.append("verified_result_required")
+    if not str(result.get("result_id_hash") or "").strip() or not str(result.get("outcome") or "").strip():
+        gaps.append("traceable_result_required")
+    if not str(effect.get("metric") or "").strip():
+        gaps.append("effect_metric_required")
+    if effect.get("improved") is not True:
+        gaps.append("measured_improvement_required")
+
+    if not succeeded and result.get("verified") is True and selected_application:
+        outcome = "failed"
+    elif succeeded and not gaps:
+        outcome = "verified"
+    else:
+        outcome = "needs_retest"
+
+    checked_at = now_iso()
     row = deepcopy(target)
-    row["status"] = "verified" if succeeded else "failed"
-    row["updated_at"] = now_iso()
+    row["status"] = outcome
+    row["updated_at"] = checked_at
     row["verification_evidence"] = _limit_text(evidence, 700)
+    row["verification_evidence_gaps"] = gaps
+    row["last_application_id"] = str(application_id or "")
     _append_jsonl(store, SELF_EVOLUTION_EVENTS_FILE, row)
-    return {"ok": True, "self_evolution_event": row, "writeback_verified": True}
+    verification_row = {
+        "record_type": SELF_EVOLUTION_APPLICATION_RECORD_TYPE,
+        "application_id": str(application_id or ""),
+        "tenant_id": current_tenant_id(),
+        "evolution_event_id": str(evolution_event_id or ""),
+        "verification_event": True,
+        "outcome": outcome,
+        "verification_mode": "measured_effect_evidence_v2",
+        "verification_evidence": _limit_text(evidence, 700),
+        "verification_evidence_gaps": gaps,
+        "behavior_evidence": _safe_value(behavior),
+        "result_evidence": _safe_value(result),
+        "baseline_evidence": _safe_value(baseline),
+        "effect_evidence": _safe_value(effect),
+        "verified_at": checked_at if outcome == "verified" else "",
+        "evaluated_at": checked_at,
+        "writeback_verified": True,
+    }
+    _append_jsonl(store, SELF_EVOLUTION_EVENTS_FILE, verification_row)
+    return {
+        "ok": True,
+        "verified": outcome == "verified",
+        "outcome": outcome,
+        "evidence_gaps": gaps,
+        "self_evolution_event": row,
+        "verification_event": verification_row,
+        "writeback_verified": True,
+    }
+
+
+def schedule_self_evolution_retest(
+    store: TuoguanStore,
+    *,
+    identity: UserIdentity,
+    evolution_event_id: str,
+    reason: str,
+    evidence: list[dict[str, Any]],
+    operation_id: str,
+) -> dict[str, Any]:
+    """Schedule a controlled low-risk retest without pretending it passed.
+
+    This is an explicit audit/review action.  It never creates a business
+    result and refuses medium/high-risk lessons, so policy, pay, permissions,
+    parent outreach, and similar changes cannot be activated through retest.
+    """
+
+    if identity.role not in {"boss", "manager"} and identity.platform != "system":
+        return {"ok": False, "error": "permission_denied", "writeback_verified": False}
+    target = next(
+        (item for item in reversed(_filtered_events(store)) if str(item.get("evolution_event_id") or "") == str(evolution_event_id or "")),
+        None,
+    )
+    if target is None:
+        return {"ok": False, "error": "evolution_event_not_found", "writeback_verified": False}
+    if str(target.get("risk_level") or "") != "low":
+        return {"ok": False, "error": "low_risk_retest_only", "writeback_verified": False}
+    if str(target.get("status") or "") not in {"failed", "needs_retest"}:
+        return {"ok": False, "error": "retest_requires_failed_or_needs_retest", "writeback_verified": False}
+    clean_evidence = _list_any(evidence, 8)
+    if not _limit_text(reason, 700) or not evolution_evidence_is_usable(clean_evidence):
+        return {"ok": False, "error": "retest_evidence_required", "writeback_verified": False}
+
+    scheduled_at = now_iso()
+    row = deepcopy(target)
+    row["status"] = "needs_retest"
+    row["updated_at"] = scheduled_at
+    row["retest_schedule"] = {
+        "operation_id": str(operation_id or ""),
+        "reason": _limit_text(reason, 700),
+        "evidence": clean_evidence,
+        "scheduled_by_user_id": identity.canonical_user_id,
+        "scheduled_by_role": identity.role,
+        "scheduled_at": scheduled_at,
+    }
+    _append_jsonl(store, SELF_EVOLUTION_EVENTS_FILE, row)
+    schedule_row = {
+        "record_type": "self_evolution_retest_schedule",
+        "tenant_id": current_tenant_id(),
+        "evolution_event_id": str(evolution_event_id or ""),
+        "operation_id": str(operation_id or ""),
+        "reason": _limit_text(reason, 700),
+        "evidence": clean_evidence,
+        "scheduled_by_user_id": identity.canonical_user_id,
+        "scheduled_by_role": identity.role,
+        "scheduled_at": scheduled_at,
+        "writeback_verified": True,
+    }
+    _append_jsonl(store, SELF_EVOLUTION_EVENTS_FILE, schedule_row)
+    return {
+        "ok": True,
+        "outcome": "needs_retest",
+        "self_evolution_event": row,
+        "schedule_event": schedule_row,
+        "writeback_verified": True,
+    }
+
+
+def revalidate_superseded_self_evolution(
+    store: TuoguanStore,
+    *,
+    identity: UserIdentity,
+    evolution_event_id: str,
+    reason: str,
+    evidence: list[dict[str, Any]],
+    operation_id: str,
+) -> dict[str, Any]:
+    """Re-open one quarantined low-risk lesson using new traceable evidence.
+
+    Legacy prose evidence remains quarantined.  Revalidation replaces the
+    active evidence with current structured references and can only schedule a
+    retest; it can never mark the lesson applied or verified.
+    """
+
+    if identity.role not in {"boss", "manager"} and identity.platform != "system":
+        return {"ok": False, "error": "permission_denied", "writeback_verified": False}
+    target = next(
+        (item for item in reversed(_filtered_events(store)) if str(item.get("evolution_event_id") or "") == str(evolution_event_id or "")),
+        None,
+    )
+    if target is None:
+        return {"ok": False, "error": "evolution_event_not_found", "writeback_verified": False}
+    if str(target.get("risk_level") or "") != "low":
+        return {"ok": False, "error": "low_risk_revalidation_only", "writeback_verified": False}
+    if str(target.get("status") or "") != "superseded":
+        return {"ok": False, "error": "revalidation_requires_superseded", "writeback_verified": False}
+    clean_evidence = _list_any(evidence, 8)
+    if not _limit_text(reason, 700) or not evolution_evidence_is_usable(clean_evidence):
+        return {"ok": False, "error": "revalidation_evidence_required", "writeback_verified": False}
+
+    revalidated_at = now_iso()
+    row = deepcopy(target)
+    row["status"] = "needs_retest"
+    row["updated_at"] = revalidated_at
+    row["historical_evidence_quarantined"] = _safe_value(target.get("evidence") or [])
+    row["evidence"] = clean_evidence
+    row["revalidation"] = {
+        "operation_id": str(operation_id or ""),
+        "reason": _limit_text(reason, 700),
+        "revalidated_by_user_id": identity.canonical_user_id,
+        "revalidated_by_role": identity.role,
+        "revalidated_at": revalidated_at,
+    }
+    _append_jsonl(store, SELF_EVOLUTION_EVENTS_FILE, row)
+    audit_row = {
+        "record_type": "self_evolution_revalidation",
+        "tenant_id": current_tenant_id(),
+        "evolution_event_id": str(evolution_event_id or ""),
+        "operation_id": str(operation_id or ""),
+        "reason": _limit_text(reason, 700),
+        "evidence": clean_evidence,
+        "prior_status": "superseded",
+        "outcome": "needs_retest",
+        "revalidated_by_user_id": identity.canonical_user_id,
+        "revalidated_by_role": identity.role,
+        "revalidated_at": revalidated_at,
+        "writeback_verified": True,
+    }
+    _append_jsonl(store, SELF_EVOLUTION_EVENTS_FILE, audit_row)
+    return {
+        "ok": True,
+        "outcome": "needs_retest",
+        "self_evolution_event": row,
+        "revalidation_event": audit_row,
+        "writeback_verified": True,
+    }
 
 
 def _normalize_status(value: Any, *, candidate_type: str, risk_level: str, writeback_verified: bool) -> str:
@@ -922,7 +1244,7 @@ def _recent_workstyle_preferences(store: TuoguanStore, *, identity: UserIdentity
 def _is_low_risk_application_status(item: dict[str, Any]) -> bool:
     return (
         str(item.get("risk_level") or "") == "low"
-        and str(item.get("status") or "") in {"ready_for_application", "applied"}
+        and str(item.get("status") or "") in {"ready_for_application", "applied", "needs_retest"}
     )
 
 
@@ -937,7 +1259,12 @@ def _is_next_context_candidate(item: dict[str, Any], *, now: datetime | None = N
         return False
     if ctype == "person_preference_candidate":
         return status == "applied" and bool(item.get("writeback_verified"))
-    if status not in {"ready_for_application", "applied"}:
+    # ``applied`` means the lesson reached one turn and is awaiting a real
+    # outcome evaluation.  Reloading it immediately on every turn would blur
+    # distinct applications and could never prove which turn produced the
+    # effect.  ``needs_retest`` is the explicit state that makes it eligible
+    # again after an insufficient or non-improving evaluation.
+    if status not in {"ready_for_application", "needs_retest"}:
         return False
     reference = now or datetime.now().astimezone()
     event_time = _evolution_event_time(item, reference)

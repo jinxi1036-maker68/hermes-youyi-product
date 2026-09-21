@@ -55,8 +55,21 @@ from gateway.platforms.base import BasePlatformAdapter, MessageEvent, MessageTyp
 from hermes_constants import get_hermes_home
 from plugins.platforms.wecom.inbound_receipts import WecomInboundReceiptStore
 from plugins.platforms.wecom.wecom_crypto import WXBizMsgCrypt, WeComCryptoError
+from plugins.platforms.http_policy import platform_httpx_limits
 
 logger = logging.getLogger(__name__)
+
+
+def _send_result(*, ok: bool, message_id: str = "", error: str = "", raw_response: Any = None) -> SendResult:
+    """Build the documented public result across supported Hermes versions."""
+
+    try:
+        return SendResult(success=ok, message_id=message_id, error=error, raw_response=raw_response)
+    except TypeError:
+        # Hermes 0.20.0 exposed the same public outcome under ``ok`` and did
+        # not accept ``raw_response``.  This is a platform ABI shim, not a
+        # retry or a business-path fork.
+        return SendResult(ok=ok, message_id=message_id, error=error)
 
 DEFAULT_HOST = "0.0.0.0"
 DEFAULT_PORT = 8645
@@ -67,10 +80,13 @@ DEFAULT_PATH = "/wecom/callback"
 # unauthenticated POST can force before signature verification.
 _MAX_BODY = 65_536
 ACCESS_TOKEN_TTL_SECONDS = 7200
-# Enterprise WeChat should receive a deterministic outcome before its visible
-# wait window closes.  The remaining seconds belong to its proactive send and
-# our writeback/reply guards, not another primary-model retry.
-DEFAULT_MODEL_TURN_TIMEOUT_SECONDS = 38.0
+# WeCom callbacks are acknowledged before Agent work enters the background
+# queue.  The bounded direct-turn budget therefore protects a real stall, not
+# the callback HTTP window.  It remains just below the Hermes gateway ceiling
+# so a normal compression/model span cannot be cancelled by a second 38s
+# watchdog.
+DEFAULT_MODEL_TURN_TIMEOUT_SECONDS = 1770.0
+MAX_MODEL_TURN_TIMEOUT_SECONDS = 1770.0
 
 # Hermes may emit lifecycle diagnostics through the gateway status channel.
 # They are useful in logs but are not a work message from 小优 and must never
@@ -95,7 +111,20 @@ def _model_turn_timeout_seconds() -> float:
         value = float(raw) if raw else DEFAULT_MODEL_TURN_TIMEOUT_SECONDS
     except (TypeError, ValueError):
         value = DEFAULT_MODEL_TURN_TIMEOUT_SECONDS
-    return min(DEFAULT_MODEL_TURN_TIMEOUT_SECONDS, max(10.0, value))
+    return min(MAX_MODEL_TURN_TIMEOUT_SECONDS, max(10.0, value))
+
+
+def _wecom_proxy_url() -> str | None:
+    """Return the channel-scoped proxy only for WeCom API egress.
+
+    Provider traffic never reads this setting.  This adapter opts out of
+    process proxy inheritance and passes the proxy explicitly to its own
+    HTTP client, so adding another provider cannot silently inherit WeCom's
+    local CONNECT path.
+    """
+
+    value = str(os.getenv("HERMES_WECOM_PROXY_URL", "") or "").strip()
+    return value or None
 
 
 def _import_tuoguan_module(name: str):
@@ -134,6 +163,48 @@ def _is_internal_context_status(content: str) -> bool:
     return bool(normalized) and any(marker in normalized for marker in _INTERNAL_CONTEXT_STATUS_MARKERS)
 
 
+def _is_hermes_session_reset_notice(content: str) -> bool:
+    """Recognise the complete Hermes control-plane reset envelope.
+
+    This is a protocol boundary, not a keyword filter over model replies.  The
+    reset command bypasses the model/output hooks and otherwise exposes its
+    English runtime diagnostics directly through every channel adapter.
+    """
+
+    lines = [line.strip() for line in str(content or "").splitlines() if line.strip()]
+    if not lines or lines[0] not in {
+        "✨ Session reset! Starting fresh.",
+        "✨ New session started!",
+    } and not lines[0].startswith("✨ New session started:"):
+        return False
+    return any(
+        line.startswith(("Model:", "Provider:", "Context:", "Endpoint:", "✦ Tip:"))
+        for line in lines[1:]
+    ) or len(lines) == 1
+
+
+def _record_session_reset_control_delivery() -> None:
+    """Persist content-free provenance for the product-facing reset notice."""
+
+    try:
+        TuoguanStore = _import_tuoguan_module("store").TuoguanStore
+        authorized_system_write = _import_tuoguan_module("write_guard").authorized_system_write
+        store = TuoguanStore()
+        with authorized_system_write(
+            store.data_dir,
+            job_name="wecom_session_reset_control_projection",
+            allowed_files={"runtime_status_events.jsonl"},
+        ):
+            store.append_jsonl_verified("runtime_status_events.jsonl", {
+                "record_type": "session_reset_control_projected",
+                "platform": "wecom_callback",
+                "created_at": datetime.now().astimezone().isoformat(timespec="seconds"),
+                "contains_runtime_details": False,
+            })
+    except Exception:
+        logger.debug("[WecomCallback] Failed to record reset projection", exc_info=True)
+
+
 def _record_suppressed_context_status() -> None:
     """Best-effort, content-free evidence for the owner health query."""
 
@@ -162,11 +233,25 @@ def check_wecom_callback_requirements() -> bool:
 
 class WecomCallbackAdapter(BasePlatformAdapter):
     def __init__(self, config: PlatformConfig):
-        super().__init__(config, Platform.WECOM_CALLBACK)
+        # The published adapter contract has had two constructor shapes across
+        # the Hermes versions XiaoYou certifies.  Keep this compatibility at
+        # the public platform boundary instead of reaching into Core state.
+        try:
+            super().__init__(config, Platform.WECOM_CALLBACK)
+        except TypeError:
+            self.config = config
+            self.platform = Platform.WECOM_CALLBACK
+            self._message_handler = None
+            self._running = False
         extra = config.extra or {}
-        self._host = str(extra.get("host") or DEFAULT_HOST)
-        self._port = int(extra.get("port") or DEFAULT_PORT)
-        self._path = str(extra.get("path") or DEFAULT_PATH)
+        # The callback application's credentials belong in the service
+        # environment, not a versioned XiaoYou configuration file.  The
+        # explicit config values remain supported for isolated fixtures; the
+        # environment fallback makes the production-compatible adapter
+        # deployable without copying a secret into the Capability package.
+        self._host = str(extra.get("host") or os.getenv("WECOM_CALLBACK_HOST") or DEFAULT_HOST)
+        self._port = int(extra.get("port") or os.getenv("WECOM_CALLBACK_PORT") or DEFAULT_PORT)
+        self._path = str(extra.get("path") or os.getenv("WECOM_CALLBACK_PATH") or DEFAULT_PATH)
         self._apps: List[Dict[str, Any]] = self._normalize_apps(extra)
         self._runner: Optional[web.AppRunner] = None
         self._site: Optional[web.TCPSite] = None
@@ -271,6 +356,20 @@ class WecomCallbackAdapter(BasePlatformAdapter):
                     "encoding_aes_key": extra.get("encoding_aes_key", ""),
                 }
             ]
+        # A server-owned callback application may instead be supplied by the
+        # existing systemd EnvironmentFile.  This is channel configuration,
+        # not identity inference: inbound crypto still attests the source and
+        # outbound delivery remains bound to the existing trusted destination.
+        env_app = {
+            "name": str(os.getenv("WECOM_CALLBACK_APP_NAME") or "default"),
+            "corp_id": str(os.getenv("WECOM_CALLBACK_CORP_ID") or ""),
+            "corp_secret": str(os.getenv("WECOM_CALLBACK_CORP_SECRET") or ""),
+            "agent_id": str(os.getenv("WECOM_CALLBACK_AGENT_ID") or ""),
+            "token": str(os.getenv("WECOM_CALLBACK_TOKEN") or ""),
+            "encoding_aes_key": str(os.getenv("WECOM_CALLBACK_ENCODING_AES_KEY") or ""),
+        }
+        if all(env_app[key] for key in ("corp_id", "corp_secret", "agent_id", "token", "encoding_aes_key")):
+            return [env_app]
         return []
 
     # ------------------------------------------------------------------
@@ -302,9 +401,15 @@ class WecomCallbackAdapter(BasePlatformAdapter):
             pass
 
         try:
-            # Tighter keepalive so idle CLOSE_WAIT drains promptly (#18451).
-            from gateway.platforms._http_client_limits import platform_httpx_limits
-            self._http_client = httpx.AsyncClient(timeout=20.0, limits=platform_httpx_limits())
+            client_options: Dict[str, Any] = {
+                "timeout": 20.0,
+                "limits": platform_httpx_limits(),
+                "trust_env": False,
+            }
+            proxy_url = _wecom_proxy_url()
+            if proxy_url:
+                client_options["proxy"] = proxy_url
+            self._http_client = httpx.AsyncClient(**client_options)
             # client_max_size rejects oversized bodies at the aiohttp layer
             # (413) before our handler — and before any signature work — runs.
             self._app = web.Application(client_max_size=_MAX_BODY)
@@ -324,6 +429,16 @@ class WecomCallbackAdapter(BasePlatformAdapter):
             self._site = web.TCPSite(self._runner, self._host, self._port)
             await self._site.start()
             self._poll_task = asyncio.create_task(self._poll_loop())
+            # Register this public adapter as a delivery port only.  It cannot
+            # generate text, select a Tool, alter a Receipt, or choose a user.
+            try:
+                logger.warning("[WecomCallback] Registering current durable reply delivery port")
+                _import_tuoguan_module("direct_reply_recovery").get_direct_reply_recovery_manager().register_delivery_adapter(
+                    channel="wecom_callback", adapter=self,
+                )
+                logger.warning("[WecomCallback] Current durable reply delivery port registered")
+            except Exception:
+                logger.exception("[WecomCallback] Durable reply delivery port registration failed")
             await self._recover_inbound_messages(include_owned=reconnecting)
             self._mark_connected()
             logger.info(
@@ -378,22 +493,66 @@ class WecomCallbackAdapter(BasePlatformAdapter):
         reply_to: Optional[str] = None,
         metadata: Optional[Dict[str, Any]] = None,
     ) -> SendResult:
+        metadata = dict(metadata or {})
+        # A marker is emitted only by the authenticated same-turn terminal
+        # bridge after a verified Receipt.  It never becomes WeCom text: it
+        # releases the exact durable job, whose normal or reply-only Hermes
+        # answer is delivered later through this same public adapter.
+        try:
+            recovery_module = _import_tuoguan_module("direct_reply_recovery")
+            recovery = recovery_module.get_direct_reply_recovery_manager()
+            reply_id = recovery_module.parse_control_marker(content)
+            if reply_id is not None:
+                # The public Gateway callback supplies an opaque Agent
+                # session here, not the authenticated WeCom userid.  The
+                # held job has already bound its recipient from the trusted
+                # ingress actor, so do not treat this session as a recipient.
+                job = recovery.release_wecom_callback_handoff(reply_id=reply_id)
+                logger.info(
+                    "[WecomCallback] Consumed durable reply handoff reply_hash=%s delivery_id=%s",
+                    hashlib.sha256(reply_id.encode("utf-8")).hexdigest()[:16],
+                    job.delivery_id,
+                )
+                return _send_result(ok=True, message_id="wecom_reply_handoff:" + job.reply_id)
+            delivery_id = str(metadata.get("xiaoyou_delivery_id") or "")
+            if metadata.get("xiaoyou_reply_only") is True and delivery_id:
+                try:
+                    recovery.verify_delivery(
+                        delivery_id=delivery_id, channel="wecom_callback",
+                        chat_id=str(chat_id), reply_text=str(content or ""),
+                    )
+                    logger.info(
+                        "[WecomCallback] Verified durable reply delivery delivery_id=%s",
+                        delivery_id,
+                    )
+                except Exception:
+                    # Other outbox uses may carry opaque delivery metadata.
+                    # Fail closed only when this exact durable direct-reply job
+                    # exists; otherwise retain the public adapter contract.
+                    if recovery.outbox.get_by_delivery_id(delivery_id) is not None:
+                        logger.exception("[WecomCallback] Rejected unverified durable reply delivery")
+                        return _send_result(ok=False, error="wecom_reply_delivery_unverified")
+        except Exception:
+            logger.exception("[WecomCallback] Durable reply handoff failed")
+            return _send_result(ok=False, error="wecom_reply_handoff_failed")
+        if _is_hermes_session_reset_notice(content):
+            _record_session_reset_control_delivery()
+            # The command itself succeeded, but its model/provider/context
+            # cockpit belongs in logs.  This product-facing control response
+            # asserts no business result and never enters Reply Recovery.
+            content = "新会话已开始。您的身份、权限和示例机构工作上下文会继续保留。"
         if _is_internal_context_status(content):
             _record_suppressed_context_status()
             logger.info("[WecomCallback] Suppressed internal context lifecycle status")
             # A status callback is not a business delivery.  Treating this as
             # successful prevents the gateway from attempting to re-send the
             # same technical text while no user-facing message is emitted.
-            return SendResult(success=True, message_id="internal-status-suppressed")
+            return _send_result(ok=True, message_id="internal-status-suppressed")
         app = self._resolve_app_for_chat(chat_id)
         if app is None:
-            return SendResult(
-                success=False,
-                error="wecom_app_scope_unresolved: outbound target is not bound to exactly one app",
-            )
+            return _send_result(ok=False, error="wecom_app_scope_unresolved: outbound target is not bound to exactly one app")
         touser = chat_id.split(":", 1)[1] if ":" in chat_id else chat_id
         try:
-            content = self._repair_tuoguan_dashboard_link(chat_id, content)
             payload = {
                 "touser": touser,
                 "msgtype": "text",
@@ -419,55 +578,15 @@ class WecomCallbackAdapter(BasePlatformAdapter):
                     self._access_tokens.pop(app["name"], None)
                     continue
                 if errcode != 0:
-                    return SendResult(success=False, error=str(data))
-                return SendResult(
-                    success=True,
+                    return _send_result(ok=False, error=str(data))
+                return _send_result(
+                    ok=True,
                     message_id=str(data.get("msgid", "")),
                     raw_response=data,
                 )
-            return SendResult(success=False, error="send failed after token refresh")
+            return _send_result(ok=False, error="send failed after token refresh")
         except Exception as exc:
-            return SendResult(success=False, error=str(exc))
-
-    @staticmethod
-    def _repair_tuoguan_dashboard_link(chat_id: str, content: str) -> str:
-        """Replace model-written dashboard links with freshly signed ones."""
-        value = str(content or "")
-        if "tuoguan/dashboard" not in value:
-            return value
-        try:
-            import os
-            import re
-            from urllib.parse import quote
-
-            sign_dashboard_token = _import_tuoguan_module("dashboard_auth").sign_dashboard_token
-            IdentityService = _import_tuoguan_module("identity").IdentityService
-            TuoguanStore = _import_tuoguan_module("store").TuoguanStore
-
-            touser = str(chat_id or "").split(":", 1)[1] if ":" in str(chat_id or "") else str(chat_id or "")
-            base_url = str(os.getenv("HERMES_TUOGUAN_DASHBOARD_BASE_URL") or "").strip()
-            if not touser or not base_url:
-                return value
-            store = TuoguanStore()
-            identity = IdentityService(store).resolve(
-                "wecom_callback",
-                touser,
-                chat_id=str(chat_id or ""),
-            )
-            token = sign_dashboard_token(identity, store)
-            url = f"{base_url.rstrip('/')}/tuoguan/dashboard?token={quote(token, safe='')}"
-            repaired = re.sub(
-                r"https?://[^\s\"'<>]+/tuoguan/dashboard\?token=[^\s\"'<>]+",
-                url,
-                value,
-            )
-            if repaired == value:
-                repaired = value.rstrip() + "\n" + url
-            logger.warning("[WecomCallback] Repaired Tuoguan dashboard link for %s", touser)
-            return repaired
-        except Exception:
-            logger.exception("[WecomCallback] Failed to repair Tuoguan dashboard link")
-            return value
+            return _send_result(ok=False, error=str(exc))
 
     def _resolve_app_for_chat(self, chat_id: str) -> Optional[Dict[str, Any]]:
         """Resolve one app without silently crossing enterprise boundaries."""

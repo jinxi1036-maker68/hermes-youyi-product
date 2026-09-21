@@ -21,7 +21,7 @@ def _seed_store(tmp_path: Path):
     from plugins.tuoguan_core.store import TuoguanStore
 
     _write_json(tmp_path, "write_guard_config.json", {"enabled": True})
-    _write_json(tmp_path, "teacher_wecom_map.json", {"金总": "boss1"})
+    _write_json(tmp_path, "teacher_wecom_map.json", {"机构负责人": "boss1"})
     _write_json(tmp_path, "wecom_whitelist.json", {"super_users": ["boss1"], "user_roles": {"boss1": "boss"}})
     _write_json(tmp_path, "notification_outbox.json", [])
     _write_json(tmp_path, "students.json", {})
@@ -33,7 +33,7 @@ def _seed_store(tmp_path: Path):
             {
                 "record_type": "work_item",
                 "work_item_id": "work-goal-1",
-                "tenant_id": "youyi_tuoguan",
+                "tenant_id": "example_institution",
                 "focus_key": "goal:sept_renewal",
                 "title": "目标推进：九月份续费率更稳",
                 "status": "active",
@@ -147,7 +147,7 @@ def test_generic_owner_attention_candidate_is_rejected(tmp_path):
         {
             "focus_key": "goal:sept_renewal",
             "reason": "需要沟通。",
-            "message": "金总，我整理好了情况。",
+            "message": "机构负责人，我整理好了情况。",
             "urgency": "normal",
         }
     ]

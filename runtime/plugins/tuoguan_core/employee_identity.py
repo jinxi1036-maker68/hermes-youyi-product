@@ -27,7 +27,7 @@ def owner_user_id(store: TuoguanStore) -> str:
                     return str(item).strip()
     mapping = store.read_json("teacher_wecom_map.json", {})
     if isinstance(mapping, dict):
-        for name in ("金总", "老板", "JinWenJie"):
+        for name in ("机构负责人", "老板", "owner_test"):
             if str(mapping.get(name) or "").strip():
                 return str(mapping[name]).strip()
     return ""

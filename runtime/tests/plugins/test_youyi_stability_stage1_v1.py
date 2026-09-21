@@ -103,7 +103,7 @@ def test_expired_sending_outbox_item_becomes_result_unknown_not_resent(tmp_path,
                 "action": "task_due",
                 "task_id": "task1",
                 "touser": "teacher1",
-                "content": "李老师，这条任务需要回执。",
+                "content": "示例老师，这条任务需要回执。",
                 "created_at": "2026-08-09T08:00:00+08:00",
                 "attempt_count": 1,
             }
@@ -139,7 +139,7 @@ def test_drain_claims_before_send_and_writes_single_receipt(tmp_path, monkeypatc
                 "action": "task_due",
                 "task_id": "task2",
                 "touser": "teacher1",
-                "content": "李老师，这条任务需要回执。",
+                "content": "示例老师，这条任务需要回执。",
                 "created_at": now.isoformat(timespec="seconds"),
                 "attempt_count": 0,
             }

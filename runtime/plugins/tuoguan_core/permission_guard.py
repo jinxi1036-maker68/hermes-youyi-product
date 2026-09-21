@@ -69,11 +69,11 @@ def permission_query_reply(identity: UserIdentity, text: str) -> str | None:
     if identity.role in {"manager", "store_manager", "summer_manager"}:
         return (
             f"{identity.person_name or '当前账号'}，你是店长。你可以查看职责范围内的学生、老师、任务和看板，"
-            "并督促业务闭环；不能把自己提升为老板，不能修改全局角色或越权关联校区。需要调整请联系金总。"
+            "并督促业务闭环；不能把自己提升为老板，不能修改全局角色或越权关联校区。需要调整请联系机构负责人。"
         )
     return (
         f"{identity.person_name or '当前账号'}，你是老师。你可以记录负责学生、查看和处理本人任务、查看本人看板；"
-        "不能配置人员、修改角色、关联校区、绑定其他账号或提升权限。需要调整请联系金总。"
+        "不能配置人员、修改角色、关联校区、绑定其他账号或提升权限。需要调整请联系机构负责人。"
     )
 
 
@@ -99,7 +99,7 @@ def restricted_change_reply(store: Any, identity: UserIdentity, text: str) -> st
     role_name = "店长" if identity.role in {"manager", "store_manager", "summer_manager"} else "老师"
     return (
         f"你当前是{role_name}，不能修改自己或他人的角色、配置人员、关联校区或绑定其他账号。"
-        "如需调整，请联系金总；必须由金总/老板账号发起并确认，系统会进行二次确认并记录审计。"
+        "如需调整，请联系机构负责人；必须由机构负责人/老板账号发起并确认，系统会进行二次确认并记录审计。"
     )
 
 

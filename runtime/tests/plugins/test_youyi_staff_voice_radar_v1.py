@@ -30,8 +30,8 @@ def _seed_store(tmp_path: Path, *, guard_enabled: bool = True):
             "user_roles": {"boss1": "boss", "manager1": "manager", "teacher1": "teacher"},
         },
     )
-    _write_json(tmp_path, "teacher_wecom_map.json", {"金总": "boss1", "店长": "manager1", "李老师": "teacher1"})
-    _write_json(tmp_path, "staff.json", {"manager1": {"name": "店长", "role": "manager"}, "teacher1": {"name": "李老师", "role": "teacher"}})
+    _write_json(tmp_path, "teacher_wecom_map.json", {"机构负责人": "boss1", "店长": "manager1", "示例老师": "teacher1"})
+    _write_json(tmp_path, "staff.json", {"manager1": {"name": "店长", "role": "manager"}, "teacher1": {"name": "示例老师", "role": "teacher"}})
     _write_json(tmp_path, "notification_outbox.json", [])
     _write_json(tmp_path, "tasks.json", [])
     _write_json(tmp_path, "students.json", {})
@@ -44,8 +44,8 @@ def test_teacher_voice_signal_is_saved_without_staff_side_reporting_effects(tmp_
     from plugins.tuoguan_core.write_guard import authorized_system_write
 
     store = _seed_store(tmp_path)
-    teacher = UserIdentity("wecom_callback", "teacher1", "teacher1", "李老师", "teacher", "approved")
-    boss = UserIdentity("wecom_callback", "boss1", "boss1", "金总", "boss", "approved")
+    teacher = UserIdentity("wecom_callback", "teacher1", "teacher1", "示例老师", "teacher", "approved")
+    boss = UserIdentity("wecom_callback", "boss1", "boss1", "机构负责人", "boss", "approved")
 
     with authorized_system_write(store.data_dir, job_name="staff_voice_test", allowed_files={"staff_voice_signals.jsonl"}):
         saved = submit_staff_voice_signal(
@@ -75,7 +75,7 @@ def test_teacher_voice_signal_is_saved_without_staff_side_reporting_effects(tmp_
     assert radar["ok"] is True
     assert radar["low_risk_trends"][0]["names_hidden_by_default"] is True
     assert radar["named_signals"] == []
-    assert "李老师" not in radar["rendered_text"]
+    assert "示例老师" not in radar["rendered_text"]
 
 
 def test_medium_high_staff_voice_is_named_for_boss_and_high_alerts_owner_only(tmp_path):
@@ -85,7 +85,7 @@ def test_medium_high_staff_voice_is_named_for_boss_and_high_alerts_owner_only(tm
 
     store = _seed_store(tmp_path)
     manager = UserIdentity("wecom_callback", "manager1", "manager1", "店长", "manager", "approved")
-    boss = UserIdentity("wecom_callback", "boss1", "boss1", "金总", "boss", "approved")
+    boss = UserIdentity("wecom_callback", "boss1", "boss1", "机构负责人", "boss", "approved")
 
     with authorized_system_write(store.data_dir, job_name="staff_voice_high_test", allowed_files={"staff_voice_signals.jsonl", "notification_outbox.json"}):
         saved = submit_staff_voice_signal(
@@ -130,7 +130,7 @@ def test_staff_voice_radar_is_boss_only_and_registered(tmp_path):
     assert "tuoguan_submit_staff_voice_signal" in WRITE_TOOLS
     assert "tuoguan_query_staff_voice_radar" in MODEL_SELECTED_READ_TOOLS
 
-    teacher = TuoguanToolService(store, platform="wecom_callback", user_id="teacher1", user_name="李老师")
+    teacher = TuoguanToolService(store, platform="wecom_callback", user_id="teacher1", user_name="示例老师")
     saved = teacher.submit_staff_voice_signal(
         operation_id="msg-tool-1",
         signal_summary="老师觉得任务提醒太频繁，影响工作节奏。",
@@ -144,11 +144,11 @@ def test_staff_voice_radar_is_boss_only_and_registered(tmp_path):
     assert denied["ok"] is False
     assert denied["error"] == "permission_denied"
 
-    boss = TuoguanToolService(store, platform="wecom_callback", user_id="boss1", user_name="金总")
+    boss = TuoguanToolService(store, platform="wecom_callback", user_id="boss1", user_name="机构负责人")
     radar = boss.query_staff_voice_radar(since_hours=24)
     assert radar["ok"] is True
     assert radar["data"]["report_type"] == "staff_voice_radar_v1"
-    assert radar["data"]["named_signals"][0]["source_name"] == "李老师"
+    assert radar["data"]["named_signals"][0]["source_name"] == "示例老师"
 
 
 def test_boss_can_query_staff_conversation_activity_from_reply_ledger(tmp_path):
@@ -203,7 +203,7 @@ def test_boss_can_query_staff_conversation_activity_from_reply_ledger(tmp_path):
             },
         ],
     )
-    boss = UserIdentity("wecom_callback", "boss1", "boss1", "金总", "boss", "approved")
+    boss = UserIdentity("wecom_callback", "boss1", "boss1", "机构负责人", "boss", "approved")
 
     report = query_staff_conversation_activity(store, identity=boss, period="today", now_at=now.isoformat())
 
@@ -214,7 +214,7 @@ def test_boss_can_query_staff_conversation_activity_from_reply_ledger(tmp_path):
     assert report["role_counts"]["teacher"] == 1
     assert report["role_counts"]["manager"] == 1
     teacher = next(item for item in report["conversations"] if item["user_id"] == "teacher1")
-    assert teacher["name"] == "李老师"
+    assert teacher["name"] == "示例老师"
     assert teacher["message_count"] == 2
     assert teacher["latest_text"] == "我还有什么任务吗"
     assert "今天有 2 位老师/店长" in report["rendered_text"]
@@ -238,17 +238,17 @@ def test_staff_conversation_activity_is_boss_only_registered_and_semantic(tmp_pa
         {"period": "today"},
     )
 
-    teacher_service = TuoguanToolService(store, platform="wecom_callback", user_id="teacher1", user_name="李老师")
+    teacher_service = TuoguanToolService(store, platform="wecom_callback", user_id="teacher1", user_name="示例老师")
     denied = teacher_service.query_staff_conversation_activity(period="today")
     assert denied["ok"] is False
     assert denied["error"] == "permission_denied"
 
-    boss_service = TuoguanToolService(store, platform="wecom_callback", user_id="boss1", user_name="金总")
+    boss_service = TuoguanToolService(store, platform="wecom_callback", user_id="boss1", user_name="机构负责人")
     allowed = boss_service.query_staff_conversation_activity(period="today")
     assert allowed["ok"] is True
     assert allowed["data"]["report_type"] == "staff_conversation_activity_v1"
 
-    boss = UserIdentity("wecom_callback", "boss1", "boss1", "金总", "boss", "approved")
+    boss = UserIdentity("wecom_callback", "boss1", "boss1", "机构负责人", "boss", "approved")
     boss_context = plugin._role_layer_context(identity=boss, raw_text="今天有没有老师找你对话")
     assert "tuoguan_query_staff_conversation_activity" in boss_context
     assert "不得凭记忆回答“没有”" in boss_context
@@ -259,8 +259,8 @@ def test_role_layer_context_keeps_teacher_supportive_and_boss_queries_radar():
     from plugins.tuoguan_core.models import UserIdentity
     from plugins.tuoguan_core.runtime_foundation import _sanitize_external_reply
 
-    teacher = UserIdentity("wecom_callback", "teacher1", "teacher1", "李老师", "teacher", "approved")
-    boss = UserIdentity("wecom_callback", "boss1", "boss1", "金总", "boss", "approved")
+    teacher = UserIdentity("wecom_callback", "teacher1", "teacher1", "示例老师", "teacher", "approved")
+    boss = UserIdentity("wecom_callback", "boss1", "boss1", "机构负责人", "boss", "approved")
 
     teacher_context = plugin._role_layer_context(identity=teacher, raw_text="最近店里安排太乱，我心情很受影响")
     assert "教育朋友" in teacher_context
@@ -290,7 +290,7 @@ def test_daily_report_includes_only_concise_staff_voice_summary(tmp_path):
             {
                 "record_type": "staff_voice_signal",
                 "signal_id": "staff_voice_1",
-                "tenant_id": "youyi_tuoguan",
+                "tenant_id": "example_institution",
                 "source_role": "manager",
                 "source_user_id": "manager1",
                 "source_name": "店长",

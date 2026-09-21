@@ -1553,7 +1553,7 @@ def query_proactive_work_radar(
         add_question(
             ask_role="boss",
             question="请确认小优对外应称呼当前机构的正式名称是什么？",
-            reason="员工手册要求小优先建立机构基本信息，不能套用优益或历史样板。",
+            reason="员工手册要求小优先建立机构基本信息，不能套用示例机构或历史样板。",
             domain_key="institution_work_map",
             urgency="high",
         )
@@ -2067,7 +2067,7 @@ def _staff_rows_for_radar(store: TuoguanStore) -> list[dict[str, Any]]:
             row.setdefault("name", str(name or user_id))
             if not row.get("role"):
                 compact = str(name or "")
-                row["role"] = "boss" if any(term in compact for term in ("老板", "金总")) else "teacher"
+                row["role"] = "boss" if any(term in compact for term in ("老板", "机构负责人")) else "teacher"
 
     return sorted(by_user.values(), key=lambda item: (str(item.get("role") or ""), str(item.get("name") or "")))
 
@@ -3340,6 +3340,7 @@ def submit_relationship_touch_candidate(
     goal_action_id: str = "",
     related_task_id: str = "",
     evidence_requirement: str = "",
+    agenda_ticket_id: str = "",
 ) -> dict[str, Any]:
     role = str(target_role or "").strip()
     touch = str(touch_type or "").strip()
@@ -3374,13 +3375,10 @@ def submit_relationship_touch_candidate(
         target_name or target_profile.get("business_name") or target_profile.get("staff_name") or "",
         80,
     )
-    policy = relationship_touch_policy(store)
-    role_policy = policy.get(role) if isinstance(policy.get(role), dict) else {}
-    if role != "boss" and str(role_policy.get("mode") or "candidate") != "direct":
-        external_send_allowed = False
-        requires_authorization = True
-    elif str(role_policy.get("mode") or "candidate") != "direct":
-        external_send_allowed = False
+    # The retired per-person/direct-mode list is no longer an authorization
+    # authority.  The caller has already resolved the institution-level grant
+    # and trusted current WeCom binding.  Retain the legacy policy as an audit
+    # artifact only; it must not contradict the current delivery authority.
     semantic_fingerprint = json.dumps({
         "day": now_iso()[:10],
         "target_role": role,
@@ -3419,6 +3417,7 @@ def submit_relationship_touch_candidate(
         "goal_action_id": str(goal_action_id or "").strip(),
         "related_task_id": str(related_task_id or "").strip(),
         "evidence_requirement": _limit_text(evidence_requirement, 700),
+        "agenda_ticket_id": str(agenda_ticket_id or "").strip(),
         "status": normalized_status,
         "semantic_fingerprint": semantic_fingerprint,
         "source_text": _limit_text(source_text),
@@ -3617,7 +3616,7 @@ def _staff_voice_owner_user_id(store: TuoguanStore) -> str:
                 return str(item).strip()
     mapping = store.read_json("teacher_wecom_map.json", {})
     if isinstance(mapping, dict):
-        for name in ("金总", "老板", "JinWenJie"):
+        for name in ("机构负责人", "老板", "owner_test"):
             if str(mapping.get(name) or "").strip():
                 return str(mapping[name]).strip()
     return ""
@@ -3647,7 +3646,7 @@ def _staff_voice_alert_content(row: dict[str, Any]) -> str:
     impact = str(row.get("impact") or "可能影响现场协作或学生服务。")
     suggestion = str(row.get("suggested_owner_action") or "建议先看摘要，再决定是否找店长或相关老师了解事实。")
     return _limit_text(
-        f"金总，小优发现一条{risk_label}员工声音信号：{summary}\n"
+        f"机构负责人，小优发现一条{risk_label}员工声音信号：{summary}\n"
         f"影响：{impact}\n"
         f"建议关注：{suggestion}\n"
         "细节我已留档，需要我展开哪一项你直接说。",

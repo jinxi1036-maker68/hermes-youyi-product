@@ -47,6 +47,13 @@ WORKSTYLE_DIMENSIONS = {
     "other",
 }
 
+# These are presentation-only primitives.  They intentionally say nothing
+# about business intent, Tool choice, recipients, permission or facts.
+PRESENTATION_SECTION_KINDS = frozenset({
+    "conclusion", "next_step", "summary", "details", "risks", "action",
+})
+PRESENTATION_TERMINAL_QUESTION_POLICIES = frozenset({"allow", "forbid"})
+
 ALLOWED_SCOPES = {
     "daily_report",
     "direct_reply",
@@ -200,6 +207,7 @@ def _semantic_fingerprint(
     dimension_key: str,
     normalized_rule: str,
     preference_text: str,
+    presentation_contract: dict[str, Any] | None = None,
 ) -> str:
     base = "|".join(
         (
@@ -209,9 +217,50 @@ def _semantic_fingerprint(
             str(scope),
             str(dimension_key or ""),
             " ".join(str(normalized_rule or preference_text).split()).lower(),
+            json.dumps(presentation_contract or {}, ensure_ascii=False, sort_keys=True, separators=(",", ":")),
         )
     )
     return hashlib.sha256(base.encode("utf-8")).hexdigest()[:24]
+
+
+def _normalize_presentation_contract(
+    value: Any, *, preference_type: str,
+) -> tuple[dict[str, Any], str]:
+    """Validate model-declared low-risk reply presentation data.
+
+    This is validation, not language interpretation: the model decides whether
+    a user's stated preference has a representable presentation contract and
+    supplies the typed values.  The contract cannot express a business action.
+    """
+
+    if value in (None, ""):
+        return {}, ""
+    if not isinstance(value, dict):
+        return {}, "presentation_contract_invalid"
+    if preference_type != "format":
+        return {}, "presentation_contract_only_for_format"
+    raw_sections = value.get("sections")
+    if not isinstance(raw_sections, list) or not raw_sections or len(raw_sections) > 4:
+        return {}, "presentation_contract_sections_invalid"
+    sections: list[dict[str, str]] = []
+    seen: set[str] = set()
+    for item in raw_sections:
+        if not isinstance(item, dict):
+            return {}, "presentation_contract_section_invalid"
+        kind = str(item.get("kind") or "").strip().lower()
+        label = " ".join(str(item.get("label") or "").split())
+        if kind not in PRESENTATION_SECTION_KINDS or kind in seen or not label or len(label) > 24:
+            return {}, "presentation_contract_section_invalid"
+        seen.add(kind)
+        sections.append({"kind": kind, "label": label})
+    terminal_question = str(value.get("terminal_question") or "allow").strip().lower()
+    if terminal_question not in PRESENTATION_TERMINAL_QUESTION_POLICIES:
+        return {}, "presentation_contract_terminal_question_invalid"
+    return {
+        "version": 1,
+        "sections": sections,
+        "terminal_question": terminal_question,
+    }, ""
 
 
 def _dimension_for_preference(preference_type: str, scope: str, *texts: Any) -> str:
@@ -511,29 +560,18 @@ def observe_workstyle_after_reply(
     feedback = _classify_feedback_for_autosave(raw_text)
     tool_saved = _tool_results_include_verified_workstyle(tool_calls or [], tool_results or [])
     unverified_commitment = _looks_like_saved_claim(raw_model_final_reply or final_reply) and not tool_saved
-    auto_saved: dict[str, Any] = {}
     missed_feedback_save = bool(feedback.get("ok") and not tool_saved)
-    if missed_feedback_save:
-        from .write_guard import authorized_system_write
-
-        with authorized_system_write(
-            store.data_dir,
-            job_name="workstyle_feedback_guard",
-            allowed_files={WORKSTYLE_EVENTS_FILE},
-        ):
-            auto_saved = submit_person_workstyle_preference(
-                store,
-                identity=identity,
-                preference_type=str(feedback.get("preference_type") or "other_low_risk"),
-                scope=str(feedback.get("scope") or "all_communication"),
-                preference_text=str(feedback.get("preference_text") or raw_text),
-                normalized_rule=str(feedback.get("normalized_rule") or feedback.get("preference_text") or raw_text),
-                dimension_key=str(feedback.get("dimension_key") or ""),
-                confidence=float(feedback.get("confidence") or 0.9),
-                source_text=raw_text,
-                source_turn_id=session_id,
-                operation_id=f"{message_id or ledger_id or uuid.uuid4().hex}:auto_workstyle_feedback",
-            )
+    # This observer is supervision, not a second business brain.  Earlier it
+    # silently saved a preference when the model failed to call the existing
+    # preference tool.  That made a missed Tool call look like successful
+    # learning and let a deterministic classifier perform the business write.
+    # Keep the miss as evidence and create a correction candidate below, but
+    # never manufacture the missing Tool/Repository receipt here.
+    auto_saved: dict[str, Any] = {
+        "ok": False,
+        "skipped": True,
+        "reason": "model_tool_receipt_required",
+    } if missed_feedback_save else {}
     resolved = resolve_workstyle_for(
         store,
         identity=identity,
@@ -598,6 +636,7 @@ def submit_person_workstyle_preference(
     target_role: str = "",
     source_text: str = "",
     dimension_key: str = "",
+    presentation_contract: dict[str, Any] | None = None,
     confidence: float | str = 1.0,
     source_turn_id: str = "",
 ) -> dict[str, Any]:
@@ -609,13 +648,26 @@ def submit_person_workstyle_preference(
     source_text = _limit_text(source_text or preference_text, 500)
     dimension_key = _normalize_dimension_key(dimension_key) or _dimension_for_preference(preference_type, scope, normalized_rule, preference_text, source_text)
     confidence_value = _normalize_confidence(confidence)
+    normalized_presentation_contract, contract_error = _normalize_presentation_contract(
+        presentation_contract,
+        preference_type=preference_type,
+    )
+    if contract_error:
+        return {
+            "ok": False,
+            "error": contract_error,
+            "message": "回复呈现契约不符合低风险个人偏好的数据约束，本轮未保存。",
+        }
     if not target_user_id:
         return {"ok": False, "error": "target_user_id_required", "message": "缺少人员 id。"}
     if not preference_text:
         return {"ok": False, "error": "preference_text_required", "message": "缺少要保存的工作方式偏好原文。"}
     if not _can_access(identity, target_user_id, target_role):
         return {"ok": False, "error": "permission_denied", "message": "当前账号不能替该人员保存服务方式偏好。"}
-    high_risk, term = _risk_check(preference_type, scope, preference_text, normalized_rule, source_text)
+    high_risk, term = _risk_check(
+        preference_type, scope, preference_text, normalized_rule, source_text,
+        json.dumps(normalized_presentation_contract, ensure_ascii=False, sort_keys=True),
+    )
     if high_risk:
         return {
             "ok": False,
@@ -632,6 +684,7 @@ def submit_person_workstyle_preference(
         dimension_key=dimension_key,
         normalized_rule=normalized_rule,
         preference_text=preference_text,
+        presentation_contract=normalized_presentation_contract,
     )
     events = _read_events(store)
     for item in reversed(events):
@@ -672,6 +725,7 @@ def submit_person_workstyle_preference(
         "scope": scope,
         "preference_text": preference_text,
         "normalized_rule": normalized_rule,
+        "presentation_contract": normalized_presentation_contract,
         "confidence": confidence_value,
         "risk_level": "low",
         "status": "active",
@@ -745,6 +799,27 @@ def workstyle_context_for_user(
         lines.append("默认老板早晚报：3-5条，一条一行，只说重点；异常才展开。")
     else:
         lines.append("目前没有保存过该人员的服务方式偏好，按默认专业、简洁、事实优先方式服务。")
+    if profile.get("effective_preferences"):
+        presentation_contracts = list(
+            (profile.get("output_constraints") or {}).get("presentation_contracts") or []
+        )
+        if presentation_contracts:
+            lines.append("【已确认的低风险呈现契约】以下是当前人员已保存的回复形式数据，只调整表达，不改变事实、权限、工具选择或写入结果：")
+            for contract in presentation_contracts:
+                section_text = " → ".join(str(item.get("label") or "") for item in contract.get("sections") or [])
+                terminal = "结尾不得用问句" if contract.get("terminal_question") == "forbid" else "结尾可用问句"
+                lines.append(f"- 段落顺序：{section_text}；{terminal}。")
+        # A scoped personal preference is not a business instruction.  It is
+        # nevertheless an active presentation contract for this reply, so
+        # make the model perform a final self-check instead of leaving the
+        # selected profile as passive background prose.  The clause applies
+        # uniformly to every low-risk preference; it never selects a Tool,
+        # changes an institution rule, or edits factual results after tools.
+        lines.extend([
+            "【本轮服务呈现约束】上列当前对象的有效偏好适用于本轮最终回复，必须逐项遵守。",
+            "生成最终回复前先在内部核对：表达是否符合每项适用偏好；若不符合，先改写再发送。",
+            "这些约束只调整表达方式，绝不能改变事实、权限判断、工具选择、写入结果或安全边界。",
+        ])
     if _looks_like_workstyle_feedback(raw_text):
         lines.extend([
             "本轮可能包含服务方式反馈。若模型判断是低风险偏好，请调用 tuoguan_submit_person_workstyle_preference 保存。",
@@ -857,11 +932,18 @@ def _output_constraints_from_preferences(preferences: list[dict[str, Any]]) -> d
         "avoidance_notes": [],
         "followup_notes": [],
         "interaction_pacing_notes": [],
+        "presentation_contracts": [],
     }
     for pref in preferences:
         dimension = str(pref.get("dimension_key") or _dimension_for_row(pref))
         text = str(pref.get("normalized_rule") or pref.get("preference_text") or "")
         compact = "".join(text.split()).lower()
+        contract, _contract_error = _normalize_presentation_contract(
+            pref.get("presentation_contract"),
+            preference_type=str(pref.get("preference_type") or ""),
+        )
+        if contract:
+            constraints["presentation_contracts"].append(contract)
         if dimension == "length":
             if any(term in compact for term in ("三条", "3条", "三项", "3项", "3-5", "三到五", "只说重点", "极简", "简短", "少说")):
                 constraints["max_items"] = 3
@@ -942,7 +1024,25 @@ def _check_reply_compliance(final_reply: str, preferences: list[dict[str, Any]])
             failures.append("interaction_pacing_multiple_questions")
         if headings > 1:
             failures.append("interaction_pacing_multiple_sections")
-    return {"ok": not failures, "failures": failures, "checked_at": now_iso()}
+    for contract in constraints.get("presentation_contracts") or []:
+        cursor = 0
+        for index, section in enumerate(contract.get("sections") or []):
+            label = str(section.get("label") or "")
+            position = text.find(label, cursor)
+            if position < 0:
+                failures.append(f"presentation_contract_section_missing:{section.get('kind')}")
+                continue
+            if index == 0 and text.strip() and position != len(text) - len(text.lstrip()):
+                failures.append("presentation_contract_first_section_not_first")
+            cursor = position + len(label)
+        if contract.get("terminal_question") == "forbid" and text.rstrip().endswith(("？", "?")):
+            failures.append("presentation_contract_terminal_question_forbidden")
+    return {
+        "ok": not failures,
+        "failures": failures,
+        "presentation_contract_count": len(constraints.get("presentation_contracts") or []),
+        "checked_at": now_iso(),
+    }
 
 
 def _avoidance_terms(rule: str) -> list[str]:

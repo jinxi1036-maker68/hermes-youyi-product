@@ -12,7 +12,7 @@ from pathlib import Path
 from typing import Any
 
 
-DEFAULT_TENANT_ID = "youyi_tuoguan"
+DEFAULT_TENANT_ID = "example_institution"
 DEFAULT_OPERATING_MODEL_FILE = "institution_operating_model.json"
 LEGACY_OPERATING_MODEL_FILE = "youyi_operating_model.json"
 

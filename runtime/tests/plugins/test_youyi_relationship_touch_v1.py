@@ -29,9 +29,9 @@ def test_relationship_touch_candidate_is_internal_for_teacher(tmp_path):
             identity=identity,
             target_role="teacher",
             target_user_id="teacher1",
-            target_name="李老师",
+            target_name="示例老师",
             touch_type="care",
-            message="李老师，今天辛苦了。孩子们午休还顺利吗？你随口回一句就行。",
+            message="示例老师，今天辛苦了。孩子们午休还顺利吗？你随口回一句就行。",
             reason="关系经营候选，先给老师情绪价值，不是催任务。",
             value="让老师感受到 Hermes 是同事，会关心也会帮忙整理。",
             private_emotional_support=True,
@@ -44,7 +44,7 @@ def test_relationship_touch_candidate_is_internal_for_teacher(tmp_path):
     assert candidate["external_send_allowed"] is False
     assert candidate["auto_effects"]["sends_teacher_messages"] is False
 
-    teacher = UserIdentity("wecom", "teacher1", "teacher1", "李老师", "teacher", "approved")
+    teacher = UserIdentity("wecom", "teacher1", "teacher1", "示例老师", "teacher", "approved")
     visible = query_relationship_touch_candidates(store, identity=teacher, target_user_id="teacher1")
     assert visible["candidate_count"] == 1
 
@@ -56,9 +56,9 @@ def test_relationship_touch_rejects_a_salutation_for_the_wrong_wecom_target(tmp_
     from plugins.tuoguan_core.write_guard import authorized_system_write
 
     _write_json(tmp_path, "write_guard_config.json", {"enabled": True})
-    _write_json(tmp_path, "teacher_wecom_map.json", {"李老师": "teacher1", "崔老师": "manager1"})
+    _write_json(tmp_path, "teacher_wecom_map.json", {"示例老师": "teacher1", "崔老师": "manager1"})
     _write_json(tmp_path, "staff.json", {
-        "teacher1": {"user_id": "teacher1", "name": "李老师", "role": "teacher"},
+        "teacher1": {"user_id": "teacher1", "name": "示例老师", "role": "teacher"},
         "manager1": {"user_id": "manager1", "name": "崔老师", "role": "manager"},
     })
     store = TuoguanStore(tmp_path)
@@ -70,7 +70,7 @@ def test_relationship_touch_rejects_a_salutation_for_the_wrong_wecom_target(tmp_
             identity=identity,
             target_role="teacher",
             target_user_id="teacher1",
-            target_name="李老师",
+            target_name="示例老师",
             touch_type="record_relief",
             message="崔老师，麻烦你确认一下今天的任务结果。",
             reason="测试称呼和企业微信目标必须一致。",
@@ -88,7 +88,7 @@ def test_autonomous_loop_can_queue_boss_presence_but_not_teacher(tmp_path):
 
     _write_json(tmp_path, "write_guard_config.json", {"enabled": True})
     _write_json(tmp_path, "wecom_whitelist.json", {"super_users": ["boss1"], "user_roles": {"boss1": "boss"}})
-    _write_json(tmp_path, "teacher_wecom_map.json", {"金总": "boss1"})
+    _write_json(tmp_path, "teacher_wecom_map.json", {"机构负责人": "boss1"})
     _write_json(tmp_path, "notification_outbox.json", [])
     _write_json(tmp_path, "students.json", {})
     _write_json(tmp_path, "tasks.json", [])
@@ -118,7 +118,7 @@ def test_autonomous_loop_can_queue_boss_presence_but_not_teacher(tmp_path):
                 {
                     "target_role": "boss",
                     "touch_type": "presence_report",
-                    "message": "金总，我看到今天续费目标材料已经进入历史分析与沟通准备阶段。建议你不用回复，我会继续盯记录覆盖、风险分组和明天早上的推进摘要。",
+                    "message": "机构负责人，我看到今天续费目标材料已经进入历史分析与沟通准备阶段。建议你不用回复，我会继续盯记录覆盖、风险分组和明天早上的推进摘要。",
                     "reason": "老板需要感受到 Hermes 在岗，同时内容有真实目标依据。",
                     "value": "增强存在感，不制造无意义打扰。",
                     "work_related": True,
@@ -128,7 +128,7 @@ def test_autonomous_loop_can_queue_boss_presence_but_not_teacher(tmp_path):
                     "target_role": "teacher",
                     "target_user_id": "teacher1",
                     "touch_type": "care",
-                    "message": "李老师，今天辛苦了。孩子们午休还顺利吗？你随口回一句就行。",
+                    "message": "示例老师，今天辛苦了。孩子们午休还顺利吗？你随口回一句就行。",
                     "reason": "老师同事陪伴候选，不是工作催促。",
                     "value": "让老师觉得 Hermes 是会关心人的同事。",
                     "private_emotional_support": True,
@@ -207,10 +207,10 @@ def test_autonomous_loop_can_queue_teacher_and_manager_fact_requests(tmp_path):
                 {
                     "target_role": "teacher",
                     "target_user_id": "teacher1",
-                    "target_name": "李老师",
+                    "target_name": "示例老师",
                     "touch_type": "record_relief",
-                    "message": "李老师，老板安排给你的任务我来跟一下：请告诉我目前沟通结果是什么？如果还没开始，也请回我当前进展。",
-                    "reason": "已有任务缺老师执行结果，事实归属人是李老师。",
+                    "message": "示例老师，老板安排给你的任务我来跟一下：请告诉我目前沟通结果是什么？如果还没开始，也请回我当前进展。",
+                    "reason": "已有任务缺老师执行结果，事实归属人是示例老师。",
                     "value": "让任务进展能回到上下文，不再反复打扰老板。",
                     "work_related": True,
                     "external_send_allowed": True,
@@ -218,9 +218,9 @@ def test_autonomous_loop_can_queue_teacher_and_manager_fact_requests(tmp_path):
                 {
                     "target_role": "manager",
                     "target_user_id": "manager1",
-                    "target_name": "申老师",
+                    "target_name": "另一位老师",
                     "touch_type": "manager_assist",
-                    "message": "申老师，我在整理今天的运营事实，请帮我确认一下老师任务执行结果是否已经收齐？缺哪位老师的反馈直接回我就行。",
+                    "message": "另一位老师，我在整理今天的运营事实，请帮我确认一下老师任务执行结果是否已经收齐？缺哪位老师的反馈直接回我就行。",
                     "reason": "缺店长运营事实，事实归属人是店长。",
                     "value": "让小优能自己追运营事实，不把所有卡点都交给老板。",
                     "work_related": True,
@@ -313,18 +313,18 @@ def test_test_mode_policy_allows_only_boss_and_li_teacher(tmp_path):
         tmp_path,
         "wecom_whitelist.json",
         {
-            "super_users": ["JinWenJie"],
-            "allowed_users": ["CeShi", "LiuLi", "manager1"],
-            "user_roles": {"JinWenJie": "boss", "CeShi": "teacher", "LiuLi": "teacher", "manager1": "manager"},
+            "super_users": ["owner_test"],
+            "allowed_users": ["teacher_test", "LiuLi", "manager1"],
+            "user_roles": {"owner_test": "boss", "teacher_test": "teacher", "LiuLi": "teacher", "manager1": "manager"},
         },
     )
-    _write_json(tmp_path, "teacher_wecom_map.json", {"李老师": "CeShi", "刘老师": "LiuLi", "店长": "manager1"})
+    _write_json(tmp_path, "teacher_wecom_map.json", {"示例老师": "teacher_test", "另一位老师": "LiuLi", "店长": "manager1"})
     _write_json(
         tmp_path,
         "relationship_touch_policy.json",
         {
-            "boss": {"mode": "direct", "allowed_start": "08:00", "allowed_end": "19:00", "daily_limit": 2, "allowed_target_user_ids": ["JinWenJie"]},
-            "teacher": {"mode": "direct", "allowed_start": "10:00", "allowed_end": "18:30", "daily_limit": 2, "allowed_target_user_ids": ["CeShi"]},
+            "boss": {"mode": "direct", "allowed_start": "08:00", "allowed_end": "19:00", "daily_limit": 2, "allowed_target_user_ids": ["owner_test"]},
+            "teacher": {"mode": "direct", "allowed_start": "10:00", "allowed_end": "18:30", "daily_limit": 2, "allowed_target_user_ids": ["teacher_test"]},
             "manager": {"mode": "candidate", "allowed_target_user_ids": []},
             "parent": {"mode": "disabled"},
         },
@@ -337,7 +337,7 @@ def test_test_mode_policy_allows_only_boss_and_li_teacher(tmp_path):
 
     def decision_provider(_materials):
         return {
-            "employee_summary": "小优在测试期只允许问金总和李老师。",
+            "employee_summary": "小优在测试期只允许问机构负责人和示例老师。",
             "institution_understanding": "",
             "goal_progress_view": "",
             "observations": [],
@@ -347,21 +347,21 @@ def test_test_mode_policy_allows_only_boss_and_li_teacher(tmp_path):
             "relationship_touch_candidates": [
                 {
                     "target_role": "teacher",
-                    "target_user_id": "CeShi",
-                    "target_name": "李老师",
+                    "target_user_id": "teacher_test",
+                    "target_name": "示例老师",
                     "touch_type": "record_relief",
-                    "message": "李老师，我在测试主动工作能力，请帮我确认一下今天你方便让我几点问你任务记录相关事实？",
-                    "reason": "测试期允许小优主动问李老师一个具体任务记录事实。",
-                    "value": "让小优自己学会按李老师的时间偏好工作。",
+                    "message": "示例老师，我在测试主动工作能力，请帮我确认一下今天你方便让我几点问你任务记录相关事实？",
+                    "reason": "测试期允许小优主动问示例老师一个具体任务记录事实。",
+                    "value": "让小优自己学会按示例老师的时间偏好工作。",
                     "work_related": True,
                     "external_send_allowed": True,
                 },
                 {
                     "target_role": "teacher",
                     "target_user_id": "LiuLi",
-                    "target_name": "刘老师",
+                    "target_name": "另一位老师",
                     "touch_type": "record_relief",
-                    "message": "刘老师，请帮我确认一下今天学生记录有没有缺口？",
+                    "message": "另一位老师，请帮我确认一下今天学生记录有没有缺口？",
                     "reason": "非测试白名单老师，不应主动发送。",
                     "value": "不应发送。",
                     "work_related": True,
@@ -394,7 +394,7 @@ def test_test_mode_policy_allows_only_boss_and_li_teacher(tmp_path):
 
     assert result["ok"] is True
     outbox = json.loads((tmp_path / "notification_outbox.json").read_text(encoding="utf-8"))
-    assert [item["touser"] for item in outbox] == ["CeShi"]
+    assert [item["touser"] for item in outbox] == ["teacher_test"]
     assert outbox[0]["auto_effects"]["sends_teacher_messages"] is True
 
 
@@ -407,18 +407,18 @@ def test_tool_service_exposes_li_teacher_touch_policy_and_candidate_writeback(tm
         tmp_path,
         "wecom_whitelist.json",
         {
-            "super_users": ["JinWenJie"],
-            "allowed_users": ["JinWenJie", "CeShi", "LiuLi"],
-            "user_roles": {"JinWenJie": "boss", "CeShi": "teacher", "LiuLi": "teacher"},
+            "super_users": ["owner_test"],
+            "allowed_users": ["owner_test", "teacher_test", "LiuLi"],
+            "user_roles": {"owner_test": "boss", "teacher_test": "teacher", "LiuLi": "teacher"},
         },
     )
-    _write_json(tmp_path, "teacher_wecom_map.json", {"李老师": "CeShi", "刘老师": "LiuLi"})
+    _write_json(tmp_path, "teacher_wecom_map.json", {"示例老师": "teacher_test", "另一位老师": "LiuLi"})
     _write_json(
         tmp_path,
         "relationship_touch_policy.json",
         {
-            "boss": {"mode": "direct", "allowed_target_user_ids": ["JinWenJie"], "daily_limit": 2},
-            "teacher": {"mode": "direct", "allowed_target_user_ids": ["CeShi"], "daily_limit": 2},
+            "boss": {"mode": "direct", "allowed_target_user_ids": ["owner_test"], "daily_limit": 2},
+            "teacher": {"mode": "direct", "allowed_target_user_ids": ["teacher_test"], "daily_limit": 2},
             "manager": {"mode": "candidate", "allowed_target_user_ids": []},
             "parent": {"mode": "disabled"},
         },
@@ -430,23 +430,23 @@ def test_tool_service_exposes_li_teacher_touch_policy_and_candidate_writeback(tm
     service = TuoguanToolService(
         store=store,
         platform="wecom_callback",
-        user_id="JinWenJie",
-        user_name="金总",
-        chat_id="JinWenJie",
-        session_key="JinWenJie",
+        user_id="owner_test",
+        user_name="机构负责人",
+        chat_id="owner_test",
+        session_key="owner_test",
     )
 
     queried = service.query_relationship_touch_candidates(target_role="teacher")
     assert queried["ok"] is True
-    assert queried["data"]["policy"]["teacher"]["allowed_target_user_ids"] == ["CeShi"]
+    assert queried["data"]["policy"]["teacher"]["allowed_target_user_ids"] == ["teacher_test"]
 
     allowed = service.submit_relationship_touch_candidate(
         target_role="teacher",
-        target_user_id="CeShi",
-        target_name="李老师",
+        target_user_id="teacher_test",
+        target_name="示例老师",
         touch_type="record_relief",
-        message="李老师，我在测试主动工作能力，想确认你今天几点方便我问一个任务记录事实？",
-        reason="测试期允许主动向李老师确认具体工作事实。",
+        message="示例老师，我在测试主动工作能力，想确认你今天几点方便我问一个任务记录事实？",
+        reason="测试期允许主动向示例老师确认具体工作事实。",
         value="验证小优可主动问事实归属人。",
         work_related=True,
         operation_id="touch-li-allowed",
@@ -454,9 +454,9 @@ def test_tool_service_exposes_li_teacher_touch_policy_and_candidate_writeback(tm
     blocked = service.submit_relationship_touch_candidate(
         target_role="teacher",
         target_user_id="LiuLi",
-        target_name="刘老师",
+        target_name="另一位老师",
         touch_type="record_relief",
-        message="刘老师，我想确认一个学生记录事实。",
+        message="另一位老师，我想确认一个学生记录事实。",
         reason="非测试白名单老师，只能留下内部候选。",
         value="验证白名单收口。",
         work_related=True,
@@ -473,7 +473,7 @@ def test_tool_service_exposes_li_teacher_touch_policy_and_candidate_writeback(tm
         for line in (tmp_path / "relationship_touch_candidates.jsonl").read_text(encoding="utf-8").splitlines()
         if line.strip()
     ]
-    assert [row["target_user_id"] for row in rows] == ["CeShi", "LiuLi"]
+    assert [row["target_user_id"] for row in rows] == ["teacher_test", "LiuLi"]
     assert rows[0]["external_send_allowed"] is True
     assert rows[1]["external_send_allowed"] is False
 
@@ -512,7 +512,7 @@ def test_teacher_fact_request_cannot_be_parent_outreach_instruction(tmp_path):
                     "target_role": "teacher",
                     "target_user_id": "teacher1",
                     "touch_type": "record_relief",
-                    "message": "李老师，请你现在联系家长，把这段话发给家长后告诉我结果。",
+                    "message": "示例老师，请你现在联系家长，把这段话发给家长后告诉我结果。",
                     "reason": "这会变成对家长触达指令。",
                     "value": "不应发送。",
                     "work_related": True,

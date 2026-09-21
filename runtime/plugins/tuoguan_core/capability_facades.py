@@ -7,7 +7,7 @@ import json
 from typing import Any, Callable
 
 
-CAPABILITY_MANIFEST_VERSION = "xiaoyou-capabilities-v1.4-23"
+CAPABILITY_MANIFEST_VERSION = "xiaoyou-capabilities-v1.4-24"
 
 
 DOMAIN_OPERATIONS: dict[str, tuple[str, ...]] = {
@@ -115,12 +115,19 @@ FAST_PATH_TOOL_NAMES = (
     "tuoguan_create_task",
     "tuoguan_cancel_task",
     "tuoguan_update_task",
+    # Daily student observations are a core teacher workflow.  Expose this
+    # existing concrete Tool beside the other high-frequency direct Tools so
+    # its precise ``student_name`` / ``content`` schema is not confused with
+    # the records domain facade's generic operation envelope.  This changes
+    # model-visible capability metadata only; it does not infer an intent,
+    # select a Tool, or relax the Tool's permission/writeback boundaries.
+    "tuoguan_record_student",
     "tuoguan_dashboard_link",
     "tuoguan_query_staff_directory",
     "tuoguan_query_active_work_context",
 )
 
-# The task facade remains in the fixed 23-tool surface for compatibility with
+# The task facade remains in the fixed 24-tool surface for compatibility with
 # established Hermes sessions. The core contract tells the model to use the
 # direct task tools for create/update/cancel; this facade is the long-tail
 # fallback only and must not become a competing primary route.
@@ -148,7 +155,7 @@ def operation_manifest() -> dict[str, Any]:
     return {
         "manifest_version": CAPABILITY_MANIFEST_VERSION,
         "frozen": True,
-        "surface": "11_fast_paths_plus_12_domain_facades",
+        "surface": "12_fast_paths_plus_12_domain_facades",
         "model_visible_tool_count": len(FAST_PATH_TOOL_NAMES) + len(MODEL_VISIBLE_DOMAIN_NAMES),
         "fast_paths": list(FAST_PATH_TOOL_NAMES),
         "domains": len(MODEL_VISIBLE_DOMAIN_NAMES),

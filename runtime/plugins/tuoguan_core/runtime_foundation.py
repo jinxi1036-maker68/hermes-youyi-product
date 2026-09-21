@@ -87,12 +87,30 @@ WRITE_TOOLS = {
     "tuoguan_review_project_opportunity",
     "tuoguan_submit_work_commitment",
     "tuoguan_update_work_commitment",
+    # Progressive governance claims are explicit model-selected contracts.
+    # Querying a legacy reference creates only an audited, non-authoritative
+    # observation. It deliberately is *not* listed here: Hermes must still be
+    # able to read that reference and then, in the same turn, decide whether a
+    # separate confirmed-record Tool is appropriate. Its store mutation still
+    # crosses write_authorization_for below.
+    "tuoguan_record_confirmed_student_master",
+    "tuoguan_record_confirmed_student_service",
+    "tuoguan_record_confirmed_person_status",
+    "tuoguan_record_confirmed_person_assignment",
+    "tuoguan_record_confirmed_handover_open",
+    "tuoguan_record_confirmed_handover_complete",
+    "tuoguan_record_confirmed_governance_decision",
+    # Source-scoped Agenda task action. The task, recipient and tenant remain
+    # server-attested; Hermes only decides whether a contact is warranted and
+    # what it should say.
+    "agenda_contact_current_task_party",
 }
 
 OUTREACH_TOOLS = {
     "tuoguan_submit_relationship_touch_candidate",
     "tuoguan_execute_relationship_touch",
     "tuoguan_update_relationship_touch",
+    "agenda_contact_current_task_party",
 }
 
 MODEL_SELECTED_READ_TOOLS = {
@@ -155,6 +173,8 @@ MODEL_SELECTED_READ_TOOLS = {
     "tuoguan_query_attention_threads",
     "tuoguan_query_proactive_authorizations",
     "tuoguan_query_goal_actions",
+    "tuoguan_query_pending_governance_claims",
+    "tuoguan_query_authoritative_governance",
     "tuoguan_generate_autonomous_recovery_report",
     "tuoguan_generate_due_wakeup_candidates",
     "tuoguan_generate_autonomous_acceptance_pack",
@@ -260,12 +280,52 @@ def _looks_like_unverified_success(text: str) -> bool:
     return any(word in compact for word in success_words)
 
 
-_INTERNAL_ERROR_MARKERS = (
+_INTERNAL_FAILURE_MARKERS = (
     "api call failed", "rpm exhausted", "provider error", "custom stream drop",
     "traceback", "retrying api", "internal server error", "debug:",
-    "writeback_verified", "record_id=", "task_id=", "event_id=", "ok=true",
     "operation interrupted", "waiting for model response",
 )
+
+# These strings are observability fields, not evidence that an operation
+# failed.  A completed Receipt may legitimately be rendered alongside one by
+# an otherwise natural model reply.  Treating them as a provider failure used
+# to replace a verified result with the generic "not completed" response.
+# Keep this separate from ``_INTERNAL_FAILURE_MARKERS`` so reply honesty is
+# driven by the Receipt rather than a diagnostic field name.
+_INTERNAL_OBSERVABILITY_FIELD_PATTERNS = (
+    re.compile(r"(?i)(?:user_id|record_id|task_id|event_id|receipt_id|operation_id|reply_id|ticket_id|delivery_id)\s*(?:=|:)\s*`?[^\s,，;；。.!！？?()（）\[\]]+`?"),
+    re.compile(r"(?i)(?:writeback_verified|render_verified|durable_reply_staged|ok)\s*(?:=|:)\s*(?:true|false)\b"),
+    # Structured runtime snapshots are audit evidence, not language for a
+    # teacher, manager or owner.  They must cross Reply Truth as data rather
+    # than being copied into a channel reply.
+    re.compile(r"(?im)^\s*(?:agenda_service|agenda_task|durable_reply_staged|durable_reply|execution_receipt|execution|system_error|idempotency_result|delivery_state)\b[^\n]*$"),
+    # Whole machine-status rows sometimes arrive in Markdown bullets.  Match
+    # only a structured key/value shape; natural business prose containing
+    # words such as "任务" or "候选" is not touched.
+    re.compile(
+        r"(?im)^\s*(?:[-*]\s*)?(?:visible(?:_scope|\s+scope)|runtime(?:_status|\s+status)|"
+        r"provider|model|context|environment|candidate(?:_state)?|execution(?:_state)?|"
+        r"receipt|writeback|outbox|agenda_service)\s*(?:=|:|：)\s*[^\n]*$"
+    ),
+)
+
+
+def _redact_internal_observability_fields(text: str) -> tuple[str, bool]:
+    """Remove transport diagnostics without changing an execution outcome.
+
+    This is deliberately a format-only redaction.  It never interprets the
+    user's message, classifies a business request, selects a Tool, or creates
+    a result.  The accompanying Receipt remains the sole business truth.
+    """
+
+    value = str(text or "")
+    redacted = value
+    for pattern in _INTERNAL_OBSERVABILITY_FIELD_PATTERNS:
+        redacted = pattern.sub("", redacted)
+    redacted = re.sub(r"[\s,，;；]+([。！？!?])", r"\1", redacted)
+    redacted = re.sub(r"[ \t]{2,}", " ", redacted).strip(" \t,，;；")
+    redacted = re.sub(r"\n{3,}", "\n\n", redacted).strip()
+    return redacted, redacted != value
 
 _INTERNAL_MECHANISM_MARKERS = (
     "运行时分类器", "工具调用被", "工具被拦截", "系统路由层",
@@ -287,6 +347,7 @@ def _sanitize_external_reply(
     institution_commitment_state: str = "",
     future_execution_verified: bool = False,
     commitment_write_verified: bool = False,
+    technical_query: bool = False,
 ) -> str:
     value = str(text or "")
     # Direct callers that explicitly supply an outreach state are testing an
@@ -321,9 +382,9 @@ def _sanitize_external_reply(
     if str(actor_role or "") != "boss" and str(actor_name or "").strip():
         # A fresh Hermes session may still receive shared long-term memory.
         # Only repair a direct salutation, never a legitimate reference such
-        # as "金总安排的任务" in the body of a staff reply.
+        # as "机构负责人安排的任务" in the body of a staff reply.
         salutation = re.compile(
-            r"(?m)^(\s*(?:(?:在的|好的|你好|您好|早上好|下午好|晚上好)[，,、\s]*)?)金总(?=[，,。！!：:\s])"
+            r"(?m)^(\s*(?:(?:在的|好的|你好|您好|早上好|下午好|晚上好)[，,、\s]*)?)机构负责人(?=[，,。！!：:\s])"
         )
         value = salutation.sub(lambda match: f"{match.group(1)}{actor_name}", value)
     if identity_query and (str(actor_name or "").strip() or str(actor_role or "").strip()):
@@ -334,11 +395,22 @@ def _sanitize_external_reply(
         return f"当前企业微信识别到您是{display}，角色是{role_label}。我是小优。"
     if outreach_state == "denied":
         return "该对象当前没有主动联系授权，本轮未执行、未入队，也没有联系对方。"
+    # A model may include an internal operation field after a verified Tool
+    # result.  Strip that field first; it must never be mistaken for a failed
+    # operation and overturn a completed Receipt.  A real provider/runtime
+    # failure marker is deliberately separate.  The Work Runtime's public
+    # terminal bridge records an unusable post-Receipt reply as an empty reply
+    # and invokes its same-Hermes, zero-Tool recovery port; this text sanitizer
+    # neither invents a business reply nor re-executes a Tool.
+    value, _observability_redacted = _redact_internal_observability_fields(value)
     lowered = value.lower()
-    if any(marker in lowered for marker in _INTERNAL_ERROR_MARKERS):
+    if any(marker in lowered for marker in _INTERNAL_FAILURE_MARKERS):
         return "我刚才连接中断，这次没有处理完整。请稍等一下再发一次，我会重新接着处理。"
-    if any(marker in value for marker in _INTERNAL_MECHANISM_MARKERS):
-        return "我刚才不该讲内部处理细节。你正常说要查谁、记录谁、处理哪件事就行，我会按你的身份权限去理解和处理。"
+    if not technical_query and any(marker in value for marker in _INTERNAL_MECHANISM_MARKERS):
+        # A runtime-mechanism leak is not a customer-facing answer. The
+        # trusted direct-channel bridge treats it as reply-only recovery work;
+        # no apology template is emitted and no business Tool is re-entered.
+        return ""
     unverified_task_claim_terms = (
         "任务正式闭环",
         "任务已闭环",
@@ -470,8 +542,16 @@ def _contains_institution_claim(value: str) -> bool:
     subject to the institution-work receipt guard.
     """
 
+    # Require an actual completion marker.  A phrase such as
+    # ``按照记录规则，只有老师确认过的观察才能写入`` contains both
+    # "规则" and "确认", but it does not claim that the rule itself was
+    # approved or implemented.  The former broad proximity pattern turned
+    # honest clarification replies into a false institution-success warning.
+    subjects = r"(?:制度|方案|流程|规则|学生记录|任务授权|绩效|工资|四项)"
+    completion = r"(?:确认|定下|处理|闭环|完成|落实|生效)"
     pattern = re.compile(
-        r"(?:制度|方案|流程|规则|学生记录|任务授权|绩效|工资|四项).{0,18}(?:已|已经)?(?:确认|定下|处理|闭环|完成|落实|生效)"
+        rf"(?:{subjects}.{{0,12}}(?:已经|已|正式|现已).{{0,6}}{completion}"
+        rf"|{subjects}.{{0,12}}{completion}(?:完成|通过|了|生效))"
     )
     for match in pattern.finditer(str(value or "")):
         claim = match.group(0)
@@ -807,9 +887,27 @@ def begin_inbound(
     role: str,
     raw_text: str,
     actor_name: str = "",
+    tenant_id: str = "",
+    channel: str = "wecom_callback",
 ) -> dict[str, Any] | None:
     if not foundation_enabled(store):
         return None
+    # Trusted transports may open the ledger before Hermes augments the model
+    # message with an auto-loaded Skill.  A later pre-LLM hook for the same
+    # physical message must not replace the transport-authenticated user text
+    # with that instructional payload.  This is correlation by trusted
+    # message id, never by user-language classification.
+    with _LOCK:
+        existing = _PENDING_BY_USER.get(str(user_id or ""))
+        if (
+            isinstance(existing, dict)
+            and not existing.get("completed_at")
+            and str(existing.get("message_id") or "") == str(message_id or "")
+            and str(existing.get("data_dir") or "") == str(store.data_dir.resolve())
+        ):
+            if str(actor_name or "").strip() and not str(existing.get("actor_name") or "").strip():
+                existing["actor_name"] = str(actor_name).strip()
+            return deepcopy(existing)
     card, intent = "", "unclassified_message"
     runtime_tool_cards = _runtime_tool_cards(store, role)
     item = {
@@ -818,8 +916,10 @@ def begin_inbound(
         "source_message_id": str(message_id or ""),
         "conversation_id": str(conversation_id or user_id),
         "data_dir": str(store.data_dir.resolve()),
-        "tenant_id": current_tenant_id(),
-        "channel": "wecom_callback",
+        # These facts come from the authenticated Runtime Contract turn.  Do
+        # not infer a tenant from the Hermes installation or a model payload.
+        "tenant_id": str(tenant_id or current_tenant_id()),
+        "channel": str(channel or "wecom_callback"),
         "user_id": user_id,
         "role": role,
         "actor_name": str(actor_name or ""),
@@ -936,21 +1036,25 @@ def write_authorization_for(user_id: str, operation: str) -> dict[str, str] | No
         "submit_agent_delegation_result",
         "update_agent_delegation_decision",
         "update_attention_thread",
+        "agenda_contact_current_task_party",
         "review_project_opportunity",
+        "governance_claim_query_reference",
+        "governance_claim_submit",
+        "governance_claim_record",
+        "governance_claim_confirm",
     }
     if str(operation or "") not in supported_write_operations:
         return None
-    session_user = ""
-    session_id = ""
+    # Tool authorization consumes the product Runtime Contract rather than a
+    # Hermes-private session ContextVar.  A model-provided ``user_id`` is
+    # never sufficient to authorize a write.
     try:
-        from gateway.session_context import get_session_env
-        session_user = str(get_session_env("HERMES_SESSION_USER_ID", "") or "")
-        session_id = str(get_session_env("HERMES_SESSION_ID", "") or get_session_env("HERMES_SESSION_KEY", "") or "")
+        from .runtime_contract import current_trusted_turn
+        trusted_turn = current_trusted_turn()
     except Exception:
-        session_user = ""
-        session_id = ""
-    if ":" in session_user:
-        session_user = session_user.split(":", 1)[1].strip()
+        trusted_turn = None
+    session_user = str(getattr(trusted_turn, "actor_user_id", "") or "")
+    session_id = str(getattr(trusted_turn, "session_id", "") or "")
     with _LOCK:
         item = _PENDING_BY_USER.get(str(user_id or ""))
         if not item or item.get("completed_at"):
@@ -958,11 +1062,10 @@ def write_authorization_for(user_id: str, operation: str) -> dict[str, str] | No
         entered_model = bool(item.get("entered_model"))
         same_session_user = bool(session_user) and session_user == str(user_id or "")
         same_session = bool(session_id) and session_id == str(item.get("session_id") or "")
-        # Hermes v0.20 may execute tools in a context where the pre-LLM hook has
-        # created the turn ledger but the in-memory entered_model flag is not
-        # visible to the tool call. In that case, require the live Hermes session
-        # to still match the same actor and, when known, the same session before
-        # letting the tool's own role/permission/writeback checks proceed.
+        # A version may not preserve a ContextVar across its internal tool
+        # worker.  The Contract's pre-tool activation restores it from the
+        # public session/turn hook before this check.  Never fall back to a
+        # model argument or a Hermes private session variable.
         if not entered_model and not (same_session_user and (same_session or not str(item.get("session_id") or ""))):
             return None
         return {
@@ -1148,11 +1251,11 @@ def inject_model_context(*, session_id: str, sender_id: str, user_message: str) 
         points_rule = "本轮只能调用 tuoguan_query_summer_points_ranking，最终逐字使用工具 rendered_text，不得改写排名。"
     autonomous_work_rule = _autonomous_work_context(str(sender_id or ""), str(item.get("actor_role") or item.get("role") or ""))
     foundation_rule = (
-        "【优益模型主导原则】由模型理解用户、结合上下文、决定是否追问或使用功能并负责最终回复；"
+        "【示例机构模型主导原则】由模型理解用户、结合上下文、决定是否追问或使用功能并负责最终回复；"
         "系统只在实际执行时校验身份、权限和真实结果，不限制模型正常对话、分析和建议。"
         if item.get("model_intent") == "unclassified_message"
         else
-        "【优益执行边界】模型仍负责理解、分析、追问和选择下一步；系统不因业务流程偏好限制模型思考。"
+        "【示例机构执行边界】模型仍负责理解、分析、追问和选择下一步；系统不因业务流程偏好限制模型思考。"
         "当模型要声明真实业务数据或执行成功时，需要有可信工具结果；不得仅凭聊天历史声称成功。"
         "写操作只有工具返回 ok=true 且 writeback_verified=true 才能回复成功；"
         "任务反馈优先关联最近任务上下文；传给任务工具的 reply 必须保持用户原话，不得补充用户未说的事实；"
@@ -1211,17 +1314,14 @@ def observe_tool_result(*, session_id: str, tool_name: str, args: Any, result: A
             item["result_count"] = data.get("result_count", data.get("count", item.get("result_count")))
             item["data_version"] = data.get("data_version", item.get("data_version"))
             successful = isinstance(parsed, dict) and parsed.get("ok") is True
-            if successful and effective_tool_name == "tuoguan_query_students":
-                item["terminal_tool_result"] = True
             non_terminal_redirect = isinstance(parsed, dict) and str(parsed.get("error") or "") in {"goal_workspace_required"}
-            if successful and not non_terminal_redirect and (effective_tool_name in WRITE_TOOLS or effective_tool_name in {
-                "tuoguan_next_task", "tuoguan_current_task_guidance",
-                "tuoguan_goal_workspace", "tuoguan_query_tasks", "tuoguan_query_operations_report",
-                "tuoguan_dashboard_link", "tuoguan_query_summer_points", "tuoguan_query_summer_points_ranking",
-            }):
-                # A capability turn has one authoritative tool result. Composite
-                # actions belong inside a trusted tool, never in a model-driven
-                # sequence of independent writes.
+            if successful and not non_terminal_redirect and effective_tool_name in WRITE_TOOLS:
+                # Only a verified business mutation makes the turn terminal.
+                # A model may safely use a read result as evidence for its next
+                # model-selected step (for example query_students followed by
+                # record_student after it receives a canonical ID).  Those
+                # reads neither mutate data nor confer write authority, and
+                # duplicate/budget guards still bound the turn.
                 item["terminal_tool_result"] = True
                 if effective_tool_name == "tuoguan_update_task":
                     item["idempotency_verified"] = bool(data.get("idempotency_verified"))
@@ -1629,6 +1729,7 @@ def ensure_outbound_reply_recorded(
     try:
         from .models import UserIdentity
         from .self_evolution import SELF_EVOLUTION_EVENTS_FILE, record_self_evolution_application
+        from .turn_trace import context_selection_ids
         from .write_guard import authorized_system_write
 
         evolution_identity = UserIdentity(
@@ -1652,6 +1753,8 @@ def ensure_outbound_reply_recorded(
                 tool_write_verified=_tool_results_have_verified_write(item.get("tool_results") or []),
                 scope="direct_reply",
                 workstyle_adaptation=item.get("workstyle_adaptation") or {},
+                loaded_event_ids=context_selection_ids(session_id, source="self_evolution"),
+                trace_id=session_id,
                 limit=3,
             )
     except Exception:
@@ -1785,6 +1888,7 @@ def transform_final_response(*, store: TuoguanStore, session_id: str, response_t
     institution_commitment_state = ""
     future_execution_verified = False
     commitment_write_verified = False
+    technical_query = False
     with _LOCK:
         item = _TURN_BY_SESSION.get(str(session_id or "")) or {}
         actor_role = str(item.get("role") or "")
@@ -1806,6 +1910,10 @@ def transform_final_response(*, store: TuoguanStore, session_id: str, response_t
         if any(term in raw for term in ("主动联系", "主动找", "去问老师", "去问店长", "去问老板")):
             outreach_guard_applies = True
         identity_query = any(term in raw for term in ("我是谁", "认得我", "识别到的身份", "什么身份", "我的身份"))
+        technical_query = any(
+            term in raw
+            for term in ("技术细节", "运行时细节", "调试信息", "模型版本", "provider", "context window", "上下文窗口")
+        )
         authoritative_reply = _authoritative_task_write_reply(item) or _authoritative_read_reply(item)
     if authoritative_reply:
         response_text = authoritative_reply
@@ -1822,6 +1930,7 @@ def transform_final_response(*, store: TuoguanStore, session_id: str, response_t
         institution_commitment_state=institution_commitment_state,
         future_execution_verified=future_execution_verified,
         commitment_write_verified=commitment_write_verified,
+        technical_query=technical_query,
     )
 
 
@@ -1886,13 +1995,19 @@ def compact_tool_result_for_model(*, tool_name: str, args: Any, result: Any) -> 
         return json.dumps(projected, ensure_ascii=False, separators=(",", ":"))
     if effective_tool == "tuoguan_query_tasks":
         requested_task = str((args or {}).get("task_id") or "") if isinstance(args, dict) else ""
+        requested_limit = 20
+        if isinstance(args, dict):
+            try:
+                requested_limit = max(1, min(int(args.get("limit") or 20), 100))
+            except (TypeError, ValueError):
+                requested_limit = 20
         summaries = [row for row in (data.get("task_summaries") or []) if isinstance(row, dict)]
         closed = {"completed", "cancelled", "superseded", "expired", "closed", "done"}
         relevant = summaries if requested_task else [row for row in summaries if str(row.get("status") or "") not in closed]
         if not relevant and requested_task:
             relevant = summaries
         compact_tasks: list[dict[str, Any]] = []
-        for row in relevant[:5]:
+        for row in relevant[:requested_limit]:
             compact: dict[str, Any] = {}
             for key in (
                 "task_id", "id", "title", "status", "priority", "due_at",
@@ -1906,23 +2021,55 @@ def compact_tool_result_for_model(*, tool_name: str, args: Any, result: Any) -> 
         projected["data"] = {
             "result_scope": data.get("result_scope") or data.get("effective_scope") or "visible_tasks",
             "total_count": int(data.get("total_count") or data.get("count") or 0),
-            "returned_count": min(len(relevant), 5),
-            "truncated": bool(data.get("truncated")) or len(relevant) > 5,
+            "returned_count": min(len(relevant), requested_limit),
+            "truncated": bool(data.get("truncated")) or len(relevant) > requested_limit,
+            "offset": int(data.get("offset") or 0),
+            "next_offset": data.get("next_offset"),
+            "has_more": bool(data.get("has_more")),
             "as_of": str(data.get("as_of") or ""),
             "status_counts": data.get("status_counts") or {},
             "tasks": compact_tasks,
         }
     else:
+        candidates = [row for row in (data.get("candidates") or []) if isinstance(row, dict)]
+        if candidates:
+            # Same-name disambiguation is a safety-critical read result.  The
+            # model needs the authorised candidate ID plus the non-sensitive
+            # class/grade cue in order to ask the teacher a real question; do
+            # not collapse this evidence into an empty generic student list.
+            projected["data"] = {
+                "candidates": [
+                    {
+                        key: str(row.get(key) or "")[:120]
+                        for key in ("student_id", "student_name", "class_name", "class", "grade")
+                        if str(row.get(key) or "")
+                    }
+                    for row in candidates[:5]
+                ],
+                "no_write_performed": bool(data.get("no_write_performed")),
+            }
+            return json.dumps(projected, ensure_ascii=False, separators=(",", ":"))
         students = [row for row in (data.get("students") or []) if isinstance(row, dict)]
+        requested_limit = 30
+        if isinstance(args, dict):
+            try:
+                requested_limit = max(1, min(int(args.get("limit") or 30), 100))
+            except (TypeError, ValueError):
+                requested_limit = 30
         compact_students = []
-        for row in students[:5]:
+        # The projection is a context-size guard, not a hidden business result
+        # cap.  Preserve the page size the model explicitly requested (up to
+        # the Tool's public 100-row bound) so a 36-person roster is actually
+        # usable.  Pagination metadata remains available for larger scopes.
+        for row in students[:requested_limit]:
             profile = row.get("profile") if isinstance(row.get("profile"), dict) else {}
             recent = [entry for entry in (row.get("recent_records") or []) if isinstance(entry, dict)][:2]
             compact_students.append({
                 "name": str(row.get("name") or ""),
+                "student_id": str(row.get("student_id") or ""),
                 "profile": {
                     key: profile.get(key)
-                    for key in ("grade", "campus_id", "status", "teacher_name")
+                    for key in ("grade", "class_name", "class", "campus_id", "status", "teacher_name")
                     if profile.get(key) not in {None, ""}
                 },
                 "recent_record_count": len(row.get("recent_records") or []),
@@ -1937,11 +2084,21 @@ def compact_tool_result_for_model(*, tool_name: str, args: Any, result: Any) -> 
         projected["data"] = {
             "result_scope": data.get("result_scope") or data.get("query_scope") or "visible_students",
             "total_count": int(data.get("total_count") or data.get("count") or 0),
-            "returned_count": min(len(students), 5),
-            "truncated": bool(data.get("truncated")) or len(students) > 5,
+            "returned_count": min(len(students), requested_limit),
+            "truncated": bool(data.get("truncated")) or len(students) > requested_limit,
+            "offset": int(data.get("offset") or 0),
+            "next_offset": data.get("next_offset"),
+            "has_more": bool(data.get("has_more")),
             "as_of": str(data.get("as_of") or ""),
             "students": compact_students,
         }
+        evidence = data.get("business_object_evidence") if isinstance(data.get("business_object_evidence"), dict) else {}
+        if evidence:
+            projected["data"]["business_object_evidence"] = {
+                key: evidence.get(key)
+                for key in ("object_type", "object_id", "display_name", "object_ref", "attributes")
+                if evidence.get(key) not in {None, "", {}}
+            }
     rendered = json.dumps(projected, ensure_ascii=False, separators=(",", ":"))
     return rendered if len(rendered) < len(result) else None
 

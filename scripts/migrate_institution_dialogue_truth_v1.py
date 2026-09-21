@@ -169,15 +169,15 @@ def _ensure_safety_review(store: TuoguanStore) -> dict[str, Any]:
     return _ensure_draft(
         store,
         focus_key=SAFETY_FOCUS,
-        title="优益托管安全管理制度",
+        title="示例机构托管安全管理制度",
         summary="将已知安全做法整理为待重新审核的 V0.1 草案。",
         evidence=[{
             "source_kind": "pending_hypothesis",
             "summary": "历史安全制度对话需要按当前版本重新审核；未把历史聊天视为有效制度。",
         }],
-        artifact_title="优益托管安全管理制度 V0.1",
+        artifact_title="示例机构托管安全管理制度 V0.1",
         artifact_content=(
-            "优益托管安全管理制度 V0.1（待重新审核）\n"
+            "示例机构托管安全管理制度 V0.1（待重新审核）\n"
             "本版本只用于重新核对现有做法。具体责任、医疗、食品标准和应急要求均待老板与专业来源核验，未生效。"
         ),
         submit_for_review=True,
@@ -299,9 +299,9 @@ def migrate(data_dir: Path, *, apply: bool) -> dict[str, Any]:
                 "source_kind": "model_judgment",
                 "summary": "历史讨论提出学生记录制度需求；具体频率、抽查比例和绩效关联尚未由老板确认。",
             }],
-            artifact_title="优益托管学生记录制度 V0.1",
+            artifact_title="示例机构托管学生记录制度 V0.1",
             artifact_content=(
-                "优益托管学生记录制度 V0.1（待审核）\n"
+                "示例机构托管学生记录制度 V0.1（待审核）\n"
                 "目标：让责任老师能基于真实记录持续了解学生学习、作业和沟通情况。\n"
                 "待老板确认：记录范围、最小字段、填写频率、抽查方式及是否与任何考核关联。\n"
                 "本草案未生效，不自动要求老师填写，也不改变绩效或工资。"
@@ -318,9 +318,9 @@ def migrate(data_dir: Path, *, apply: bool) -> dict[str, Any]:
                 "source_kind": "model_judgment",
                 "summary": "历史讨论反复要求任务必须可取消、可回执、可核验；具体授权范围尚待老板确认。",
             }],
-            artifact_title="优益托管任务授权边界 V0.1",
+            artifact_title="示例机构托管任务授权边界 V0.1",
             artifact_content=(
-                "优益托管任务授权边界 V0.1（待审核）\n"
+                "示例机构托管任务授权边界 V0.1（待审核）\n"
                 "小优只在明确目标、责任人和成功证据存在时创建低风险任务；取消、完成和提醒必须回到同一权威任务记录。\n"
                 "待老板确认：可自主创建的任务类型、人员范围、频率和升级方式。\n"
                 "本草案未生效，不自动扩大主动联系或任务权限。"
@@ -337,9 +337,9 @@ def migrate(data_dir: Path, *, apply: bool) -> dict[str, Any]:
                 "source_kind": "pending_hypothesis",
                 "summary": "历史讨论提及可能关联记录与绩效；没有形成可执行、合法且经老板确认的制度。",
             }],
-            artifact_title="优益托管绩效与工资边界 V0.1",
+            artifact_title="示例机构托管绩效与工资边界 V0.1",
             artifact_content=(
-                "优益托管绩效与工资边界 V0.1（高风险草案）\n"
+                "示例机构托管绩效与工资边界 V0.1（高风险草案）\n"
                 "任何工资、绩效、处罚或奖励规则必须经过老板明确确认和必要专业核验。\n"
                 "小优不得根据聊天、学生记录或老师成长记录自动计算、调整或暗示工资与绩效。"
             ),

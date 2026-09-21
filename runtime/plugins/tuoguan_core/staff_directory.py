@@ -82,6 +82,7 @@ def _build_entries(store: TuoguanStore) -> list[dict[str, Any]]:
     mapping = _dict(store.read_json("teacher_wecom_map.json", {}))
     whitelist = _dict(store.read_json("wecom_whitelist.json", {}))
     directory = _dict(store.read_json("wecom_directory_cache.json", {}))
+    recipient_bindings = _dict(whitelist.get("wecom_contacts"))
     operational_facts = _staff_facts(store)
     directory_members = {
         str(item.get("user_id") or item.get("userid") or ""): item
@@ -91,7 +92,7 @@ def _build_entries(store: TuoguanStore) -> list[dict[str, Any]]:
     allowed = {str(item) for item in whitelist.get("allowed_users") or [] if str(item)}
     supers = {str(item) for item in whitelist.get("super_users") or [] if str(item)}
     roles = _dict(whitelist.get("user_roles"))
-    user_ids = set(staff) | set(directory_members) | allowed | supers | set(roles)
+    user_ids = set(staff) | set(directory_members) | allowed | supers | set(roles) | set(recipient_bindings)
     user_ids.update(str(value) for value in mapping.values() if str(value))
 
     entries: list[dict[str, Any]] = []
@@ -125,11 +126,14 @@ def _build_entries(store: TuoguanStore) -> list[dict[str, Any]]:
         )
         in_directory = bool(member)
         is_whitelisted = user_id in allowed or user_id in supers or user_id in roles
+        has_recipient_binding = user_id in recipient_bindings
         employment_status = str(profile.get("status") or "active").strip().lower()
-        is_active_staff = employment_status not in {"inactive", "left", "offboarded", "terminated", "离职", "停用"} and bool(in_directory or is_whitelisted)
+        is_active_staff = employment_status not in {"inactive", "left", "offboarded", "terminated", "离职", "停用"} and bool(in_directory or is_whitelisted or has_recipient_binding)
+        outbound_eligible, outbound_reason = _current_outbound_eligibility(store, user_id)
         status = _membership_status(
             in_directory=in_directory,
             is_whitelisted=is_whitelisted,
+            has_recipient_binding=has_recipient_binding,
             member=member,
             employment_status=employment_status,
         )
@@ -143,12 +147,18 @@ def _build_entries(store: TuoguanStore) -> list[dict[str, Any]]:
             "known_aliases": raw_aliases,
             "normalized_aliases": normalized_aliases,
             "in_wecom_directory": in_directory,
+            "has_wecom_recipient_binding": has_recipient_binding,
             "is_whitelisted": is_whitelisted,
+            "outbound_eligible": outbound_eligible,
+            "outbound_eligibility_reason": outbound_reason,
             "membership_status": status,
             "employment_status": employment_status,
             "is_active_staff": is_active_staff,
             "department_names": list(member.get("department_names") or []),
-            "source_evidence": _evidence(user_id, profile, member, aliases_by_user.get(user_id, []), fact, is_whitelisted),
+            "source_evidence": _evidence(
+                user_id, profile, member, aliases_by_user.get(user_id, []), fact,
+                is_whitelisted, has_recipient_binding,
+            ),
         }
         repair = _repair_candidate(entry)
         if repair:
@@ -198,7 +208,11 @@ def _repair_candidate(entry: dict[str, Any]) -> dict[str, Any] | None:
         return None
     needs_cleanup = bool(directory_name and _clean_business_name(directory_name) and _clean_business_name(directory_name) != directory_name)
     missing_staff_name = not str(entry.get("staff_name") or "")
-    configured_without_directory = bool(entry.get("is_whitelisted")) and not bool(entry.get("in_wecom_directory"))
+    configured_without_directory = (
+        bool(entry.get("is_whitelisted"))
+        and not bool(entry.get("in_wecom_directory"))
+        and not bool(entry.get("has_wecom_recipient_binding"))
+    )
     if not (needs_cleanup or missing_staff_name or configured_without_directory):
         return None
     value = {
@@ -208,6 +222,9 @@ def _repair_candidate(entry: dict[str, Any]) -> dict[str, Any] | None:
         "role": entry.get("role"),
         "aliases": entry.get("known_aliases") or [],
         "in_wecom_directory": bool(entry.get("in_wecom_directory")),
+        "has_wecom_recipient_binding": bool(entry.get("has_wecom_recipient_binding")),
+        "outbound_eligible": bool(entry.get("outbound_eligible")),
+        "outbound_eligibility_reason": entry.get("outbound_eligibility_reason"),
         "is_whitelisted": bool(entry.get("is_whitelisted")),
         "membership_status": entry.get("membership_status"),
         "evidence": entry.get("source_evidence") or [],
@@ -233,10 +250,14 @@ def _render_directory(rows: list[dict[str, Any]], repair_candidates: list[dict[s
         return "\n".join(lines)
     for item in rows:
         aliases = "、".join(_public_aliases(item.get("known_aliases") or [], item.get("user_id"))) or "无"
-        directory_name = str(item.get("directory_name") or "未在企业微信目录")
+        delivery_text = (
+            "当前可主动联系"
+            if item.get("outbound_eligible")
+            else "当前不可主动联系（" + str(item.get("outbound_eligibility_reason") or "缺少可信投递事实") + "）"
+        )
         lines.append(
-            f"- {item.get('business_name')}（{item.get('role_label')}，user_id={item.get('user_id')}）："
-            f"企业微信名={directory_name}；状态={item.get('membership_status')}；别名={aliases}"
+            f"- {item.get('business_name')}（{item.get('role_label')}）："
+            f"状态={item.get('membership_status')}；主动联系={delivery_text}；别名={aliases}"
         )
     if repair_candidates:
         lines.append("可整理为人员事实候选；必须由老板确认后才写入长期运营事实，未确认前不能说已经保存。")
@@ -260,6 +281,7 @@ def _evidence(
     mapped_aliases: list[str],
     fact: dict[str, Any],
     is_whitelisted: bool,
+    has_recipient_binding: bool,
 ) -> list[dict[str, Any]]:
     rows: list[dict[str, Any]] = []
     if profile:
@@ -270,6 +292,8 @@ def _evidence(
         rows.append({"source": "teacher_wecom_map.json", "user_id": user_id, "aliases": mapped_aliases})
     if is_whitelisted:
         rows.append({"source": "wecom_whitelist.json", "user_id": user_id})
+    if has_recipient_binding:
+        rows.append({"source": "wecom_recipient_binding", "user_id": user_id})
     if fact:
         rows.append({"source": "operational_facts.json", "user_id": user_id, "fact_id": fact.get("source_fact_id")})
     return rows
@@ -289,16 +313,43 @@ def _role_for(user_id: str, profile: dict[str, Any], member: dict[str, Any], rol
     return "staff"
 
 
-def _membership_status(*, in_directory: bool, is_whitelisted: bool, member: dict[str, Any], employment_status: str = "active") -> str:
+def _membership_status(*, in_directory: bool, is_whitelisted: bool, has_recipient_binding: bool, member: dict[str, Any], employment_status: str = "active") -> str:
     if str(employment_status or "").lower() in {"inactive", "left", "offboarded", "terminated", "离职", "停用"}:
         return "已离职停用（保留历史）"
     if in_directory and is_whitelisted:
         return "企业微信在职且已授权"
+    if has_recipient_binding and is_whitelisted:
+        return "在职、身份可信且已绑定企业微信收件人"
     if in_directory:
         return "企业微信目录存在但未授权"
     if is_whitelisted:
         return "系统已授权但企业微信目录未找到"
     return "历史映射或待确认"
+
+
+def _current_outbound_eligibility(store: TuoguanStore, user_id: str) -> tuple[bool, str]:
+    """Project the one current delivery-authority decision into directory facts.
+
+    This does not send, select a recipient, or interpret business content.  It
+    lets Hermes see the same active/trusted/bound/tenant decision that the
+    durable outbox will enforce at execution time.
+    """
+
+    try:
+        from .proactive_delivery_authority import ProactiveDeliveryAuthority
+        from .tenant_context import current_tenant_id
+        from .work_runtime import ReplyDestination
+
+        tenant_id = str(current_tenant_id() or "")
+        decision = ProactiveDeliveryAuthority(store.data_dir).decide(ReplyDestination(
+            tenant_id=tenant_id,
+            channel="wecom_callback",
+            recipient_id=str(user_id or ""),
+            source_identity="relationship_touch:" + tenant_id,
+        ))
+        return bool(decision.allowed), str(decision.reason or "")
+    except Exception:
+        return False, "delivery_authority_unavailable"
 
 
 def _role_label(role: str) -> str:
@@ -342,7 +393,7 @@ def _clean_business_name(value: Any) -> str:
     keys = _name_keys(value)
     if not keys:
         return ""
-    prefixed = (_ascii_cjk_key("优益"), _ascii_cjk_key("优益托管"))
+    prefixed = (_ascii_cjk_key("示例机构"), _ascii_cjk_key("示例机构托管"))
     unprefixed = [key for key in keys if not key.startswith(prefixed)]
     teacher_names = [key for key in unprefixed if key.endswith(_ascii_cjk_key("老师"))]
     if teacher_names:
@@ -364,7 +415,7 @@ def _name_keys(value: Any) -> set[str]:
     if not compact:
         return set()
     variants = {compact}
-    for prefix in ("优益托管", "优益"):
+    for prefix in ("示例机构托管", "示例机构"):
         key = _ascii_cjk_key(prefix)
         variants.update(item.removeprefix(key) for item in list(variants) if item.startswith(key))
     for suffix in ("老师", "店长", "校长", "执行校长"):

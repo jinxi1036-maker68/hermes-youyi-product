@@ -11,11 +11,11 @@ from typing import Any
 
 
 FORBIDDEN_MARKERS = (
-    "优益",
-    "金总",
-    "李老师",
-    "JinWenJie",
-    "youyi_tuoguan",
+    "示例机构",
+    "机构负责人",
+    "示例老师",
+    "owner_test",
+    "example_institution",
     "九月份续费率",
     "/opt/hermes-youyi/data/tuoguan-data",
 )

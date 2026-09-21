@@ -23,10 +23,10 @@ def _seed_staff_directory(path: Path) -> None:
         {
             "status": "ok",
             "members": [
-                {"user_id": "ShiLiLi", "name": "优益 🍋柠檬老师", "department_names": ["优益托管"], "status": 1},
-                {"user_id": "FengJuCai", "name": "优益🌈🌈🌈彩虹老师", "department_names": ["优益托管"], "status": 1},
-                {"user_id": "CuiXiaoXia", "name": "崔老师", "department_names": ["优益托管"], "status": 1},
-                {"user_id": "JinWenJie", "name": "金文杰", "department_names": ["优益托管"], "status": 1},
+                {"user_id": "ShiLiLi", "name": "示例机构 🍋柠檬老师", "department_names": ["示例机构托管"], "status": 1},
+                {"user_id": "FengJuCai", "name": "示例机构🌈🌈🌈彩虹老师", "department_names": ["示例机构托管"], "status": 1},
+                {"user_id": "CuiXiaoXia", "name": "崔老师", "department_names": ["示例机构托管"], "status": 1},
+                {"user_id": "owner_test", "name": "金文杰", "department_names": ["示例机构托管"], "status": 1},
             ],
         },
     )
@@ -35,9 +35,9 @@ def _seed_staff_directory(path: Path) -> None:
         "staff.json",
         {
             "ShiLiLi": {"name": "石老师", "role": "teacher"},
-            "FengJuCai": {"name": "冯老师", "role": "teacher"},
+            "FengJuCai": {"name": "另一位老师", "role": "teacher"},
             "CuiXiaoXia": {"name": "崔老师", "role": "manager"},
-            "JinWenJie": {"name": "金总", "role": "boss"},
+            "owner_test": {"name": "机构负责人", "role": "boss"},
             "OldSummer": {"name": "丁老师", "role": "teacher"},
         },
     )
@@ -50,10 +50,10 @@ def _seed_staff_directory(path: Path) -> None:
         path,
         "wecom_whitelist.json",
         {
-            "super_users": ["JinWenJie"],
+            "super_users": ["owner_test"],
             "allowed_users": ["ShiLiLi", "FengJuCai", "CuiXiaoXia"],
             "user_roles": {
-                "JinWenJie": "boss",
+                "owner_test": "boss",
                 "ShiLiLi": "teacher",
                 "FengJuCai": "teacher",
                 "CuiXiaoXia": "manager",
@@ -75,7 +75,7 @@ def test_staff_directory_matches_emoji_wecom_name_and_alias(tmp_path):
     row = result["staff"][0]
     assert row["user_id"] == "ShiLiLi"
     assert row["business_name"] == "石老师"
-    assert row["directory_name"] == "优益 🍋柠檬老师"
+    assert row["directory_name"] == "示例机构 🍋柠檬老师"
     assert "柠檬老师" in row["known_aliases"]
     assert row["repair_candidate"]["needs_owner_confirmation"] is True
     assert row["repair_candidate"]["value"]["in_wecom_directory"] is True
@@ -104,7 +104,7 @@ def test_staff_directory_treats_broad_wecom_question_as_roster_query(tmp_path):
     result = query_staff_directory(TuoguanStore(tmp_path), query="企业微信里都有谁")
     ids = {row["user_id"] for row in result["staff"]}
 
-    assert {"ShiLiLi", "FengJuCai", "CuiXiaoXia", "JinWenJie"} <= ids
+    assert {"ShiLiLi", "FengJuCai", "CuiXiaoXia", "owner_test"} <= ids
     assert result["result_count"] >= 4
 
 
@@ -138,7 +138,7 @@ def test_staff_directory_uses_confirmed_operational_fact_alias(tmp_path):
                     "status": "active",
                     "value": {
                         "business_name": "彩虹老师",
-                        "aliases": ["冯老师", "彩虹老师", "FengJuCai"],
+                        "aliases": ["另一位老师", "彩虹老师", "FengJuCai"],
                     },
                 }
             ]

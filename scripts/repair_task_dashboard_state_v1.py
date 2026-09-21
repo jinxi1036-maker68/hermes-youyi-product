@@ -144,7 +144,7 @@ def _repair_tasks(store: TuoguanStore, *, stamp: str) -> list[dict[str, Any]]:
                 _close_task(task, action="admin_confirmed_completed", text=text, stamp=stamp)
                 changed.append({"task_id": task_id, "status_after": "completed"})
             elif task_id == OWNER_CONTACT_TASK_ID:
-                text = "维护收口：老板确认“下午4点联系金总”已完成。"
+                text = "维护收口：老板确认“下午4点联系机构负责人”已完成。"
                 _close_task(task, action="owner_confirmed_completed", text=text, stamp=stamp)
                 changed.append({"task_id": task_id, "status_after": "completed"})
         return tasks

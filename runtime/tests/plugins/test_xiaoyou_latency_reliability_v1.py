@@ -17,9 +17,9 @@ def _event(text: str = "你好") -> MessageEvent:
         message_type=MessageType.TEXT,
         source=SessionSource(
             platform=Platform.WECOM_CALLBACK,
-            user_id="CeShi",
-            chat_id="corp:CeShi",
-            user_name="李老师",
+            user_id="teacher_test",
+            chat_id="corp:teacher_test",
+            user_name="示例老师",
             chat_type="dm",
         ),
     )
@@ -169,10 +169,10 @@ def test_turn_fence_discards_expired_or_superseded_model_work():
     )
 
     clear_turn_fences()
-    begin_callback_turn(message_id="old", chat_id="corp:CeShi", budget_seconds=38)
-    assert bind_session(message_id="old", session_id="session-old", chat_id="corp:CeShi")
+    begin_callback_turn(message_id="old", chat_id="corp:teacher_test", budget_seconds=38)
+    assert bind_session(message_id="old", session_id="session-old", chat_id="corp:teacher_test")
     mark_phase(session_id="session-old", phase="model")
-    begin_callback_turn(message_id="new", chat_id="corp:CeShi", budget_seconds=38)
+    begin_callback_turn(message_id="new", chat_id="corp:teacher_test", budget_seconds=38)
     assert block_reason(session_id="session-old") == "turn_superseded"
 
 
@@ -186,10 +186,10 @@ def test_turn_fence_never_cancels_a_turn_after_tool_phase_begins():
     )
 
     clear_turn_fences()
-    begin_callback_turn(message_id="write", chat_id="corp:CeShi", budget_seconds=38)
-    assert bind_session(message_id="write", session_id="session-write", chat_id="corp:CeShi")
+    begin_callback_turn(message_id="write", chat_id="corp:teacher_test", budget_seconds=38)
+    assert bind_session(message_id="write", session_id="session-write", chat_id="corp:teacher_test")
     mark_phase(session_id="session-write", phase="tool")
-    begin_callback_turn(message_id="next", chat_id="corp:CeShi", budget_seconds=38)
+    begin_callback_turn(message_id="next", chat_id="corp:teacher_test", budget_seconds=38)
     assert block_reason(session_id="session-write") == ""
 
 
@@ -420,9 +420,9 @@ def test_core_contract_keeps_simple_greetings_lightweight():
 
     identity = UserIdentity(
         platform="wecom_callback",
-        platform_user_id="CeShi",
-        canonical_user_id="CeShi",
-        person_name="李老师",
+        platform_user_id="teacher_test",
+        canonical_user_id="teacher_test",
+        person_name="示例老师",
         role="teacher",
         approval_state="approved",
     )

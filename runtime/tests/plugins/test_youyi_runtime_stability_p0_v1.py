@@ -24,7 +24,7 @@ def _store(root: Path):
     _write_json(root, "records.json", [])
     _write_json(root, "staff.json", {})
     _write_json(root, "wecom_whitelist.json", {"super_users": ["boss1"], "user_roles": {"boss1": "boss"}})
-    _write_json(root, "teacher_wecom_map.json", {"金总": "boss1"})
+    _write_json(root, "teacher_wecom_map.json", {"机构负责人": "boss1"})
     return TuoguanStore(root)
 
 
@@ -203,7 +203,7 @@ def test_supervision_health_does_not_count_terminal_p0_history_as_open(tmp_path)
         store.append_jsonl_verified(SUPERVISION_FINDINGS_FILE, {
             "record_type": "supervision_finding",
             "finding_id": "historical-p0",
-            "tenant_id": "youyi_tuoguan",
+            "tenant_id": "example_institution",
             "fingerprint": "historical-p0",
             "category": "dashboard_projection_stale",
             "severity": "p0",

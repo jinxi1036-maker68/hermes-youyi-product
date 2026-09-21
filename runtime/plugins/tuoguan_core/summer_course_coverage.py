@@ -497,6 +497,6 @@ def lesson_recording_help(text: str) -> str:
     course = next((name for name in DISPLAY_COURSES if name in str(text or "")), "这节")
     return (
         f"不用逐个孩子写。请用一段话说明{course}课的整体情况，再点名2-3名有明显表现的孩子。\n"
-        f"可以这样说：今天一二年级{course}课整体……，大部分孩子……。张三……，李四……，王五……。\n"
+        f"可以这样说：今天一二年级{course}课整体……，大部分孩子……。张三……，学生乙……，王五……。\n"
         "请带上年级组、课程、整体表现和点名孩子；系统会按课程表和出勤名单计算覆盖，缺勤孩子不会被覆盖。"
     )

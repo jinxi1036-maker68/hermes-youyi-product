@@ -345,7 +345,7 @@ def test_shadow_proactive_material_contains_execution_ready_target_and_question(
     prompt = module._system_prompt({"id": "proactive_owner", "actor_role": "boss"})
 
     assert "tuoguan_submit_relationship_touch_candidate" in prompt
-    assert "target_user_id=JinWenJie" in prompt
+    assert "target_user_id=owner_test" in prompt
     assert "是否优先推进续费回访" in prompt
     assert "不要再查询目标、任务或活动上下文" in prompt
 

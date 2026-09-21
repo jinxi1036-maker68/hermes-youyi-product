@@ -36,6 +36,7 @@ from .store import JSON_NO_CHANGE, TuoguanStore
 from .tenant_context import current_tenant_id
 from .workstyle_profiles import WORKSTYLE_EVENTS_FILE, daily_report_style_for_owner, record_workstyle_application
 from .write_guard import assert_business_write_allowed, authorized_system_write
+from plugins.platforms.http_policy import platform_httpx_limits
 
 DAILY_REPORT_RUNS_FILE = "daily_report_runs.jsonl"
 NOTIFICATION_OUTBOX_FILE = "notification_outbox.json"
@@ -45,7 +46,6 @@ REPORT_DELIVERY_WINDOWS = {
     "morning": (7 * 60 + 30, 10 * 60 + 30),
     "evening": (19 * 60 + 30, 23 * 60),
 }
-_DAILY_DELIVERY_TERMINAL_STATUSES = {"sent", "failed", "result_unknown", "suppressed", "superseded"}
 
 
 def queue_daily_boss_report(
@@ -183,6 +183,8 @@ def queue_daily_boss_report(
                 "application_result": workstyle_application,
                 "unverified_commitment": False,
             },
+            loaded_event_ids=report.get("used_self_evolution_application_ids") or [],
+            trace_id=notification_id,
             limit=3,
         )
         _append_jsonl(
@@ -209,6 +211,7 @@ def queue_daily_boss_report(
                     "applied_count": int(evolution_application.get("applied_count") or 0),
                     "verified_count": int(evolution_application.get("verified_count") or 0),
                     "failed_count": int(evolution_application.get("failed_count") or 0),
+                    "verification_pending_count": int(evolution_application.get("verification_pending_count") or 0),
                 },
                 "auto_effects": _safe_auto_effects(),
             },
@@ -314,11 +317,29 @@ def build_daily_boss_report(kind: str, *, store: TuoguanStore | None = None, now
     actual_store = store or TuoguanStore()
     timestamp = now or datetime.now().astimezone()
     identity = _system_identity()
+    # The employee identity is correct for institution-wide work material, but
+    # a lesson scoped to the boss must be loaded as that boss before it can be
+    # claimed as used in a boss-facing report.  Reusing the employee identity
+    # here previously made such lessons invisible, while the old observer
+    # could still re-select them after delivery and call that an application.
+    owner_id = _owner_user_id(actual_store)
+    evolution_identity = (
+        UserIdentity(
+            platform="system",
+            platform_user_id=owner_id,
+            canonical_user_id=owner_id,
+            person_name="老板",
+            role="boss",
+            approval_state="approved",
+        )
+        if owner_id
+        else identity
+    )
     work = query_hermes_work_items(actual_store, identity=identity, include_closed=False, limit=10)
     brief = query_autonomous_work_brief(actual_store, identity=identity, limit=10)
     self_evolution = build_self_evolution_brief(
         actual_store,
-        identity=identity,
+        identity=evolution_identity,
         limit=6,
         now=timestamp,
         scope="daily_report",
@@ -356,6 +377,16 @@ def build_daily_boss_report(kind: str, *, store: TuoguanStore | None = None, now
     else:
         content = _render_evening_report(timestamp, items, waiting_items, open_attention, brief, self_evolution, source_counts, proactivity_health, workstyle, staff_voice, opportunity_line)
         summary = "小优每日晚间工作日报"
+    # The daily delivery observer may only mark a lesson applied when the
+    # exact rendered lesson survived report composition.  A candidate merely
+    # present in the brief is not enough evidence.
+    used_self_evolution_application_ids = []
+    context_lines = self_evolution.get("next_day_context") if isinstance(self_evolution.get("next_day_context"), list) else []
+    context_ids = self_evolution.get("next_day_application_ids") if isinstance(self_evolution.get("next_day_application_ids"), list) else []
+    for event_id, line in zip(context_ids, context_lines):
+        rendered_line = _limit_text(str(line or ""), 130)
+        if rendered_line and rendered_line in content:
+            used_self_evolution_application_ids.append(str(event_id or ""))
     return {
         "ok": True,
         "report_kind": report_kind,
@@ -365,6 +396,7 @@ def build_daily_boss_report(kind: str, *, store: TuoguanStore | None = None, now
         "source_counts": source_counts,
         "applied_workstyle_preferences": deepcopy(workstyle.get("applied_preferences") or []),
         "applied_workstyle_dimensions": deepcopy(workstyle.get("applied_dimensions") or []),
+        "used_self_evolution_application_ids": used_self_evolution_application_ids,
         "project_opportunity_id": str((report_opportunity or {}).get("opportunity_id") or ""),
         "model_led": False,
         "limits_model": False,
@@ -431,7 +463,7 @@ def _render_morning_report(
         max_items=_style_max_items(workstyle),
     )
     lines = [
-        f"金总，早上好，我是小优。今天重点：",
+        f"机构负责人，早上好，我是小优。今天重点：",
         *_numbered(report_items, empty="1. 今天暂无新增材料，我会继续做事实巡检和卡点跟进。"),
         _style_closing_line(workstyle),
     ]
@@ -498,7 +530,7 @@ def _render_evening_report(
         max_items=_style_max_items(workstyle),
     )
     lines = [
-        "金总，今晚工作重点：",
+        "机构负责人，今晚工作重点：",
         *_numbered(report_items, empty="1. 今天暂无新增材料，我没有把等待状态写成完成。"),
         _style_closing_line(workstyle),
     ]
@@ -528,7 +560,7 @@ def _render_ultra_morning_report(
         limit=58,
     )
     rows = [
-        "金总，早上好，小优今日重点：",
+        "机构负责人，早上好，小优今日重点：",
         f"状态：{_strip_report_prefix(status)}",
         f"需确认：{_strip_report_prefix(confirmation)}",
         f"今日重点：{_strip_report_prefix(focus)}",
@@ -568,7 +600,7 @@ def _render_ultra_evening_report(
         limit=82,
     )
     rows = [
-        "金总，今晚小优汇报：",
+        "机构负责人，今晚小优汇报：",
         f"完成：{_strip_report_prefix(completed)}",
         f"异常：{_strip_report_prefix(issue)}",
         f"明日计划：{_strip_report_prefix(tomorrow)}",
@@ -1296,13 +1328,7 @@ def _wecom_config_from_env() -> Any:
         return config
 
 
-async def drain_notification_outbox_once(
-    notification_id: str = "",
-    *,
-    store: TuoguanStore | None = None,
-    wait_seconds: float = 5.0,
-    poll_interval_seconds: float = 0.25,
-) -> dict[str, Any]:
+async def drain_notification_outbox_once(notification_id: str = "") -> dict[str, Any]:
     """Best-effort oneshot drain for systemd timers in Hermes versions without startup hooks."""
 
     from plugins.platforms.wecom.callback_adapter import WecomCallbackAdapter
@@ -1315,12 +1341,7 @@ async def drain_notification_outbox_once(
 
     adapter = WecomCallbackAdapter(_wecom_config_from_env())
     try:
-        try:
-            from gateway.platforms._http_client_limits import platform_httpx_limits
-
-            adapter._http_client = httpx.AsyncClient(timeout=20.0, limits=platform_httpx_limits())
-        except Exception:
-            adapter._http_client = httpx.AsyncClient(timeout=20.0)
+        adapter._http_client = httpx.AsyncClient(timeout=20.0, limits=platform_httpx_limits())
         await _drain_notification_outbox(adapter)
     finally:
         cleanup = getattr(adapter, "_cleanup", None)
@@ -1330,120 +1351,25 @@ async def drain_notification_outbox_once(
             await adapter._http_client.aclose()
     normalized_id = str(notification_id or "").strip()
     if not normalized_id:
-        return {
-            "ok": True,
-            "terminal": True,
-            "drained": True,
-            "delivery_status": "not_scoped",
-            "lease_state": "not_scoped",
-            "verified_at": datetime.now().astimezone().isoformat(timespec="seconds"),
-        }
-    actual_store = store or TuoguanStore()
-    return await _await_daily_delivery_terminal(
-        actual_store,
-        normalized_id,
-        wait_seconds=wait_seconds,
-        poll_interval_seconds=poll_interval_seconds,
-    )
-
-
-async def _await_daily_delivery_terminal(
-    store: TuoguanStore,
-    notification_id: str,
-    *,
-    wait_seconds: float,
-    poll_interval_seconds: float,
-) -> dict[str, Any]:
-    """Read a daily delivery's terminal receipt without claiming it again."""
-
-    matched = _read_daily_delivery_item(store, notification_id)
+        return {"ok": True, "drained": True}
+    store = TuoguanStore()
+    outbox = store.read_json(NOTIFICATION_OUTBOX_FILE, [])
+    matched = _find_outbox_item(outbox if isinstance(outbox, list) else [], normalized_id)
     if not matched:
-        return {
-            "ok": False,
-            "terminal": True,
-            "drained": True,
-            "error": "notification_missing_after_drain",
-            "notification_id": notification_id,
-            "verified_at": datetime.now().astimezone().isoformat(timespec="seconds"),
-        }
-
-    deadline = asyncio.get_running_loop().time() + max(0.0, min(float(wait_seconds or 0), 5.0))
-    interval = max(0.05, min(float(poll_interval_seconds or 0.25), 1.0))
-    while str(matched.get("status") or "") == "sending" and _daily_delivery_lease_state(matched) == "sending_valid_lease":
-        if asyncio.get_running_loop().time() >= deadline:
-            break
-        await asyncio.sleep(interval)
-        refreshed = _read_daily_delivery_item(store, notification_id)
-        if not refreshed:
-            break
-        matched = refreshed
-
+        return {"ok": False, "drained": True, "error": "notification_missing_after_drain", "notification_id": normalized_id}
     status = str(matched.get("status") or "")
-    lease_state = _daily_delivery_lease_state(matched)
-    verified_at = datetime.now().astimezone().isoformat(timespec="seconds")
-    payload: dict[str, Any] = {
+    payload = {
         "ok": status == "sent",
-        "terminal": status in _DAILY_DELIVERY_TERMINAL_STATUSES,
         "drained": True,
-        "notification_id": notification_id,
+        "notification_id": normalized_id,
         "delivery_status": status,
-        "lease_state": lease_state,
         "sent_at": str(matched.get("sent_at") or ""),
         "message_id": str(matched.get("message_id") or ""),
         "last_error": str(matched.get("last_error") or ""),
-        "verified_at": verified_at,
     }
-    if status == "sending" and lease_state == "sending_valid_lease":
-        # Another trusted sender already owns the lease.  Treat this as a
-        # successful handoff, not a second send and not a failed daily report.
-        payload.update({
-            "ok": True,
-            "terminal": False,
-            "delivery_status": "delivery_in_progress",
-            "outbox_status": "sending",
-        })
-    elif status != "sent":
+    if status != "sent":
         payload["error"] = "daily_report_not_sent_after_drain"
     return payload
-
-
-def _read_daily_delivery_item(store: TuoguanStore, notification_id: str) -> dict[str, Any] | None:
-    outbox = store.read_json(NOTIFICATION_OUTBOX_FILE, [])
-    return _find_outbox_item(outbox if isinstance(outbox, list) else [], notification_id)
-
-
-def _daily_delivery_lease_state(item: dict[str, Any]) -> str:
-    status = str(item.get("status") or "")
-    if status != "sending":
-        return "not_sending"
-    raw_expiry = str(item.get("lease_expires_at") or "").strip()
-    if not raw_expiry:
-        return "sending_missing_lease"
-    try:
-        expiry = datetime.fromisoformat(raw_expiry.replace("Z", "+00:00"))
-    except ValueError:
-        return "sending_invalid_lease"
-    now = datetime.now().astimezone()
-    if expiry.tzinfo is None:
-        expiry = expiry.replace(tzinfo=now.tzinfo)
-    return "sending_valid_lease" if expiry > now else "sending_expired_lease"
-
-
-def _daily_runner_summary(result: dict[str, Any]) -> dict[str, Any]:
-    """Keep systemd logs operationally useful without dumping report materials."""
-
-    drain = result.get("outbox_drain") if isinstance(result.get("outbox_drain"), dict) else {}
-    return {
-        "ok": bool(result.get("ok")),
-        "report_kind": str((result.get("report") or {}).get("kind") or result.get("report_kind") or ""),
-        "queued": bool(result.get("queued")),
-        "notification_id": str(result.get("notification_id") or ""),
-        "writeback_verified": bool(result.get("writeback_verified")),
-        "delivery_status": str(drain.get("delivery_status") or "not_requested"),
-        "terminal": drain.get("terminal"),
-        "lease_state": str(drain.get("lease_state") or ""),
-        "error": str(drain.get("error") or result.get("error") or ""),
-    }
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -1458,7 +1384,7 @@ def main(argv: list[str] | None = None) -> int:
             result["outbox_drain"] = asyncio.run(drain_notification_outbox_once(str(result.get("notification_id") or "")))
         except Exception as exc:
             result["outbox_drain"] = {"ok": False, "error": f"{type(exc).__name__}:{exc}"}
-    print(json.dumps(_daily_runner_summary(result), ensure_ascii=False, separators=(",", ":"), default=str))
+    print(json.dumps(result, ensure_ascii=False, indent=2, default=str))
     if not result.get("ok"):
         return 1
     drain = result.get("outbox_drain")

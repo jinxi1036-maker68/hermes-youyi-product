@@ -71,7 +71,7 @@ def test_acceptance_fails_when_core_file_missing(tmp_path):
 def test_acceptance_fails_on_forbidden_marker(tmp_path):
     tenant_root = generate_demo(tmp_path)
     memory = tenant_root / "memory" / "MEMORY.md"
-    memory.write_text(memory.read_text(encoding="utf-8") + "\n优益旧资料\n", encoding="utf-8")
+    memory.write_text(memory.read_text(encoding="utf-8") + "\n示例机构旧资料\n", encoding="utf-8")
     result = run_acceptance(tenant_root)
     assert result.returncode != 0
     assert "禁止携带旧机构标记" in result.stdout

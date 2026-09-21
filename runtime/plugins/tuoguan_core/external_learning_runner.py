@@ -328,7 +328,7 @@ def _industry_candidate(query: str, evidence: list[Any], timestamp: datetime, re
         "summary": summary,
         "sources": sources[:8],
         "source_count": len(sources),
-        "applicability": "仅作为托管经营建议材料；老板审核前不进入正式手册或优益机构事实。",
+        "applicability": "仅作为托管经营建议材料；老板审核前不进入正式手册或示例机构机构事实。",
         "status": status,
         "created_at": timestamp.isoformat(timespec="seconds"),
         "errors": result.get("errors", []),
@@ -350,7 +350,7 @@ def _market_candidate(query: str, evidence: list[Any], timestamp: datetime, resu
         "sources": sources[:8],
         "source_count": len(sources),
         "status": "pending_review" if sources else "source_failed",
-        "applicability": "用于老板做本地市场判断；公开资料需人工核验，不能直接当成优益或竞品事实。",
+        "applicability": "用于老板做本地市场判断；公开资料需人工核验，不能直接当成示例机构或竞品事实。",
         "created_at": timestamp.isoformat(timespec="seconds"),
         "errors": result.get("errors", []),
         "auto_effects": _safe_auto_effects(),
@@ -392,15 +392,15 @@ def _build_report(
     urls = [str(item.get("url") or "") for item in evidence[:5] if str(item.get("url") or "").startswith(("http://", "https://"))]
     if mode == "monthly_market":
         summary = "小优本地市场调研月报"
-        headline = "金总，我做了一轮本地公开市场调研，先把可核验线索和判断给你。"
-        advice = "我建议先把这些公开线索当成方向：看对方主打午托/晚托/作业辅导/素养增项哪一类，再决定优益九月份重点突出什么。"
+        headline = "机构负责人，我做了一轮本地公开市场调研，先把可核验线索和判断给你。"
+        advice = "我建议先把这些公开线索当成方向：看对方主打午托/晚托/作业辅导/素养增项哪一类，再决定示例机构九月份重点突出什么。"
     elif mode == "manual_topic":
         summary = "小优外部专题学习报告"
-        headline = f"金总，我按专题“{topic or '外部学习'}”查了一轮公开资料。"
+        headline = f"机构负责人，我按专题“{topic or '外部学习'}”查了一轮公开资料。"
         advice = "这批资料适合做经营参考，是否进入正式经验库，需要你看过后确认。"
     else:
         summary = "小优托管行业学习周报"
-        headline = "金总，我做了一轮托管/教培行业公开学习，给你汇报一下本周可参考的东西。"
+        headline = "机构负责人，我做了一轮托管/教培行业公开学习，给你汇报一下本周可参考的东西。"
         advice = "我建议优先把外部方法转成续费证据、家校沟通话术、老师减负素材，而不是直接照搬。"
     lines = [
         headline,
@@ -420,7 +420,7 @@ def _build_report(
         advice,
         "",
         "需要你审核/确认：",
-        "这些都是外部公开资料和我的经营建议，不是优益已确认事实；如果你认可，我后续再把它们转成具体话术、记录标准或九月份续费准备材料。",
+        "这些都是外部公开资料和我的经营建议，不是示例机构已确认事实；如果你认可，我后续再把它们转成具体话术、记录标准或九月份续费准备材料。",
     ])
     if errors:
         lines.extend(["", f"本轮不确定项：{'; '.join(dict.fromkeys(errors[:3]))}"])

@@ -92,7 +92,7 @@ def _query_type(compact: str) -> str:
         return "review_language_principle"
     parent_send = any(term in compact for term in ("发给家长", "发送给家长", "发家长"))
     direct_print = "打印" in compact and "直接" in compact
-    p4_or_test_student = any(term in compact for term in ("结业成长提升计划", "测试小金", "P4"))
+    p4_or_test_student = any(term in compact for term in ("结业成长提升计划", "测试学生丙", "P4"))
     if direct_print or (parent_send and ("直接" in compact or p4_or_test_student)):
         return "forbidden_action"
     if any(
@@ -169,9 +169,9 @@ def _reply(query_type: str, registry: dict[str, Any]) -> str:
                 "- P4-9 至 P4-15：已通过。",
                 "- P4-16 封版验收：已通过。",
                 "- P4-17 交付目录整理：已通过。",
-                "- P4-8：上线前账号验证项，真实普通老师和申老师账号尚未验证，不能写成已通过。",
+                "- P4-8：上线前账号验证项，真实普通老师和另一位老师账号尚未验证，不能写成已通过。",
                 "- 当前未接生产审核，未创建真实审核任务。",
-                "- 当前未推送真实普通老师或申老师审核消息，也未生成新的业务 Word。",
+                "- 当前未推送真实普通老师或另一位老师审核消息，也未生成新的业务 Word。",
                 "- 固定交付流程：审核完成后系统生成 Word，由机构人员人工打开、打印并线下交给家长。",
                 "- 本项目不包含系统自动发家长、自动打印、自动群发或自动交付。",
                 "下一步是小范围真实业务试运行准备；P4-8 作为相关账号上线前的身份和审核权限验证项保留。",
@@ -180,20 +180,20 @@ def _reply(query_type: str, registry: dict[str, Any]) -> str:
     if query_type == "production_readiness":
         return (
             "现在不能直接全面启用真实老师审核。"
-            "当前审核链路仍是 preview / shadow / test_state，普通老师和申老师真实账号尚未验证；"
+            "当前审核链路仍是 preview / shadow / test_state，普通老师和另一位老师真实账号尚未验证；"
             "必须先完成账号身份和审核权限验证，再单独评审小范围试运行、权限、审计和回滚方案。"
             "资料交付始终由机构人员人工打开 Word、打印并线下交给家长。"
         )
     if query_type == "forbidden_action":
         return (
             "Hermes 不负责自动发给家长，也不负责自动打印，这两项不属于本项目流程。"
-            "正确流程是老师、店长/申老师和金总完成审核后，由系统生成 Word；"
+            "正确流程是老师、店长/另一位老师和机构负责人完成审核后，由系统生成 Word；"
             "机构人员再人工打开 Word、打印并线下交给家长。当前也没有创建真实审核任务，不能绕过审核和人工确认。"
         )
     if query_type == "next_action":
         return (
             "下一步是准备小范围真实业务试运行。P4-8 继续作为上线前账号验证项，"
-            "分别验证一个真实普通老师账号和申老师账号的身份、角色和审核权限。"
+            "分别验证一个真实普通老师账号和另一位老师账号的身份、角色和审核权限。"
             "P4-8 不测试自动发送家长或自动打印；资料最终由机构人员人工打印并交付。"
         )
     if query_type == "safety_boundary":

@@ -57,7 +57,7 @@ def create_daily_record(
         code = str(profile.get("reason_code") or "student_not_found")
         messages = {
             "student_name_ambiguous": "这个姓名对应多名学生，请补充完整姓名或其他识别信息。",
-            "permission_denied": "当前账号无权记录这名学生，请联系金总确认负责范围。",
+            "permission_denied": "当前账号无权记录这名学生，请联系机构负责人确认负责范围。",
             "cross_tenant_denied": "这名学生不属于当前机构，不能写入记录。",
         }
         return {"ok": False, "reason_code": code, "message": messages.get(code, "没有查到这个学生，请确认姓名。"), "writeback_verified": False}

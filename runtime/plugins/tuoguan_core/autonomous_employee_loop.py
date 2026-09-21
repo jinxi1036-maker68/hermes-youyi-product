@@ -175,29 +175,11 @@ def run_autonomous_employee_loop(
         "external_actions_taken": [],
         "owner_attention_queued": [],
         "writes": [],
-        "run_status": "completed",
-        "model_attempted": False,
-        "model_phase": "",
-        "model_error_class": "",
-        "writes_count": 0,
-        "outbound_count": 0,
         "materials_summary": materials.get("materials_summary") or {},
         "work_cadence": materials.get("work_cadence") or {},
         "boundary": _boundary(),
     }
-    preflight = autonomous_model_preflight(materials)
-    result["preflight"] = preflight
-    if decision_provider is None and not preflight["model_required"]:
-        result.update({
-            "run_status": "no_action_required",
-            "message": "确定性预检未发现到期承诺、目标行动、事实缺口或待复盘材料；本轮未调用模型。",
-            "rendered_text": "小优本轮自主唤醒完成确定性核验，当前没有需要模型推进的事项。",
-            "render_verified": True,
-        })
-        return result
     try:
-        result["model_attempted"] = True
-        result["model_phase"] = "diagnosis"
         decision = (decision_provider or _call_model_for_decision)(materials)
         decision = validate_employee_decision(decision)
         decision = normalize_employee_decision_for_materials(decision, materials)
@@ -207,10 +189,8 @@ def run_autonomous_employee_loop(
     except Exception as exc:
         result.update({
             "ok": False,
-            "run_status": "degraded_model_timeout" if _is_model_timeout(exc) else "degraded_model_failure",
             "error": "employee_loop_model_decision_failed",
             "message": _safe_error(exc),
-            "model_error_class": _model_error_class(exc),
             "rendered_text": "Hermes woke and read material, but model-led employee review did not complete. No internal work state changed.",
             "render_verified": True,
         })
@@ -235,7 +215,6 @@ def run_autonomous_employee_loop(
             ]
             if critical_failures:
                 result["ok"] = False
-                result["run_status"] = "degraded_action_execution"
                 result["error"] = "employee_loop_action_execution_failed"
                 result["message"] = "; ".join(
                     str(item.get("error") or item.get("message") or "action_failed")
@@ -243,46 +222,12 @@ def run_autonomous_employee_loop(
                 )[:500]
         except Exception as exc:
             result["ok"] = False
-            result["run_status"] = "degraded_materialize_failure"
             result["error"] = "employee_loop_materialize_failed"
             result["message"] = _safe_error(exc)
             result["writes"] = []
-    result["writes_count"] = len(result.get("writes") or [])
-    result["outbound_count"] = len(result.get("external_actions_taken") or [])
     result["rendered_text"] = render_employee_loop_report(result)
     result["render_verified"] = True
     return result
-
-
-def autonomous_model_preflight(materials: dict[str, Any]) -> dict[str, Any]:
-    """Decide whether this clock tick has evidence worth spending a model call on.
-
-    This is deliberately deterministic and only controls resource use. It
-    never selects a business action or synthesizes a work item.
-    """
-
-    summary = materials.get("materials_summary") if isinstance(materials, dict) else {}
-    summary = summary if isinstance(summary, dict) else {}
-    trigger_keys = (
-        "due_goal_action_count",
-        "pending_wakeup_count",
-        "result_unknown_action_count",
-        "work_commitment_count",
-        "onboarding_gap_count",
-        "institution_gap_count",
-        "proactive_radar_gap_count",
-        "proactive_radar_question_candidate_count",
-        "self_evolution_review_queue_count",
-        "project_opportunity_scan_due_count",
-        "project_opportunity_strong_bundle_count",
-    )
-    reasons = [key for key in trigger_keys if int(summary.get(key) or 0) > 0]
-    return {
-        "model_required": bool(reasons),
-        "reasons": reasons,
-        "checked_at": str(materials.get("timestamp") or ""),
-        "resource_boundary": "no model call when there is no due work, fact gap, recovery item, or night review material",
-    }
 
 
 def build_employee_loop_materials(store: TuoguanStore, *, identity: UserIdentity, timestamp: datetime, wakeup_summary: dict[str, Any] | None = None) -> dict[str, Any]:
@@ -656,7 +601,7 @@ def _assert_decision_uses_public_employee_identity(decision: dict[str, Any]) -> 
     provider_terms = ("sapiens", "agnes", "chatgpt", "openai", "claude", "gemini")
     if any(term in lowered for term in provider_terms):
         raise ValueError("invalid_public_employee_identity:model_or_provider_identity")
-    if "数字员工" in summary and not any(term in summary for term in ("优益", "托管机构", "托管班")):
+    if "数字员工" in summary and not any(term in summary for term in ("示例机构", "托管机构", "托管班")):
         raise ValueError("invalid_public_employee_identity:institution_role_missing")
 
 
@@ -1143,7 +1088,7 @@ def _bridge_owner_questions_to_attention_candidates(
         if service_relations_deferred and _is_deferred_service_relation_attention(focus_key, reason, question):
             continue
         message = (
-            f"金总，我推进当前事项时有一个需要你确认的点。\n"
+            f"机构负责人，我推进当前事项时有一个需要你确认的点。\n"
             f"卡点：{reason}\n"
             f"需要你确认：{question}\n"
             f"确认后：{next_action}"
@@ -1183,7 +1128,7 @@ def _bridge_owner_confirmation_text_to_attention_candidates(
     next_action = "我会整理下一步候选材料和审核要点，作为老板审核材料继续推进。"
     question = "是否同意我按当前分析进入下一步准备，并把需要你审核的候选材料整理出来？"
     message = (
-        f"金总，我推进当前事项时需要你确认是否进入下一步。\n"
+        f"机构负责人，我推进当前事项时需要你确认是否进入下一步。\n"
         f"卡点：{reason}\n"
         f"需要你确认：{question}\n"
         f"确认后：{next_action}"
@@ -1227,23 +1172,23 @@ def _has_explicit_owner_confirmation_need(text: str) -> bool:
         "等待老板确认",
         "请老板确认",
         "请求老板确认",
-        "待金总确认",
-        "等待金总确认",
-        "请金总确认",
+        "待机构负责人确认",
+        "等待机构负责人确认",
+        "请机构负责人确认",
         "待您确认",
         "需要您确认",
         "请求下一步指示",
         "请求下一步确认",
         "待老板确认后",
         "老板确认后",
-        "金总确认后",
+        "机构负责人确认后",
     ))
 
 
 def _question_targets_owner(item: dict[str, Any]) -> bool:
     target = " ".join(str(item.get(key) or "") for key in ("ask_role", "target_role", "target", "ask_who"))
     text = f"{target} {item.get('reason') or ''} {item.get('question') or item.get('summary') or ''}"
-    return any(term in text for term in ("boss", "owner", "老板", "金总", "金文杰"))
+    return any(term in text for term in ("boss", "owner", "老板", "机构负责人", "金文杰"))
 
 
 def _attention_focus_key_for_question(item: dict[str, Any], decision: dict[str, Any], materials: dict[str, Any]) -> str:
@@ -1389,7 +1334,7 @@ def materialize_employee_decision(
             if event_type in _NON_MATERIAL_OBSERVATION_TYPES or event_type.startswith("owner_"):
                 continue
             event_text = _limit(obs.get("event_text") or obs.get("summary") or obs.get("text"), 1000)
-            if any(label in event_text for label in ("老板", "金总")):
+            if any(label in event_text for label in ("老板", "机构负责人")):
                 continue
             if not event_text:
                 continue
@@ -1696,7 +1641,7 @@ def render_employee_loop_report(result: dict[str, Any]) -> str:
 
 
 def _call_model_for_decision(materials: dict[str, Any]) -> dict[str, Any]:
-    payload = _fit_model_value(_model_payload(materials), 12000)
+    payload = _model_payload(materials)
     diagnosis_input = {
         key: payload.get(key)
         for key in (
@@ -1729,15 +1674,11 @@ def _call_model_for_decision(materials: dict[str, Any]) -> dict[str, Any]:
         "operating_evidence": payload.get("operating_evidence"),
         "term_state": payload.get("term_state"),
     }
-    actions = (
-        _request_model_phase(
-            "actions",
-            _ACTIONS_PROMPT,
-            actions_input,
-            max_tokens=1800,
-        )
-        if _diagnosis_requires_action_phase(diagnosis)
-        else {}
+    actions = _request_model_phase(
+        "actions",
+        _ACTIONS_PROMPT,
+        actions_input,
+        max_tokens=1800,
     )
     opportunity_evidence = payload.get("project_opportunity_evidence")
     opportunity_bundles = (
@@ -1829,44 +1770,60 @@ def _request_model_phase(
         {"role": "user", "content": json.dumps(phase_payload, ensure_ascii=False)},
     ]
     errors: list[str] = []
+    # Autonomous judgment has one configured business brain.  Do not hide an
+    # Agnes failure by switching to another provider/model.
     for cfg in _load_model_configs()[:1]:
         try:
-            content = _request_model_content(cfg, messages, max_tokens)
-            value = json.loads(_json_text(content))
-            if not isinstance(value, dict):
-                raise ValueError("response_not_object")
-            return value
-        except json.JSONDecodeError:
-            # Keep malformed or truncated model JSON observable without leaking
-            # a provider-specific parser error into the business runner.
-            errors.append(f"{phase}:invalid_json")
+            for json_attempt in range(2):
+                active_messages = list(messages)
+                if json_attempt:
+                    active_messages.append({
+                        "role": "user",
+                        "content": "上次输出不是完整 JSON。重新返回更短的单个 JSON 对象；没有变化的字段用空数组或空对象。",
+                    })
+                attempt_tokens = max_tokens if not json_attempt else min(2600, max(1200, max_tokens + 400))
+                content = _request_model_content(cfg, active_messages, attempt_tokens)
+                try:
+                    value = _parse_model_json_object(content)
+                except json.JSONDecodeError as exc:
+                    errors.append(f"{phase}:invalid_json:{_json_failure_shape(content, exc)}")
+                    continue
+                return value
         except (httpx.HTTPError, KeyError, ValueError, RuntimeError) as exc:
             errors.append(f"{phase}:{_safe_error(exc)}")
-    # Keep the established failure contract for callers and audit tooling. In
-    # Agnes-only production this means the single permitted provider failed.
-    raise RuntimeError(f"all_model_providers_failed:{phase}:" + "|".join(errors[-1:]))
+    raise RuntimeError(f"all_model_providers_failed:{phase}:" + "|".join(errors[-4:]))
 
 
 def _request_model_content(cfg: dict[str, Any], messages: list[dict[str, str]], max_tokens: int) -> str:
-    response = httpx.post(
-        f"{cfg['base_url'].rstrip('/')}/chat/completions",
-        headers={"Authorization": f"Bearer {cfg['api_key']}", "Content-Type": "application/json"},
-        json={
-            "model": cfg["model"],
-            "temperature": 0.2,
-            "max_tokens": max_tokens,
-            "response_format": {"type": "json_object"},
-            "messages": messages,
-        },
-        timeout=float(cfg.get("timeout") or 25),
-    )
-    response.raise_for_status()
-    return str(response.json()["choices"][0]["message"]["content"] or "")
+    for attempt in range(2):
+        response = httpx.post(
+            f"{cfg['base_url'].rstrip('/')}/chat/completions",
+            headers={"Authorization": f"Bearer {cfg['api_key']}", "Content-Type": "application/json"},
+            json={
+                "model": cfg["model"],
+                "temperature": 0.2,
+                "max_tokens": max_tokens,
+                "response_format": {"type": "json_object"},
+                "messages": messages,
+            },
+            timeout=float(cfg.get("timeout") or 60),
+        )
+        if response.status_code == 429 and attempt == 0:
+            retry_after = response.headers.get("Retry-After")
+            try:
+                delay = max(2.0, min(float(retry_after or 8), 15.0))
+            except ValueError:
+                delay = 8.0
+            time.sleep(delay)
+            continue
+        response.raise_for_status()
+        return str(response.json()["choices"][0]["message"]["content"] or "")
+    raise RuntimeError("model_request_exhausted")
 
 
 _DIAGNOSIS_PROMPT = """你是托管机构数字员工小优，本轮只做事实诊断。
 根据材料判断机构现状、目标进度、真实缺口和需要询问的事实归属人。模型负责判断，材料和工具结果是事实依据。
-employee_summary 必须保持身份为“小优，优益托管机构数字员工”；不得自称 Sapiens、Agnes、Hermes 助手、模型厂商或通用 AI 助手。
+employee_summary 必须保持身份为“小优，示例机构托管机构数字员工”；不得自称 Sapiens、Agnes、Hermes 助手、模型厂商或通用 AI 助手。
 不得声称已经外发、写入或完成动作；不得联系家长；不得把历史名单当作新学期事实；没有变化是有效结论。
 人员身份只认 trusted_staff_identities：称呼、别名、企业微信显示名和 user_id 不能推导真实全名；没有 full_name_confirmed=true 时必须写“全名未确认”，不得自行补全姓名。历史工作项只作审计，不能覆盖当前可信目录或复活旧卡点。
 只返回一个精简 JSON 对象，字段固定为 employee_summary、institution_understanding、goal_progress_view、observations、institution_fact_gaps、institution_work_discoveries、questions_to_humans。
@@ -1915,56 +1872,43 @@ def _load_model_configs() -> list[dict[str, Any]]:
     model_cfg = data.get("model") or {}
     if isinstance(model_cfg, dict):
         candidates.append(model_cfg)
+    fallback = data.get("fallback_providers") or []
+    if isinstance(fallback, str):
+        try:
+            fallback = json.loads(fallback)
+        except json.JSONDecodeError:
+            fallback = []
+    if isinstance(fallback, list):
+        candidates.extend(item for item in fallback if isinstance(item, dict))
     normalized: list[dict[str, Any]] = []
     seen: set[tuple[str, str, str]] = set()
     for candidate in candidates:
         model = str(candidate.get("model") or candidate.get("name") or "").strip()
         base_url = str(candidate.get("base_url") or "").strip()
-        api_key = str(candidate.get("api_key") or "").strip()
+        api_key = _resolve_config_secret(candidate.get("api_key"))
         key = (base_url.rstrip("/"), model, api_key)
         if not (base_url and api_key and model) or key in seen:
             continue
         seen.add(key)
-        if not model.lower().startswith("agnes"):
-            continue
-        try:
-            timeout = float(os.getenv("HERMES_AUTONOMOUS_MODEL_TIMEOUT_SECONDS") or 25)
-        except ValueError:
-            timeout = 25.0
         normalized.append({
             "base_url": base_url,
             "api_key": api_key,
             "model": model,
-            "timeout": max(5.0, min(timeout, 25.0)),
+            "timeout": float(candidate.get("request_timeout_seconds") or 60),
         })
     if not normalized:
         raise ValueError("model_config_incomplete")
     return normalized
 
 
-def _diagnosis_requires_action_phase(diagnosis: dict[str, Any]) -> bool:
-    if not isinstance(diagnosis, dict):
-        return False
-    return any(
-        bool(diagnosis.get(key))
-        for key in ("institution_fact_gaps", "institution_work_discoveries", "questions_to_humans")
-    )
+def _resolve_config_secret(value: Any) -> str:
+    """Resolve only Hermes' explicit env placeholder, never arbitrary text."""
 
-
-def _is_model_timeout(exc: Exception) -> bool:
-    text = f"{type(exc).__name__}:{exc}".lower()
-    return any(term in text for term in ("readtimeout", "timeout", "timed out", "deadline"))
-
-
-def _model_error_class(exc: Exception) -> str:
-    if _is_model_timeout(exc):
-        return "timeout"
-    text = f"{type(exc).__name__}:{exc}".lower()
-    if "429" in text:
-        return "rate_limited"
-    if any(term in text for term in ("json", "response_not_object")):
-        return "invalid_response"
-    return "request_failed"
+    raw = str(value or "").strip()
+    match = re.fullmatch(r"\$\{env:([A-Za-z_][A-Za-z0-9_]*)\}", raw)
+    if not match:
+        return raw
+    return str(os.getenv(match.group(1)) or "").strip()
 
 
 def _query_onboarding(store: TuoguanStore) -> dict[str, Any]:
@@ -2320,9 +2264,9 @@ def _owner_attention_terms(text: str) -> set[str]:
     terms = {
         "一直发",
         "明天早上",
-        "李老师",
+        "示例老师",
         "沟通结果",
-        "小金",
+        "学生丙",
         "家长",
         "续费",
         "安全任务",
@@ -2648,7 +2592,7 @@ def _owner_user_id(store: TuoguanStore) -> str:
                     return str(item).strip()
     mapping = store.read_json("teacher_wecom_map.json", {})
     if isinstance(mapping, dict):
-        for name in ("金总", "老板", "JinWenJie"):
+        for name in ("机构负责人", "老板", "owner_test"):
             if str(mapping.get(name) or "").strip():
                 return str(mapping[name]).strip()
     return ""
@@ -2728,7 +2672,7 @@ def _latest_owner_contact_at(materials: dict[str, Any] | None) -> str:
 
 def _work_update_mentions_owner(update: dict[str, Any]) -> bool:
     payload = json.dumps(update, ensure_ascii=False)
-    return any(term in payload for term in ("老板", "金总", "owner", "boss"))
+    return any(term in payload for term in ("老板", "机构负责人", "owner", "boss"))
 
 
 def _drop_deferred_relation_items(values: Any) -> list[Any]:
@@ -2871,6 +2815,49 @@ def _score_value(value: Any) -> int:
 def _json_text(value: str) -> str:
     value = str(value or "").strip()
     return re.sub(r"^```(?:json)?\s*|\s*```$", "", value, flags=re.I) if value.startswith("```") else value
+
+
+def _parse_model_json_object(value: str) -> dict[str, Any]:
+    """Extract a complete JSON object without inventing or repairing fields."""
+
+    text = _json_text(value).strip()
+    try:
+        parsed = json.loads(text)
+    except json.JSONDecodeError as first_error:
+        decoder = json.JSONDecoder()
+        first_object = text.find("{")
+        if first_object < 0:
+            raise first_error
+        # Only the first object can be the top-level response.  Searching for
+        # any later decodable ``{...}`` made a truncated outer response look
+        # successful when one nested item happened to be complete.
+        try:
+            candidate, end = decoder.raw_decode(text, first_object)
+        except json.JSONDecodeError:
+            raise first_error
+        suffix = text[end:].strip()
+        suffix = re.sub(r"^```(?:json)?\s*|\s*```$", "", suffix, flags=re.I).strip()
+        if suffix.startswith((",", "]", "}")):
+            raise first_error
+        if isinstance(candidate, dict):
+            return candidate
+        raise json.JSONDecodeError("response_not_object", text, first_object)
+    if not isinstance(parsed, dict):
+        raise json.JSONDecodeError("response_not_object", text, 0)
+    return parsed
+
+
+def _json_failure_shape(value: str, exc: json.JSONDecodeError) -> str:
+    """Return syntax telemetry only; never copy production content to logs."""
+
+    text = str(value or "")
+    stripped = text.strip()
+    return (
+        f"reason={str(exc.msg)[:48]},pos={int(exc.pos)},chars={len(text)},"
+        f"starts_object={stripped.startswith('{')},ends_object={stripped.endswith('}')},"
+        f"brace_delta={text.count('{') - text.count('}')},"
+        f"bracket_delta={text.count('[') - text.count(']')}"
+    )
 
 
 def _write_result(kind: str, result: dict[str, Any]) -> dict[str, Any]:

@@ -66,17 +66,17 @@ def test_core_context_hard_binds_fresh_teacher_session_identity():
 
     identity = UserIdentity(
         platform="wecom_callback",
-        platform_user_id="CeShi",
-        canonical_user_id="CeShi",
-        person_name="李老师",
+        platform_user_id="teacher_test",
+        canonical_user_id="teacher_test",
+        person_name="示例老师",
         role="teacher",
         approval_state="approved",
     )
 
     context = plugin._xiaoyou_core_skill_context(identity=identity)
 
-    assert "李老师（老师，user_id=CeShi" in context
-    assert "不得从全局记忆、旧会话或其他人的材料把当前人猜成金总" in context
+    assert "示例老师（老师，user_id=teacher_test" in context
+    assert "不得从全局记忆、旧会话或其他人的材料把当前人猜成机构负责人" in context
     assert "用户问‘我是谁’时直接依据这一可信身份回答" in context
 
 
@@ -84,25 +84,25 @@ def test_teacher_direct_salutation_cannot_drift_to_owner_name():
     from plugins.tuoguan_core.runtime_foundation import _sanitize_external_reply
 
     repaired = _sanitize_external_reply(
-        "在的，金总。我是小优，已上线。",
+        "在的，机构负责人。我是小优，已上线。",
         actor_role="teacher",
-        actor_name="李老师",
+        actor_name="示例老师",
     )
     legitimate_reference = _sanitize_external_reply(
-        "这是金总安排的任务，我帮你看一下。",
+        "这是机构负责人安排的任务，我帮你看一下。",
         actor_role="teacher",
-        actor_name="李老师",
+        actor_name="示例老师",
     )
 
-    assert repaired == "在的，李老师。我是小优，已上线。"
-    assert legitimate_reference == "这是金总安排的任务，我帮你看一下。"
+    assert repaired == "在的，示例老师。我是小优，已上线。"
+    assert legitimate_reference == "这是机构负责人安排的任务，我帮你看一下。"
 
 
 def test_outreach_honesty_guard_does_not_replace_an_ordinary_task_answer():
     from plugins.tuoguan_core.runtime_foundation import _sanitize_external_reply
 
     reply = _sanitize_external_reply(
-        "你今天有一项任务：下午4点联系金总，完成后直接告诉我结果就行。",
+        "你今天有一项任务：下午4点联系机构负责人，完成后直接告诉我结果就行。",
         actor_role="teacher",
         outreach_state="candidate",
         outreach_guard_applies=False,
@@ -231,7 +231,7 @@ def test_pre_llm_call_injects_narrow_rule_for_explicit_write(tmp_path, monkeypat
                 platform="wecom",
                 platform_user_id="boss1",
                 canonical_user_id="boss1",
-                person_name="金总",
+                person_name="机构负责人",
                 role="boss",
                 approval_state="approved",
             )
@@ -280,7 +280,7 @@ def test_pre_llm_call_authorizes_model_selected_task_cancel(tmp_path, monkeypatc
                 platform="wecom",
                 platform_user_id="boss1",
                 canonical_user_id="boss1",
-                person_name="金总",
+                person_name="机构负责人",
                 role="boss",
                 approval_state="approved",
             )
@@ -361,7 +361,7 @@ def test_pre_llm_call_injects_workstyle_feedback_contract(tmp_path, monkeypatch)
         platform="wecom",
         platform_user_id="boss1",
         canonical_user_id="boss1",
-        person_name="金总",
+        person_name="机构负责人",
         role="boss",
         approval_state="approved",
     )
@@ -436,7 +436,7 @@ def test_pre_llm_call_asks_one_question_when_short_reply_has_no_active_context(t
                 platform="wecom",
                 platform_user_id="boss1",
                 canonical_user_id="boss1",
-                person_name="金总",
+                person_name="机构负责人",
                 role="boss",
                 approval_state="approved",
             )
@@ -649,7 +649,7 @@ def test_youyi_handbook_does_not_become_phrase_router_or_execution_script():
 def test_memory_keeps_business_facts_not_runtime_debugging():
     memory = (_home_proddata() / "memories" / "MEMORY.md").read_text(encoding="utf-8")
 
-    assert "金总" in memory
+    assert "机构负责人" in memory
     assert "write guard" not in memory
     assert "runtime foundation" not in memory
     assert "inject_model_context" not in memory

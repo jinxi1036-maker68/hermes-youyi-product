@@ -19,10 +19,10 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_valida
 
 
 DEFAULT_BRIDGE_ROOT = Path(
-    r"C:\Users\Administrator\Desktop\优益托管-2026暑假班结业成长提升计划\_bridge_test"
+    r"C:\Users\Administrator\Desktop\示例机构托管-2026暑假班结业成长提升计划\_bridge_test"
 )
 DEFAULT_DESKTOP_OUTPUT_ROOT = Path(
-    r"C:\Users\Administrator\Desktop\优益托管-2026暑假班结业成长提升计划"
+    r"C:\Users\Administrator\Desktop\示例机构托管-2026暑假班结业成长提升计划"
 )
 MOCK_SOURCE = "p4_2_mock_records"
 
@@ -111,10 +111,10 @@ class ReviewPolicy(BaseModel):
     teacher_initial_review: Literal[True]
     teacher_initial_reviewer_role: Literal["普通老师"]
     manager_final_review: Literal[True]
-    manager_final_reviewer: Literal["申老师"]
+    manager_final_reviewer: Literal["另一位老师"]
     manager_final_reviewer_role: Literal["暑假班店长"]
     boss_spot_check: Literal[True]
-    boss_reviewer: Literal["金总"]
+    boss_reviewer: Literal["机构负责人"]
     boss_review_method: Literal["summary_and_spot_check_later"]
     auto_send_to_parent: Literal[False]
 
@@ -171,7 +171,7 @@ class WeaknessProfile(BaseModel):
 
 def mock_student() -> dict[str, str]:
     return {
-        "student_name": "测试小金",
+        "student_name": "测试学生丙",
         "current_grade": "二年级",
         "next_grade": "三年级",
         "grade_transition": "二升三",
@@ -184,25 +184,25 @@ def mock_student() -> dict[str, str]:
 def mock_records() -> list[dict[str, Any]]:
     return [
         {
-            "id": "P4-2-MATH-001", "student_name": "测试小金",
+            "id": "P4-2-MATH-001", "student_name": "测试学生丙",
             "timestamp": "2026-07-08T10:00:00", "scene": "学科课堂", "subject": "数学",
             "content": "孩子计算反应较快，但审题和检查不稳定，偶尔漏看条件。",
             "is_mock": True, "source": MOCK_SOURCE,
         },
         {
-            "id": "P4-2-CHINESE-001", "student_name": "测试小金",
+            "id": "P4-2-CHINESE-001", "student_name": "测试学生丙",
             "timestamp": "2026-07-09T10:00:00", "scene": "学科课堂", "subject": "语文",
             "content": "孩子能理解短文大意，但回答问题时句子不够完整。",
             "is_mock": True, "source": MOCK_SOURCE,
         },
         {
-            "id": "P4-2-ENGLISH-001", "student_name": "测试小金",
+            "id": "P4-2-ENGLISH-001", "student_name": "测试学生丙",
             "timestamp": "2026-07-10T10:00:00", "scene": "英语跟读", "subject": "英语",
             "content": "孩子愿意跟读字母和基础单词，但认读稳定性不足。",
             "is_mock": True, "source": MOCK_SOURCE,
         },
         {
-            "id": "P4-2-OVERALL-001", "student_name": "测试小金",
+            "id": "P4-2-OVERALL-001", "student_name": "测试学生丙",
             "timestamp": "2026-07-11T10:00:00", "scene": "综合观察", "subject": "综合",
             "content": "课堂参与较好，愿意跟随老师完成任务。",
             "is_mock": True, "source": MOCK_SOURCE,
@@ -307,9 +307,9 @@ def build_weakness_profile(
         },
         "review_policy": {
             "teacher_initial_review": True, "teacher_initial_reviewer_role": "普通老师",
-            "manager_final_review": True, "manager_final_reviewer": "申老师",
+            "manager_final_review": True, "manager_final_reviewer": "另一位老师",
             "manager_final_reviewer_role": "暑假班店长",
-            "boss_spot_check": True, "boss_reviewer": "金总",
+            "boss_spot_check": True, "boss_reviewer": "机构负责人",
             "boss_review_method": "summary_and_spot_check_later", "auto_send_to_parent": False,
         },
         "output_policy": {
@@ -465,7 +465,7 @@ def export_mock_weakness_profile(
     selected_student = student or mock_student()
     selected_records = records or mock_records()
     profile = build_weakness_profile(selected_student, selected_records)
-    output_dir = bridge_root / "input" / "测试小金_二升三"
+    output_dir = bridge_root / "input" / "测试学生丙_二升三"
     profile_path = output_dir / "weakness_profile.json"
     schema_path = output_dir / "weakness_profile.schema.json"
     policy_path = output_dir / "schema_version_policy.md"
@@ -503,8 +503,8 @@ def export_mock_weakness_profile(
             and item["avoid_overclaim"] is True
             for item in profile_data["subject_profiles"]
         ),
-        "manager_reviewer_is_shen": profile_data["review_policy"]["manager_final_reviewer"] == "申老师",
-        "boss_reviewer_is_jin": profile_data["review_policy"]["boss_reviewer"] == "金总",
+        "manager_reviewer_is_shen": profile_data["review_policy"]["manager_final_reviewer"] == "另一位老师",
+        "boss_reviewer_is_jin": profile_data["review_policy"]["boss_reviewer"] == "机构负责人",
         "parent_visible_filter_enabled": profile_data["output_policy"]["parent_visible_filter"]["enabled"],
         "word_generation_disabled": not config.growth_plan_allow_auto_word_generation,
         "wecom_push_disabled": not config.growth_plan_allow_wecom_push,
@@ -535,9 +535,9 @@ def export_mock_weakness_profile(
         "schema_version_rule": compatibility,
         "reviewers": {
             "teacher_initial_reviewer_role": "普通老师",
-            "manager_final_reviewer": "申老师",
+            "manager_final_reviewer": "另一位老师",
             "manager_final_reviewer_role": "暑假班店长",
-            "boss_reviewer": "金总",
+            "boss_reviewer": "机构负责人",
         },
         "parent_visible_filter_check": report["parent_visible_filter_check"],
         "single_subject_evidence_rule": {
@@ -595,7 +595,7 @@ def export_whitelisted_weakness_profile(
         raise PermissionError("P4-3 forbids Word generation and WeCom push")
 
     selected_source = source or P4MockWhitelistSource()
-    output_dir = bridge_root / "p4_3_whitelist_export" / "测试小金_二升三"
+    output_dir = bridge_root / "p4_3_whitelist_export" / "测试学生丙_二升三"
     student = selected_source.get_student(requested_student, "summer_2026")
     if student is None:
         error_path = output_dir / "whitelist_export_error_report.json"

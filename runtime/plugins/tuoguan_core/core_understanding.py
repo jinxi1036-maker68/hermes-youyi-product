@@ -91,7 +91,7 @@ class CoreUnderstandingAdapter:
             return validate_evidence(json.loads(_json_text(corrected)))
 
 
-PROMPT = """你是优益托管只读业务理解器，不能调用工具、不能写数据、不能回复用户。
+PROMPT = """你是示例机构托管只读业务理解器，不能调用工具、不能写数据、不能回复用户。
 只判断当前消息最可能属于输入 allowed_candidates 中的一个能力，或空字符串。
 teacher_task_guidance：老师开始/继续任务、反馈任务进度、询问任务怎么做。
 safety_workflow_coach：受伤或安全事件，以及该事件的连续处理。

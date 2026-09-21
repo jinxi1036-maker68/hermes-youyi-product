@@ -1,0 +1,25 @@
+[Unit]
+Description=XiaoYou read-only Dashboard
+After=network-online.target xiaoyou-gateway.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=xiaoyou
+Group=xiaoyou
+WorkingDirectory=${HERMES_RUNTIME_ROOT}
+EnvironmentFile=/etc/xiaoyou/runtime.gateway.env
+Environment=PYTHONPATH=${XIAOYOU_CAPABILITY_ROOT}/runtime/plugins
+Environment=XIAOYOU_DASHBOARD_BIND_HOST=127.0.0.1
+Environment=XIAOYOU_DASHBOARD_PORT=8877
+ExecStart=${HERMES_RUNTIME_ROOT}/.venv/bin/python -m tuoguan_core.dashboard_server
+Restart=on-failure
+RestartSec=3
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+ReadWritePaths=${XIAOYOU_WORKSPACE_ROOT} /var/log/xiaoyou
+
+[Install]
+WantedBy=multi-user.target

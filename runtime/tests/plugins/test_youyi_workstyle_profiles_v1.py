@@ -22,7 +22,7 @@ def _seed_store(tmp_path: Path):
             "user_roles": {"boss1": "boss", "teacher1": "teacher", "manager1": "manager"},
         },
     )
-    _write_json(tmp_path, "teacher_wecom_map.json", {"金总": "boss1", "李老师": "teacher1", "店长": "manager1"})
+    _write_json(tmp_path, "teacher_wecom_map.json", {"机构负责人": "boss1", "示例老师": "teacher1", "店长": "manager1"})
     return TuoguanStore(tmp_path)
 
 
@@ -30,7 +30,7 @@ def test_low_risk_owner_daily_report_preference_is_saved_and_verified(tmp_path):
     from plugins.tuoguan_core.tool_service import TuoguanToolService
 
     store = _seed_store(tmp_path)
-    service = TuoguanToolService(store, platform="wecom_callback", user_id="boss1", user_name="金总")
+    service = TuoguanToolService(store, platform="wecom_callback", user_id="boss1", user_name="机构负责人")
 
     result = service.submit_person_workstyle_preference(
         preference_type="report_length",
@@ -55,7 +55,7 @@ def test_workstyle_preference_alias_is_saved_and_verified(tmp_path):
     from plugins.tuoguan_core.tool_service import TuoguanToolService
 
     store = _seed_store(tmp_path)
-    service = TuoguanToolService(store, platform="wecom_callback", user_id="boss1", user_name="金总")
+    service = TuoguanToolService(store, platform="wecom_callback", user_id="boss1", user_name="机构负责人")
 
     result = service.submit_person_workstyle_preference(
         preference_type="format",
@@ -74,7 +74,7 @@ def test_teacher_reminder_time_preference_is_personal_not_institution_policy(tmp
     from plugins.tuoguan_core.tool_service import TuoguanToolService
 
     store = _seed_store(tmp_path)
-    service = TuoguanToolService(store, platform="wecom_callback", user_id="teacher1", user_name="李老师")
+    service = TuoguanToolService(store, platform="wecom_callback", user_id="teacher1", user_name="示例老师")
 
     result = service.submit_person_workstyle_preference(
         preference_type="reminder_time",
@@ -98,7 +98,7 @@ def test_high_risk_preference_is_not_saved(tmp_path):
     from plugins.tuoguan_core.tool_service import TuoguanToolService
 
     store = _seed_store(tmp_path)
-    service = TuoguanToolService(store, platform="wecom_callback", user_id="boss1", user_name="金总")
+    service = TuoguanToolService(store, platform="wecom_callback", user_id="boss1", user_name="机构负责人")
 
     result = service.submit_person_workstyle_preference(
         preference_type="other_low_risk",
@@ -118,7 +118,7 @@ def test_same_type_and_scope_latest_preference_wins(tmp_path):
     from plugins.tuoguan_core.tool_service import TuoguanToolService
 
     store = _seed_store(tmp_path)
-    service = TuoguanToolService(store, platform="wecom_callback", user_id="boss1", user_name="金总")
+    service = TuoguanToolService(store, platform="wecom_callback", user_id="boss1", user_name="机构负责人")
 
     first = service.submit_person_workstyle_preference(
         preference_type="report_length",

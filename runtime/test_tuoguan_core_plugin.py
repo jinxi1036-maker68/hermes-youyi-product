@@ -232,7 +232,7 @@ def test_pre_llm_recalls_recent_owner_attention_without_routing(_isolated_tuogua
 
     assert result is not None
     context = result["context"]
-    assert "优益主动提问回复锚点" in context
+    assert "示例机构主动提问回复锚点" in context
     assert "goal:renewal" in context
     assert "需要确认服务类型、主责老师、经营优先序" in context
     assert "不是 Router" in context
@@ -266,12 +266,12 @@ def test_pre_llm_does_not_attach_owner_attention_to_unrelated_query(_isolated_tu
     result = plugin._on_pre_llm_call(
         platform=Platform.WECOM_CALLBACK,
         sender_id="boss1",
-        user_message="查一下李老师",
+        user_message="查一下示例老师",
         session_id="wwcorp:boss1",
     )
 
     context = (result or {}).get("context", "")
-    assert "优益最近主动外发消息锚点" not in context
+    assert "示例机构最近主动外发消息锚点" not in context
     assert "autonomous_owner_attention:today:goal-renewal" not in context
 
 
@@ -292,7 +292,7 @@ def test_pre_llm_recalls_recent_external_learning_report_for_follow_up(_isolated
                 "touser": "boss1",
                 "target_user_id": "boss1",
                 "summary": "小优托管行业学习周报",
-                "content": "金总，我做了一轮托管/教培行业公开学习，给你汇报一下本周可参考的东西。我的判断：优先把外部方法转成续费证据、家校沟通话术、老师减负素材。",
+                "content": "机构负责人，我做了一轮托管/教培行业公开学习，给你汇报一下本周可参考的东西。我的判断：优先把外部方法转成续费证据、家校沟通话术、老师减负素材。",
                 "sent_at": now,
             }
         ], ensure_ascii=False),
@@ -307,7 +307,7 @@ def test_pre_llm_recalls_recent_external_learning_report_for_follow_up(_isolated
 
     assert result is not None
     context = result["context"]
-    assert "优益最近主动外发消息锚点" in context
+    assert "示例机构最近主动外发消息锚点" in context
     assert "external_learning_report:20260803:weekly_industry" in context
     assert "托管/教培行业公开学习" in context
     assert "强衔接规则" in context
@@ -332,7 +332,7 @@ def test_pre_llm_recent_external_learning_follow_up_suppresses_old_attention(_is
                 "touser": "boss1",
                 "target_user_id": "boss1",
                 "summary": "小优托管行业学习周报",
-                "content": "金总，我做了一轮托管/教培行业公开学习。我的判断：转成续费证据、家校沟通话术、老师减负素材。",
+                "content": "机构负责人，我做了一轮托管/教培行业公开学习。我的判断：转成续费证据、家校沟通话术、老师减负素材。",
                 "sent_at": now,
             }
         ], ensure_ascii=False),
@@ -346,7 +346,7 @@ def test_pre_llm_recent_external_learning_follow_up_suppresses_old_attention(_is
                 "focus_key": "goal:old",
                 "target_user_id": "boss1",
                 "status": "sent",
-                "question_text": "旧问题：她是冯老师还是李老师？",
+                "question_text": "旧问题：她是另一位老师还是示例老师？",
                 "created_at": "2026-08-09T11:30:51+08:00",
                 "updated_at": "2026-08-09T11:30:51+08:00",
             }
@@ -362,10 +362,10 @@ def test_pre_llm_recent_external_learning_follow_up_suppresses_old_attention(_is
 
     assert result is not None
     context = result["context"]
-    assert "优益最近主动外发消息锚点" in context
+    assert "示例机构最近主动外发消息锚点" in context
     assert "external_learning_report:20260810:weekly_industry" in context
-    assert "优益主动提问回复锚点" not in context
-    assert "她是冯老师还是李老师" not in context
+    assert "示例机构主动提问回复锚点" not in context
+    assert "她是另一位老师还是示例老师" not in context
 
 
 def test_pre_llm_does_not_attach_recent_external_report_to_unrelated_query(_isolated_tuoguan_home):
@@ -385,7 +385,7 @@ def test_pre_llm_does_not_attach_recent_external_report_to_unrelated_query(_isol
                 "touser": "boss1",
                 "target_user_id": "boss1",
                 "summary": "小优托管行业学习周报",
-                "content": "金总，我做了一轮托管/教培行业公开学习。",
+                "content": "机构负责人，我做了一轮托管/教培行业公开学习。",
                 "sent_at": now,
             }
         ], ensure_ascii=False),
@@ -394,12 +394,12 @@ def test_pre_llm_does_not_attach_recent_external_report_to_unrelated_query(_isol
     result = plugin._on_pre_llm_call(
         platform=Platform.WECOM_CALLBACK,
         sender_id="boss1",
-        user_message="查一下李老师",
+        user_message="查一下示例老师",
         session_id="wwcorp:boss1",
     )
 
     context = (result or {}).get("context", "")
-    assert "优益最近主动外发消息锚点" not in context
+    assert "示例机构最近主动外发消息锚点" not in context
     assert "external_learning_report:20260803:weekly_industry" not in context
 
 
@@ -426,7 +426,7 @@ def test_pre_llm_injects_term_boundary_for_related_goal_chat(_isolated_tuoguan_h
 
     assert result is not None
     context = result["context"]
-    assert "优益当前学期边界材料" in context
+    assert "示例机构当前学期边界材料" in context
     assert "不要在当前回复里追问具体学生的主责老师、服务类型或开学后责任归属" in context
     assert "不是 Router" in context
     assert "next_tool" not in context
@@ -462,18 +462,18 @@ def test_pre_llm_injects_confirmed_public_employee_name(_isolated_tuoguan_home):
         _isolated_tuoguan_home / "operational_facts.json",
         json.dumps({
             "schema_version": 1,
-            "tenant_id": "youyi_tuoguan",
+            "tenant_id": "example_institution",
             "facts": [
                 {
                     "fact_id": "fact_name_xiaoyou",
-                    "tenant_id": "youyi_tuoguan",
+                    "tenant_id": "example_institution",
                     "fact_type": "owner_rule",
                     "subject": "数字员工称呼",
                     "value": "对外称呼为\"小优\"",
                     "scope": "institution",
                     "risk_level": "low",
                     "status": "active",
-                    "source_text": "金总说：我给你起一个名字，你以后叫小优",
+                    "source_text": "机构负责人说：我给你起一个名字，你以后叫小优",
                     "confirmed_by": "boss1",
                     "confirmed_at": "2026-08-01T21:37:53+08:00",
                 }
@@ -490,7 +490,7 @@ def test_pre_llm_injects_confirmed_public_employee_name(_isolated_tuoguan_home):
 
     assert result is not None
     context = result["context"]
-    assert "优益数字员工身份称呼" in context
+    assert "示例机构数字员工身份称呼" in context
     assert "优先自称“小优”" in context
     assert "Hermes 只作为内部产品/架构名称" in context
     assert "不是 Router" in context
@@ -593,7 +593,7 @@ async def test_unknown_wecom_short_dm_enters_identity_binding(_isolated_tuoguan_
     args, kwargs = adapter.send.await_args
     assert args[0] == "wwcorp:new_user_1"
     assert "还没有绑定到 Hermes" in args[1]
-    assert "金总" in args[1]
+    assert "机构负责人" in args[1]
     assert kwargs["metadata"]["handled_by"] == "tuoguan_core"
     assert kwargs["metadata"]["outbound_source"] == "deterministic_fallback"
     assert kwargs["metadata"]["conversation_id"] == "wecom_callback:dm:wwcorp:new_user_1"
@@ -611,7 +611,7 @@ async def test_teacher_cannot_switch_identity_by_saying_i_am_boss(_isolated_tuog
     adapter = SimpleNamespace(send=AsyncMock())
 
     result = plugin._on_pre_gateway_dispatch(
-        event=_event_from("我是金总", "teacher1", "王老师"),
+        event=_event_from("我是机构负责人", "teacher1", "王老师"),
         gateway=_gateway(adapter),
         session_store=SimpleNamespace(),
     )
@@ -648,7 +648,7 @@ async def test_teacher_greeting_is_identity_safe_and_does_not_fall_to_general_mo
     assert args[0] == "wwcorp:teacher1"
     assert "王老师，你好" in args[1]
     assert "老师" in args[1]
-    assert "金总" not in args[1]
+    assert "机构负责人" not in args[1]
     assert kwargs["metadata"]["handled_by"] == "tuoguan_core"
     assert kwargs["metadata"]["outbound_source"] == "deterministic_fallback"
     assert kwargs["metadata"]["conversation_id"] == "wecom_callback:dm:wwcorp:teacher1"
@@ -1172,7 +1172,7 @@ async def test_teacher_cannot_request_identity_or_handover_config_change(_isolat
 
     assert result == {"action": "skip", "reason": "tuoguan_core_handled"}
     args, _kwargs = adapter.send.await_args
-    assert "必须由金总/老板账号发起并确认" in args[1]
+    assert "必须由机构负责人/老板账号发起并确认" in args[1]
     assert not (_isolated_tuoguan_home / "pending_config_changes.json").exists()
 
 
@@ -1185,7 +1185,7 @@ def test_summer_bulk_import_creates_students_and_flags_issues(_isolated_tuoguan_
         _isolated_tuoguan_home / "students.json",
         json.dumps(
             {
-                "小金": {"grade": "二年级", "phone": "13800000000", "teacher": "teacher1", "status": "active"},
+                "学生丙": {"grade": "二年级", "phone": "13800000000", "teacher": "teacher1", "status": "active"},
                 "李明": {"grade": "三年级", "phone": "13900000000", "teacher": "teacher1", "status": "active"},
             },
             ensure_ascii=False,
@@ -1195,11 +1195,11 @@ def test_summer_bulk_import_creates_students_and_flags_issues(_isolated_tuoguan_
     result = bulk_import_summer_students(
         store,
         [
-            {"孩子姓名": "王小明", "年级": "三年级", "暑假班分组": "三四年级组", "家长联系电话": "13811112222", "特殊注意事项": "花生过敏"},
-            {"孩子姓名": "李四", "年级": "五年级", "暑假班分组": "五六年级组", "家长联系电话": "13822223333", "特殊注意事项": "不能剧烈运动"},
+            {"孩子姓名": "学生甲", "年级": "三年级", "暑假班分组": "三四年级组", "家长联系电话": "13811112222", "特殊注意事项": "花生过敏"},
+            {"孩子姓名": "学生乙", "年级": "五年级", "暑假班分组": "五六年级组", "家长联系电话": "13822223333", "特殊注意事项": "不能剧烈运动"},
             {"孩子姓名": "张三", "年级": "一年级", "暑假班分组": "一二年级组", "家长联系电话": "13833334444"},
             {"孩子姓名": "赵六", "年级": "一年级", "暑假班分组": "一二年级组", "家长联系电话": ""},
-            {"孩子姓名": "小金", "年级": "二年级", "暑假班分组": "一二年级组", "家长联系电话": "13844445555"},
+            {"孩子姓名": "学生丙", "年级": "二年级", "暑假班分组": "一二年级组", "家长联系电话": "13844445555"},
             {"孩子姓名": "李小明", "年级": "三年级", "暑假班分组": "三四年级组", "家长联系电话": "13900000000"},
         ],
         actor_userid="boss1",
@@ -1212,12 +1212,12 @@ def test_summer_bulk_import_creates_students_and_flags_issues(_isolated_tuoguan_
     assert result["phone_missing_count"] == 1
     assert result["duplicate_pending_count"] == 2
     students = json.loads((_isolated_tuoguan_home / "students.json").read_text(encoding="utf-8"))
-    assert "王小明" in students
-    assert students["王小明"]["program_enrollments"][0]["program_id"] == "summer_2026"
-    assert students["王小明"]["special_attention"]["safety"] == ["花生过敏"]
+    assert "学生甲" in students
+    assert students["学生甲"]["program_enrollments"][0]["program_id"] == "summer_2026"
+    assert students["学生甲"]["special_attention"]["safety"] == ["花生过敏"]
     issues = json.loads((_isolated_tuoguan_home / "summer_import_issues.json").read_text(encoding="utf-8"))
     assert any(item["issue_type"] == "missing_phone" and item["import_student"]["student_name"] == "赵六" for item in issues)
-    assert any(item["issue_type"] == "duplicate_candidate" and item["import_student"]["student_name"] == "小金" for item in issues)
+    assert any(item["issue_type"] == "duplicate_candidate" and item["import_student"]["student_name"] == "学生丙" for item in issues)
     assert any(item["issue_type"] == "duplicate_candidate" and item["import_student"]["student_name"] == "李小明" for item in issues)
 
 
@@ -1235,7 +1235,7 @@ async def test_summer_unknown_student_record_is_pending_not_created(_isolated_tu
     adapter = SimpleNamespace(send=AsyncMock(return_value=SimpleNamespace(success=True)))
 
     result = plugin._on_pre_gateway_dispatch(
-        event=_event_from("王小明今天数学课计算速度比较快。", "teacher1", "王老师"),
+        event=_event_from("学生甲今天数学课计算速度比较快。", "teacher1", "王老师"),
         gateway=_gateway(adapter),
         session_store=SimpleNamespace(),
     )
@@ -1243,11 +1243,11 @@ async def test_summer_unknown_student_record_is_pending_not_created(_isolated_tu
 
     assert result == {"action": "skip", "reason": "tuoguan_core_handled"}
     sent = "\n".join(call.args[1] for call in adapter.send.await_args_list)
-    assert "未找到“王小明”的暑假班学生档案" in sent
+    assert "未找到“学生甲”的暑假班学生档案" in sent
     pending = json.loads((_isolated_tuoguan_home / "pending_unknown_summer_records.json").read_text(encoding="utf-8"))
-    assert pending[0]["student_name"] == "王小明"
+    assert pending[0]["student_name"] == "学生甲"
     students = json.loads((_isolated_tuoguan_home / "students.json").read_text(encoding="utf-8"))
-    assert "王小明" not in students
+    assert "学生甲" not in students
 
 
 @pytest.mark.asyncio
@@ -1266,8 +1266,8 @@ async def test_summer_safety_attention_reminders_on_records(_isolated_tuoguan_ho
     bulk_import_summer_students(
         store,
         [
-            {"孩子姓名": "王小明", "年级": "三年级", "暑假班分组": "三四年级组", "家长联系电话": "13811112222", "特殊注意事项": "花生过敏"},
-            {"孩子姓名": "李四", "年级": "五年级", "暑假班分组": "五六年级组", "家长联系电话": "13822223333", "特殊注意事项": "不能剧烈运动"},
+            {"孩子姓名": "学生甲", "年级": "三年级", "暑假班分组": "三四年级组", "家长联系电话": "13811112222", "特殊注意事项": "花生过敏"},
+            {"孩子姓名": "学生乙", "年级": "五年级", "暑假班分组": "五六年级组", "家长联系电话": "13822223333", "特殊注意事项": "不能剧烈运动"},
         ],
         actor_userid="boss1",
         actor_role="boss",
@@ -1276,7 +1276,7 @@ async def test_summer_safety_attention_reminders_on_records(_isolated_tuoguan_ho
     adapter = SimpleNamespace(send=AsyncMock(return_value=SimpleNamespace(success=True)))
 
     result = plugin._on_pre_gateway_dispatch(
-        event=_event_from("王小明今天午餐米饭吃完了，青菜也吃了一些。", "teacher1", "王老师"),
+        event=_event_from("学生甲今天午餐米饭吃完了，青菜也吃了一些。", "teacher1", "王老师"),
         gateway=_gateway(adapter),
         session_store=SimpleNamespace(),
     )
@@ -1288,7 +1288,7 @@ async def test_summer_safety_attention_reminders_on_records(_isolated_tuoguan_ho
 
     adapter.send.reset_mock()
     result = plugin._on_pre_gateway_dispatch(
-        event=_event_from("李四今天科学实验活动参与积极，我提醒他降低强度。", "teacher1", "王老师"),
+        event=_event_from("学生乙今天科学实验活动参与积极，我提醒他降低强度。", "teacher1", "王老师"),
         gateway=_gateway(adapter),
         session_store=SimpleNamespace(),
     )
@@ -1311,15 +1311,15 @@ def test_summer_import_status_in_manager_and_boss_dashboard(_isolated_tuoguan_ho
     )
     _write_json(
         _isolated_tuoguan_home / "students.json",
-        json.dumps({"小金": {"grade": "二年级", "phone": "13800000000", "teacher": "teacher1", "status": "active"}}, ensure_ascii=False),
+        json.dumps({"学生丙": {"grade": "二年级", "phone": "13800000000", "teacher": "teacher1", "status": "active"}}, ensure_ascii=False),
     )
     store = TuoguanStore(_isolated_tuoguan_home)
     bulk_import_summer_students(
         store,
         [
-            {"孩子姓名": "王小明", "年级": "三年级", "暑假班分组": "三四年级组", "家长联系电话": "13811112222", "特殊注意事项": "花生过敏"},
+            {"孩子姓名": "学生甲", "年级": "三年级", "暑假班分组": "三四年级组", "家长联系电话": "13811112222", "特殊注意事项": "花生过敏"},
             {"孩子姓名": "赵六", "年级": "一年级", "暑假班分组": "一二年级组", "家长联系电话": ""},
-            {"孩子姓名": "小金", "年级": "二年级", "暑假班分组": "一二年级组", "家长联系电话": "13844445555"},
+            {"孩子姓名": "学生丙", "年级": "二年级", "暑假班分组": "一二年级组", "家长联系电话": "13844445555"},
         ],
         actor_userid="boss1",
         actor_role="boss",
@@ -1354,7 +1354,7 @@ async def test_new_task_notification_overrides_old_pending_next_context(_isolate
     _seed_payroll_users(_isolated_tuoguan_home)
     _write_json(
         _isolated_tuoguan_home / "teacher_wecom_map.json",
-        "{\"李老师\": \"teacher2\", \"老板\": \"boss1\"}",
+        "{\"示例老师\": \"teacher2\", \"老板\": \"boss1\"}",
     )
     _write_json(
         _isolated_tuoguan_home / "wecom_whitelist.json",
@@ -1369,7 +1369,7 @@ async def test_new_task_notification_overrides_old_pending_next_context(_isolate
     )
     _write_json(
         _isolated_tuoguan_home / "students.json",
-        "{\"李四\": {\"teacher\": \"teacher2\", \"campus_id\": \"main\"}, \"位俊丞\": {\"teacher\": \"teacher2\", \"campus_id\": \"main\"}}",
+        "{\"学生乙\": {\"teacher\": \"teacher2\", \"campus_id\": \"main\"}, \"位俊丞\": {\"teacher\": \"teacher2\", \"campus_id\": \"main\"}}",
     )
     _write_json(
         _isolated_tuoguan_home / "tasks.json",
@@ -1426,7 +1426,7 @@ async def test_new_task_notification_overrides_old_pending_next_context(_isolate
     adapter = SimpleNamespace(send=AsyncMock(return_value=SimpleNamespace(success=True)))
 
     result = plugin._on_pre_gateway_dispatch(
-        event=_event_from("安排李老师明天前跟进李四午休状态，A级。", "boss1", "老板"),
+        event=_event_from("安排示例老师明天前跟进学生乙午休状态，A级。", "boss1", "老板"),
         gateway=_gateway(adapter),
         session_store=SimpleNamespace(),
     )
@@ -1434,17 +1434,17 @@ async def test_new_task_notification_overrides_old_pending_next_context(_isolate
 
     assert result == {"action": "skip", "reason": "tuoguan_core_handled"}
     tasks = json.loads((_isolated_tuoguan_home / "tasks.json").read_text(encoding="utf-8"))
-    new_task = next(task for task in tasks if task["student_name"] == "李四")
+    new_task = next(task for task in tasks if task["student_name"] == "学生乙")
     assert new_task["level"] == "A"
-    assert new_task["title"] in {"跟进李四午休状态", "李四午休状态跟进"}
+    assert new_task["title"] in {"跟进学生乙午休状态", "学生乙午休状态跟进"}
     pending = json.loads((_isolated_tuoguan_home / "pending_next_task_context.json").read_text(encoding="utf-8"))
     assert pending["teacher2"]["task_id"] == new_task["id"]
     assert pending["teacher2"]["source"] == "new_task_notification"
-    assert pending["teacher2"]["student_name"] == "李四"
+    assert pending["teacher2"]["student_name"] == "学生乙"
 
     adapter.send.reset_mock()
     result = plugin._on_pre_gateway_dispatch(
-        event=_event_from("开始", "teacher2", "李老师"),
+        event=_event_from("开始", "teacher2", "示例老师"),
         gateway=_gateway(adapter),
         session_store=SimpleNamespace(),
     )
@@ -1452,12 +1452,12 @@ async def test_new_task_notification_overrides_old_pending_next_context(_isolate
 
     assert result == {"action": "skip", "reason": "tuoguan_core_handled"}
     tasks = json.loads((_isolated_tuoguan_home / "tasks.json").read_text(encoding="utf-8"))
-    new_task = next(task for task in tasks if task["student_name"] == "李四")
+    new_task = next(task for task in tasks if task["student_name"] == "学生乙")
     old_task = next(task for task in tasks if task["id"] == "task-old-b")
     assert new_task["status"] == "active"
     assert old_task["status"] == "pending"
     args, _kwargs = adapter.send.await_args
-    assert "李四午休状态" in args[1]
+    assert "学生乙午休状态" in args[1]
     assert "位俊丞本周成长观察" not in args[1]
 
 
@@ -1469,7 +1469,7 @@ async def test_start_lists_tasks_when_multiple_open_and_no_recent_pending_next(_
     _seed_payroll_users(_isolated_tuoguan_home)
     _write_json(
         _isolated_tuoguan_home / "students.json",
-        "{\"李四\": {\"teacher\": \"teacher1\", \"campus_id\": \"main\"}, \"位俊丞\": {\"teacher\": \"teacher1\", \"campus_id\": \"main\"}}",
+        "{\"学生乙\": {\"teacher\": \"teacher1\", \"campus_id\": \"main\"}, \"位俊丞\": {\"teacher\": \"teacher1\", \"campus_id\": \"main\"}}",
     )
     _write_json(
         _isolated_tuoguan_home / "tasks.json",
@@ -1477,11 +1477,11 @@ async def test_start_lists_tasks_when_multiple_open_and_no_recent_pending_next(_
         [
           {
             "id": "task-a",
-            "title": "李四午休状态跟进",
+            "title": "学生乙午休状态跟进",
             "type": "growth_observation",
             "level": "A",
             "status": "pending",
-            "student_name": "李四",
+            "student_name": "学生乙",
             "assignee_userid": "teacher1",
             "due_at": "2026-06-23T20:00:00",
             "created_at": "2026-06-21T10:00:00"
@@ -1512,7 +1512,7 @@ async def test_start_lists_tasks_when_multiple_open_and_no_recent_pending_next(_
     assert result == {"action": "skip", "reason": "tuoguan_core_handled"}
     args, _kwargs = adapter.send.await_args
     assert "你当前有 2 个待处理任务" in args[1]
-    assert "李四午休状态跟进" in args[1]
+    assert "学生乙午休状态跟进" in args[1]
     assert "位俊丞本周成长观察" in args[1]
 
 
@@ -1525,7 +1525,7 @@ async def test_task_commands_use_task_source_and_clear_expired_active_context(_i
     _seed_payroll_users(_isolated_tuoguan_home)
     _write_json(
         _isolated_tuoguan_home / "students.json",
-        "{\"李四\": {\"teacher\": \"teacher1\", \"campus_id\": \"main\"}, \"小金\": {\"teacher\": \"teacher1\", \"campus_id\": \"main\"}, \"位俊丞\": {\"teacher\": \"teacher1\", \"campus_id\": \"main\"}}",
+        "{\"学生乙\": {\"teacher\": \"teacher1\", \"campus_id\": \"main\"}, \"学生丙\": {\"teacher\": \"teacher1\", \"campus_id\": \"main\"}, \"位俊丞\": {\"teacher\": \"teacher1\", \"campus_id\": \"main\"}}",
     )
     _write_json(
         _isolated_tuoguan_home / "tasks.json",
@@ -1533,25 +1533,25 @@ async def test_task_commands_use_task_source_and_clear_expired_active_context(_i
         [
           {
             "id": "task-li-a",
-            "title": "跟进李四午休状态",
+            "title": "跟进学生乙午休状态",
             "type": "growth_observation",
             "level": "A",
             "status": "pending",
-            "student_name": "李四",
+            "student_name": "学生乙",
             "assignee_userid": "teacher1",
-            "assigned_by_name": "金总",
+            "assigned_by_name": "机构负责人",
             "due_at": "2026-06-23T20:00:00",
             "created_at": "2026-06-22T00:06:11"
           },
           {
             "id": "task-xiaojin-a",
-            "title": "小金数学计算订正情况",
+            "title": "学生丙数学计算订正情况",
             "type": "academic_issue",
             "level": "A",
             "status": "pending",
-            "student_name": "小金",
+            "student_name": "学生丙",
             "assignee_userid": "teacher1",
-            "assigned_by_name": "金总",
+            "assigned_by_name": "机构负责人",
             "due_at": "2026-06-23T20:00:00",
             "created_at": "2026-06-22T00:05:00"
           },
@@ -1597,8 +1597,8 @@ async def test_task_commands_use_task_source_and_clear_expired_active_context(_i
     assert result == {"action": "skip", "reason": "tuoguan_core_handled"}
     args, _kwargs = adapter.send.await_args
     assert "【待处理 — 3个】" in args[1]
-    assert "跟进李四午休状态" in args[1]
-    assert "小金数学计算订正情况" in args[1]
+    assert "跟进学生乙午休状态" in args[1]
+    assert "学生丙数学计算订正情况" in args[1]
     assert "位俊丞本周成长观察" in args[1]
 
     adapter.send.reset_mock()
@@ -1627,7 +1627,7 @@ async def test_wecom_task_list_matches_dashboard_open_tasks(_isolated_tuoguan_ho
     _seed_payroll_users(_isolated_tuoguan_home)
     _write_json(
         _isolated_tuoguan_home / "students.json",
-        "{\"李四\": {\"teacher\": \"teacher1\", \"campus_id\": \"main\"}, \"位俊丞\": {\"teacher\": \"teacher1\", \"campus_id\": \"main\"}}",
+        "{\"学生乙\": {\"teacher\": \"teacher1\", \"campus_id\": \"main\"}, \"位俊丞\": {\"teacher\": \"teacher1\", \"campus_id\": \"main\"}}",
     )
     _write_json(
         _isolated_tuoguan_home / "tasks.json",
@@ -1635,11 +1635,11 @@ async def test_wecom_task_list_matches_dashboard_open_tasks(_isolated_tuoguan_ho
         [
           {
             "id": "task-li-a",
-            "title": "跟进李四午休状态",
+            "title": "跟进学生乙午休状态",
             "type": "growth_observation",
             "level": "A",
             "status": "pending",
-            "student_name": "李四",
+            "student_name": "学生乙",
             "assignee_userid": "teacher1",
             "due_at": "2026-06-23T20:00:00",
             "created_at": "2026-06-22T00:06:11"
@@ -1663,7 +1663,7 @@ async def test_wecom_task_list_matches_dashboard_open_tasks(_isolated_tuoguan_ho
     cache = load_dashboard_cache(store)
     dashboard_tasks = cache["teacher_dashboards"]["teacher1"]["open_tasks"]
     dashboard_titles = {task["title"] for task in dashboard_tasks}
-    assert {"跟进李四午休状态", "位俊丞本周成长观察"} <= dashboard_titles
+    assert {"跟进学生乙午休状态", "位俊丞本周成长观察"} <= dashboard_titles
 
     adapter = SimpleNamespace(send=AsyncMock(return_value=SimpleNamespace(success=True)))
     result = plugin._on_pre_gateway_dispatch(
@@ -1675,7 +1675,7 @@ async def test_wecom_task_list_matches_dashboard_open_tasks(_isolated_tuoguan_ho
 
     assert result == {"action": "skip", "reason": "tuoguan_core_handled"}
     args, _kwargs = adapter.send.await_args
-    assert "跟进李四午休状态" in args[1]
+    assert "跟进学生乙午休状态" in args[1]
     assert "位俊丞本周成长观察" in args[1]
 
 
@@ -1685,11 +1685,11 @@ async def test_record_feedback_uses_chinese_quality_label(_isolated_tuoguan_home
 
     plugin._ROUTER = None
     _seed_payroll_users(_isolated_tuoguan_home)
-    _write_json(_isolated_tuoguan_home / "students.json", "{\"李四\": {\"teacher\": \"teacher1\", \"campus_id\": \"main\"}}")
+    _write_json(_isolated_tuoguan_home / "students.json", "{\"学生乙\": {\"teacher\": \"teacher1\", \"campus_id\": \"main\"}}")
     adapter = SimpleNamespace(send=AsyncMock(return_value=SimpleNamespace(success=True)))
 
     result = plugin._on_pre_gateway_dispatch(
-        event=_event_from("李四今天午休时有点坐不住，我提醒后能安静下来，后半段休息状态比昨天好。", "teacher1", "王老师"),
+        event=_event_from("学生乙今天午休时有点坐不住，我提醒后能安静下来，后半段休息状态比昨天好。", "teacher1", "王老师"),
         gateway=_gateway(adapter),
         session_store=SimpleNamespace(),
     )
@@ -1709,10 +1709,10 @@ async def test_duplicate_record_feedback_has_precise_tip(_isolated_tuoguan_home)
 
     plugin._ROUTER = None
     _seed_payroll_users(_isolated_tuoguan_home)
-    _write_json(_isolated_tuoguan_home / "students.json", "{\"李四\": {\"teacher\": \"teacher1\", \"campus_id\": \"main\"}}")
+    _write_json(_isolated_tuoguan_home / "students.json", "{\"学生乙\": {\"teacher\": \"teacher1\", \"campus_id\": \"main\"}}")
     adapter = SimpleNamespace(send=AsyncMock(return_value=SimpleNamespace(success=True)))
-    first = "李四今天午餐吃饭比昨天主动，米饭基本吃完了，青菜一开始不太愿意吃，我提醒后也吃了一些，整体进餐状态比昨天好。"
-    second = "李四今天午餐吃饭比昨天更主动，米饭基本吃完，青菜一开始不太愿意吃，我提醒后也吃了一些，整体进餐状态比昨天好。"
+    first = "学生乙今天午餐吃饭比昨天主动，米饭基本吃完了，青菜一开始不太愿意吃，我提醒后也吃了一些，整体进餐状态比昨天好。"
+    second = "学生乙今天午餐吃饭比昨天更主动，米饭基本吃完，青菜一开始不太愿意吃，我提醒后也吃了一些，整体进餐状态比昨天好。"
 
     for text in (first, second):
         result = plugin._on_pre_gateway_dispatch(
@@ -1734,18 +1734,18 @@ async def test_lunch_nap_task_start_uses_task_specific_prompt(_isolated_tuoguan_
 
     plugin._ROUTER = None
     _seed_payroll_users(_isolated_tuoguan_home)
-    _write_json(_isolated_tuoguan_home / "students.json", "{\"李四\": {\"teacher\": \"teacher1\", \"campus_id\": \"main\"}}")
+    _write_json(_isolated_tuoguan_home / "students.json", "{\"学生乙\": {\"teacher\": \"teacher1\", \"campus_id\": \"main\"}}")
     _write_json(
         _isolated_tuoguan_home / "tasks.json",
         """
         [
           {
             "id": "task-nap-a",
-            "title": "跟进李四午休状态",
+            "title": "跟进学生乙午休状态",
             "type": "growth_observation",
             "level": "A",
             "status": "pending",
-            "student_name": "李四",
+            "student_name": "学生乙",
             "assignee_userid": "teacher1",
             "due_at": "2026-06-23T20:00:00",
             "created_at": "2026-06-22T00:06:11"
@@ -1776,11 +1776,11 @@ async def test_safety_parent_script_polishes_minor_slips(_isolated_tuoguan_home)
 
     plugin._ROUTER = None
     _seed_payroll_users(_isolated_tuoguan_home)
-    _write_json(_isolated_tuoguan_home / "students.json", "{\"李四\": {\"teacher\": \"teacher1\", \"campus_id\": \"main\"}}")
+    _write_json(_isolated_tuoguan_home / "students.json", "{\"学生乙\": {\"teacher\": \"teacher1\", \"campus_id\": \"main\"}}")
     adapter = SimpleNamespace(send=AsyncMock(return_value=SimpleNamespace(success=True)))
 
     plugin._on_pre_gateway_dispatch(
-        event=_event_from("李四今天进教室时手指不小心被门缝夹了一下，我马上看查看了孩子手指，目前没有破皮没有出血，手指能正常活动。", "teacher1", "王老师"),
+        event=_event_from("学生乙今天进教室时手指不小心被门缝夹了一下，我马上看查看了孩子手指，目前没有破皮没有出血，手指能正常活动。", "teacher1", "王老师"),
         gateway=_gateway(adapter),
         session_store=SimpleNamespace(),
     )
@@ -2009,16 +2009,16 @@ async def test_daily_dashboard_push_sends_once_per_day(_isolated_tuoguan_home, m
 
     _seed_payroll_users(_isolated_tuoguan_home)
     whitelist = json.loads((_isolated_tuoguan_home / "wecom_whitelist.json").read_text(encoding="utf-8"))
-    whitelist["allowed_users"].append("CeShi")
-    whitelist["user_roles"]["CeShi"] = "teacher"
+    whitelist["allowed_users"].append("teacher_test")
+    whitelist["user_roles"]["teacher_test"] = "teacher"
     (_isolated_tuoguan_home / "wecom_whitelist.json").write_text(json.dumps(whitelist), encoding="utf-8")
     mapping = json.loads((_isolated_tuoguan_home / "teacher_wecom_map.json").read_text(encoding="utf-8"))
-    mapping["李老师测试"] = "CeShi"
+    mapping["示例老师测试"] = "teacher_test"
     (_isolated_tuoguan_home / "teacher_wecom_map.json").write_text(json.dumps(mapping, ensure_ascii=False), encoding="utf-8")
     (_isolated_tuoguan_home / "daily_push_config.json").write_text(
         json.dumps(
             {
-                "include_user_ids": ["CeShi"],
+                "include_user_ids": ["teacher_test"],
                 "exclude_user_ids": ["teacher1"],
             },
             ensure_ascii=False,
@@ -2042,7 +2042,7 @@ async def test_daily_dashboard_push_sends_once_per_day(_isolated_tuoguan_home, m
     assert "Hermes 店长今日任务" in sent_text
     assert "Hermes 老板今日任务" in sent_text
     targets = [call.args[0] for call in adapter.send.await_args_list]
-    assert "CeShi" in targets
+    assert "teacher_test" in targets
     assert "teacher1" not in targets
     state = json.loads((_isolated_tuoguan_home / "daily_push_state.json").read_text(encoding="utf-8"))
     assert state["last_sent_date"] == "2026-06-21"
@@ -2096,26 +2096,26 @@ async def test_learning_record_with_completion_word_does_not_route_as_task(_isol
     whitelist["user_roles"]["teacher2"] = "teacher"
     _write_json(_isolated_tuoguan_home / "wecom_whitelist.json", json.dumps(whitelist, ensure_ascii=False))
     mapping = json.loads((_isolated_tuoguan_home / "teacher_wecom_map.json").read_text(encoding="utf-8"))
-    mapping["李老师"] = "teacher2"
+    mapping["示例老师"] = "teacher2"
     _write_json(_isolated_tuoguan_home / "teacher_wecom_map.json", json.dumps(mapping, ensure_ascii=False))
     _write_json(
         _isolated_tuoguan_home / "students.json",
         """
         {
-          "小金": {"teacher": "teacher2", "campus_id": "main"}
+          "学生丙": {"teacher": "teacher2", "campus_id": "main"}
         }
         """,
     )
     adapter = SimpleNamespace(send=AsyncMock(return_value=SimpleNamespace(success=True)))
 
     samples = [
-        "小金今天数学作业完成得比较慢，计算题错了4道，我让他重新订正了一遍。",
-        "小金今天作业完成质量一般，语文阅读漏了2题，我让他补完后重新检查。",
-        "小金订正完成后还错1道，明天继续关注计算准确率。",
+        "学生丙今天数学作业完成得比较慢，计算题错了4道，我让他重新订正了一遍。",
+        "学生丙今天作业完成质量一般，语文阅读漏了2题，我让他补完后重新检查。",
+        "学生丙订正完成后还错1道，明天继续关注计算准确率。",
     ]
     for sample in samples:
         result = plugin._on_pre_gateway_dispatch(
-            event=_event_from(sample, "teacher2", "李老师"),
+            event=_event_from(sample, "teacher2", "示例老师"),
             gateway=_gateway(adapter),
             session_store=SimpleNamespace(),
         )
@@ -2126,7 +2126,7 @@ async def test_learning_record_with_completion_word_does_not_route_as_task(_isol
     assert "只有店长或老板" not in sent_text
     records = json.loads((_isolated_tuoguan_home / "records.json").read_text(encoding="utf-8"))
     assert len(records) == 3
-    assert all(record["student_name"] == "小金" for record in records)
+    assert all(record["student_name"] == "学生丙" for record in records)
     assert all({"academic_issue", "learning_habit", "student_daily"} & set(record["record_types"]) for record in records)
     route_logs = [
         json.loads(line)
@@ -2163,29 +2163,29 @@ async def test_teacher_complete_with_active_task_routes_to_task_complete(_isolat
 
     plugin._ROUTER = None
     _seed_payroll_users(_isolated_tuoguan_home)
-    _write_json(_isolated_tuoguan_home / "students.json", "{\"小金\": {\"teacher\": \"teacher1\", \"campus_id\": \"main\"}}")
+    _write_json(_isolated_tuoguan_home / "students.json", "{\"学生丙\": {\"teacher\": \"teacher1\", \"campus_id\": \"main\"}}")
     _write_json(
         _isolated_tuoguan_home / "tasks.json",
         """
         [
           {
             "id": "task-active-complete",
-            "title": "小金数学订正跟进",
+            "title": "学生丙数学订正跟进",
             "type": "academic_issue",
             "level": "A",
             "status": "active",
-            "student_name": "小金",
+            "student_name": "学生丙",
             "assignee_userid": "teacher1",
             "due_at": "2026-06-21T20:00:00",
             "created_at": "2026-06-21T10:00:00",
-            "evidence_summary": "今天已让小金重新订正计算题，订正后已检查，明天继续关注。"
+            "evidence_summary": "今天已让学生丙重新订正计算题，订正后已检查，明天继续关注。"
           }
         ]
         """,
     )
     _write_json(
         _isolated_tuoguan_home / "active_task_context.json",
-        "{\"teacher1\": {\"task_id\": \"task-active-complete\", \"student_name\": \"小金\", \"task_type\": \"academic_issue\", \"status\": \"processing\", \"expires_at\": \"2099-01-01T00:00:00\"}}",
+        "{\"teacher1\": {\"task_id\": \"task-active-complete\", \"student_name\": \"学生丙\", \"task_type\": \"academic_issue\", \"status\": \"processing\", \"expires_at\": \"2099-01-01T00:00:00\"}}",
     )
     adapter = SimpleNamespace(send=AsyncMock(return_value=SimpleNamespace(success=True)))
 
@@ -2215,13 +2215,13 @@ async def test_boss_assigns_li_teacher_completion_task_not_student_record(_isola
     whitelist["user_roles"]["teacher2"] = "teacher"
     _write_json(_isolated_tuoguan_home / "wecom_whitelist.json", json.dumps(whitelist, ensure_ascii=False))
     mapping = json.loads((_isolated_tuoguan_home / "teacher_wecom_map.json").read_text(encoding="utf-8"))
-    mapping["李老师"] = "teacher2"
+    mapping["示例老师"] = "teacher2"
     _write_json(_isolated_tuoguan_home / "teacher_wecom_map.json", json.dumps(mapping, ensure_ascii=False))
-    _write_json(_isolated_tuoguan_home / "students.json", "{\"小金\": {\"teacher\": \"teacher2\", \"campus_id\": \"main\"}}")
+    _write_json(_isolated_tuoguan_home / "students.json", "{\"学生丙\": {\"teacher\": \"teacher2\", \"campus_id\": \"main\"}}")
     adapter = SimpleNamespace(send=AsyncMock(return_value=SimpleNamespace(success=True)))
 
     result = plugin._on_pre_gateway_dispatch(
-        event=_event_from("安排李老师完成小金数学订正跟进任务", "boss1", "老板"),
+        event=_event_from("安排示例老师完成学生丙数学订正跟进任务", "boss1", "老板"),
         gateway=_gateway(adapter),
         session_store=SimpleNamespace(),
     )
@@ -2231,7 +2231,7 @@ async def test_boss_assigns_li_teacher_completion_task_not_student_record(_isola
     tasks = json.loads((_isolated_tuoguan_home / "tasks.json").read_text(encoding="utf-8"))
     assert len(tasks) == 1
     assert tasks[0]["assignee_userid"] == "teacher2"
-    assert tasks[0]["student_name"] == "小金"
+    assert tasks[0]["student_name"] == "学生丙"
     assert tasks[0]["source_type"] == "manual_assignment"
     assert not (_isolated_tuoguan_home / "records.json").exists()
     route_logs = [
@@ -2253,7 +2253,7 @@ async def test_safety_task_context_accepts_evidence_without_student_name(_isolat
         _isolated_tuoguan_home / "students.json",
         """
         {
-          "小金": {"teacher": "teacher1", "campus_id": "main"}
+          "学生丙": {"teacher": "teacher1", "campus_id": "main"}
         }
         """,
     )
@@ -2263,15 +2263,15 @@ async def test_safety_task_context_accepts_evidence_without_student_name(_isolat
         [
           {
             "id": "task-safe-xiaojin",
-            "title": "小金差点摔倒安全闭环",
+            "title": "学生丙差点摔倒安全闭环",
             "type": "safety_incident",
             "level": "S",
             "status": "pending",
-            "student_name": "小金",
+            "student_name": "学生丙",
             "assignee_userid": "teacher1",
             "due_at": "2026-06-21T20:00:00",
             "created_at": "2026-06-21T10:00:00",
-            "source_text": "小金差点摔倒"
+            "source_text": "学生丙差点摔倒"
           }
         ]
         """,
@@ -2319,7 +2319,7 @@ async def test_labelled_safety_closure_update_is_not_manual_assignment(_isolated
         _isolated_tuoguan_home / "students.json",
         """
         {
-          "小金": {"teacher": "teacher1", "campus_id": "main"}
+          "学生丙": {"teacher": "teacher1", "campus_id": "main"}
         }
         """,
     )
@@ -2329,15 +2329,15 @@ async def test_labelled_safety_closure_update_is_not_manual_assignment(_isolated
         [
           {
             "id": "task-safe-label",
-            "title": "小金差点摔倒安全闭环",
+            "title": "学生丙差点摔倒安全闭环",
             "type": "safety_incident",
             "level": "S",
             "status": "active",
-            "student_name": "小金",
+            "student_name": "学生丙",
             "assignee_userid": "teacher1",
             "due_at": "2026-06-21T20:00:00",
             "created_at": "2026-06-21T10:00:00",
-            "source_text": "小金差点摔倒"
+            "source_text": "学生丙差点摔倒"
           }
         ]
         """,
@@ -2346,7 +2346,7 @@ async def test_labelled_safety_closure_update_is_not_manual_assignment(_isolated
 
     result = plugin._on_pre_gateway_dispatch(
         event=_event_from(
-            "安全闭环补充：小金。孩子当前状态：没有疼痛、出血、红肿，活动正常。已采取处理：提醒上下楼靠右慢走。家长是否知情：已告知家长，家长表示知道了。后续观察安排：这两天继续观察上下楼情况。",
+            "安全闭环补充：学生丙。孩子当前状态：没有疼痛、出血、红肿，活动正常。已采取处理：提醒上下楼靠右慢走。家长是否知情：已告知家长，家长表示知道了。后续观察安排：这两天继续观察上下楼情况。",
             "teacher1",
             "王老师",
         ),
@@ -2370,18 +2370,18 @@ async def test_safety_task_requires_final_complete_after_evidence_ready(_isolate
 
     plugin._ROUTER = None
     _seed_payroll_users(_isolated_tuoguan_home)
-    _write_json(_isolated_tuoguan_home / "students.json", "{\"小金\": {\"teacher\": \"teacher1\", \"campus_id\": \"main\"}}")
+    _write_json(_isolated_tuoguan_home / "students.json", "{\"学生丙\": {\"teacher\": \"teacher1\", \"campus_id\": \"main\"}}")
     _write_json(
         _isolated_tuoguan_home / "tasks.json",
         """
         [
           {
             "id": "task-safe-final",
-            "title": "小金差点摔倒安全闭环",
+            "title": "学生丙差点摔倒安全闭环",
             "type": "safety_incident",
             "level": "S",
             "status": "waiting_confirmation",
-            "student_name": "小金",
+            "student_name": "学生丙",
             "assignee_userid": "teacher1",
             "due_at": "2026-06-21T20:00:00",
             "created_at": "2026-06-21T10:00:00",
@@ -2418,23 +2418,23 @@ async def test_boss_closes_specific_s_task_not_gateway_service(_isolated_tuoguan
 
     plugin._ROUTER = None
     _seed_payroll_users(_isolated_tuoguan_home)
-    _write_json(_isolated_tuoguan_home / "students.json", "{\"小金\": {\"teacher\": \"teacher1\", \"campus_id\": \"main\"}}")
+    _write_json(_isolated_tuoguan_home / "students.json", "{\"学生丙\": {\"teacher\": \"teacher1\", \"campus_id\": \"main\"}}")
     _write_json(
         _isolated_tuoguan_home / "tasks.json",
         """
         [
           {
             "id": "task-safe-admin",
-            "title": "小金差点摔倒安全闭环",
+            "title": "学生丙差点摔倒安全闭环",
             "type": "safety_incident",
             "level": "S",
             "status": "active",
-            "student_name": "小金",
+            "student_name": "学生丙",
             "assignee_userid": "teacher1",
             "assignee_role": "teacher",
             "due_at": "2026-06-21T20:00:00",
             "created_at": "2026-06-21T10:00:00",
-            "source_text": "小金差点摔倒"
+            "source_text": "学生丙差点摔倒"
           }
         ]
         """,
@@ -2442,7 +2442,7 @@ async def test_boss_closes_specific_s_task_not_gateway_service(_isolated_tuoguan
     adapter = SimpleNamespace(send=AsyncMock(return_value=SimpleNamespace(success=True)))
 
     result = plugin._on_pre_gateway_dispatch(
-        event=_event_from("关闭小金差点摔倒这个S级安全任务。原因：本次为系统测试任务，老板确认关闭。", "boss1", "老板"),
+        event=_event_from("关闭学生丙差点摔倒这个S级安全任务。原因：本次为系统测试任务，老板确认关闭。", "boss1", "老板"),
         gateway=_gateway(adapter),
         session_store=SimpleNamespace(),
     )
@@ -2465,23 +2465,23 @@ async def test_boss_close_task_extracts_natural_reason_with_comma(_isolated_tuog
 
     plugin._ROUTER = None
     _seed_payroll_users(_isolated_tuoguan_home)
-    _write_json(_isolated_tuoguan_home / "students.json", "{\"小金\": {\"teacher\": \"teacher1\", \"campus_id\": \"main\"}}")
+    _write_json(_isolated_tuoguan_home / "students.json", "{\"学生丙\": {\"teacher\": \"teacher1\", \"campus_id\": \"main\"}}")
     _write_json(
         _isolated_tuoguan_home / "tasks.json",
         """
         [
           {
             "id": "task-safe-natural",
-            "title": "小金差点摔伤安全闭环",
+            "title": "学生丙差点摔伤安全闭环",
             "type": "safety_incident",
             "level": "S",
             "status": "active",
-            "student_name": "小金",
+            "student_name": "学生丙",
             "assignee_userid": "teacher1",
             "assignee_role": "teacher",
             "due_at": "2026-06-21T20:00:00",
             "created_at": "2026-06-21T10:00:00",
-            "source_text": "小金差点摔伤"
+            "source_text": "学生丙差点摔伤"
           }
         ]
         """,
@@ -2489,7 +2489,7 @@ async def test_boss_close_task_extracts_natural_reason_with_comma(_isolated_tuog
     adapter = SimpleNamespace(send=AsyncMock(return_value=SimpleNamespace(success=True)))
 
     result = plugin._on_pre_gateway_dispatch(
-        event=_event_from("关闭小金差点摔伤这个S级任务原因，本次为系统测试任务，孩子状态已确认正常，家长已知情，后续由老师继续观察", "boss1", "老板"),
+        event=_event_from("关闭学生丙差点摔伤这个S级任务原因，本次为系统测试任务，孩子状态已确认正常，家长已知情，后续由老师继续观察", "boss1", "老板"),
         gateway=_gateway(adapter),
         session_store=SimpleNamespace(),
     )
@@ -2515,18 +2515,18 @@ async def test_boss_close_task_pending_reason_blocks_technical_context(_isolated
 
     plugin._ROUTER = None
     _seed_payroll_users(_isolated_tuoguan_home)
-    _write_json(_isolated_tuoguan_home / "students.json", "{\"小金\": {\"teacher\": \"teacher1\", \"campus_id\": \"main\"}}")
+    _write_json(_isolated_tuoguan_home / "students.json", "{\"学生丙\": {\"teacher\": \"teacher1\", \"campus_id\": \"main\"}}")
     _write_json(
         _isolated_tuoguan_home / "tasks.json",
         """
         [
           {
             "id": "task-safe-pending-close",
-            "title": "小金差点摔倒安全闭环",
+            "title": "学生丙差点摔倒安全闭环",
             "type": "safety_incident",
             "level": "S",
             "status": "active",
-            "student_name": "小金",
+            "student_name": "学生丙",
             "assignee_userid": "teacher1",
             "assignee_role": "teacher",
             "due_at": "2026-06-21T20:00:00",
@@ -2537,12 +2537,12 @@ async def test_boss_close_task_pending_reason_blocks_technical_context(_isolated
     )
     _write_json(
         _isolated_tuoguan_home / "script_context.json",
-        "{\"boss1\": {\"text\": \"gateway、CeShi、WECOM_CALLBACK_ALLOWED_USERS、白名单、重启 gateway\", \"updated_at\": \"2026-06-21T10:00:00\"}}",
+        "{\"boss1\": {\"text\": \"gateway、teacher_test、WECOM_CALLBACK_ALLOWED_USERS、白名单、重启 gateway\", \"updated_at\": \"2026-06-21T10:00:00\"}}",
     )
     adapter = SimpleNamespace(send=AsyncMock(return_value=SimpleNamespace(success=True)))
 
     plugin._on_pre_gateway_dispatch(
-        event=_event_from("关闭小金这个S级任务", "boss1", "老板"),
+        event=_event_from("关闭学生丙这个S级任务", "boss1", "老板"),
         gateway=_gateway(adapter),
         session_store=SimpleNamespace(),
     )
@@ -2595,29 +2595,29 @@ async def test_start_with_multiple_tasks_asks_teacher_to_choose(_isolated_tuogua
 
     plugin._ROUTER = None
     _seed_payroll_users(_isolated_tuoguan_home)
-    _write_json(_isolated_tuoguan_home / "students.json", "{\"小金\": {\"teacher\": \"teacher1\", \"campus_id\": \"main\"}}")
+    _write_json(_isolated_tuoguan_home / "students.json", "{\"学生丙\": {\"teacher\": \"teacher1\", \"campus_id\": \"main\"}}")
     _write_json(
         _isolated_tuoguan_home / "tasks.json",
         """
         [
           {
             "id": "task-safe-multi",
-            "title": "小金差点摔倒安全闭环",
+            "title": "学生丙差点摔倒安全闭环",
             "type": "safety_incident",
             "level": "S",
             "status": "pending",
-            "student_name": "小金",
+            "student_name": "学生丙",
             "assignee_userid": "teacher1",
             "due_at": "2026-06-21T20:00:00",
             "created_at": "2026-06-21T10:00:00"
           },
           {
             "id": "task-math-multi",
-            "title": "小金数学计算订正跟进",
+            "title": "学生丙数学计算订正跟进",
             "type": "academic_issue",
             "level": "A",
             "status": "pending",
-            "student_name": "小金",
+            "student_name": "学生丙",
             "assignee_userid": "teacher1",
             "due_at": "2026-06-21T21:00:00",
             "created_at": "2026-06-21T10:01:00"
@@ -2650,29 +2650,29 @@ async def test_teacher_can_select_a_task_when_s_task_exists(_isolated_tuoguan_ho
 
     plugin._ROUTER = None
     _seed_payroll_users(_isolated_tuoguan_home)
-    _write_json(_isolated_tuoguan_home / "students.json", "{\"小金\": {\"teacher\": \"teacher1\", \"campus_id\": \"main\"}}")
+    _write_json(_isolated_tuoguan_home / "students.json", "{\"学生丙\": {\"teacher\": \"teacher1\", \"campus_id\": \"main\"}}")
     _write_json(
         _isolated_tuoguan_home / "tasks.json",
         """
         [
           {
             "id": "task-safe-select",
-            "title": "小金差点摔倒安全闭环",
+            "title": "学生丙差点摔倒安全闭环",
             "type": "safety_incident",
             "level": "S",
             "status": "pending",
-            "student_name": "小金",
+            "student_name": "学生丙",
             "assignee_userid": "teacher1",
             "due_at": "2026-06-21T20:00:00",
             "created_at": "2026-06-21T10:00:00"
           },
           {
             "id": "task-math-select",
-            "title": "小金数学计算订正跟进",
+            "title": "学生丙数学计算订正跟进",
             "type": "academic_issue",
             "level": "A",
             "status": "pending",
-            "student_name": "小金",
+            "student_name": "学生丙",
             "assignee_userid": "teacher1",
             "due_at": "2026-06-21T21:00:00",
             "created_at": "2026-06-21T10:01:00"
@@ -2906,18 +2906,18 @@ async def test_continue_after_completed_task_starts_pending_next_task(_isolated_
 
     plugin._ROUTER = None
     _seed_payroll_users(_isolated_tuoguan_home)
-    _write_json(_isolated_tuoguan_home / "students.json", "{\"小金\": {\"teacher\": \"teacher1\", \"campus_id\": \"main\"}, \"张浩\": {\"teacher\": \"teacher1\", \"campus_id\": \"main\"}}")
+    _write_json(_isolated_tuoguan_home / "students.json", "{\"学生丙\": {\"teacher\": \"teacher1\", \"campus_id\": \"main\"}, \"张浩\": {\"teacher\": \"teacher1\", \"campus_id\": \"main\"}}")
     _write_json(
         _isolated_tuoguan_home / "tasks.json",
         """
         [
           {
             "id": "task-safe-next",
-            "title": "小金差点摔倒安全闭环",
+            "title": "学生丙差点摔倒安全闭环",
             "type": "safety_incident",
             "level": "S",
             "status": "waiting_confirmation",
-            "student_name": "小金",
+            "student_name": "学生丙",
             "assignee_userid": "teacher1",
             "due_at": "2026-06-21T20:00:00",
             "created_at": "2026-06-21T10:00:00",
@@ -2931,11 +2931,11 @@ async def test_continue_after_completed_task_starts_pending_next_task(_isolated_
           },
           {
             "id": "task-a-next",
-            "title": "小金A级订正情况",
+            "title": "学生丙A级订正情况",
             "type": "academic_issue",
             "level": "A",
             "status": "pending",
-            "student_name": "小金",
+            "student_name": "学生丙",
             "assignee_userid": "teacher1",
             "due_at": "2026-06-21T21:00:00",
             "created_at": "2026-06-21T10:01:00"
@@ -2966,7 +2966,7 @@ async def test_continue_after_completed_task_starts_pending_next_task(_isolated_
 
     assert result == {"action": "skip", "reason": "tuoguan_core_handled"}
     teacher_reply = next(call.args[1] for call in adapter.send.await_args_list if call.args[0] == "wwcorp:teacher1")
-    assert "当前还有 1 个 A 级任务待处理，可稍后处理：小金A级订正情况" in teacher_reply
+    assert "当前还有 1 个 A 级任务待处理，可稍后处理：学生丙A级订正情况" in teacher_reply
     assert "回复“继续”即可开始" in teacher_reply
     pending_next = json.loads((_isolated_tuoguan_home / "pending_next_task_context.json").read_text(encoding="utf-8"))
     assert pending_next["teacher1"]["task_id"] == "task-a-next"
@@ -2981,7 +2981,7 @@ async def test_continue_after_completed_task_starts_pending_next_task(_isolated_
     assert result == {"action": "skip", "reason": "tuoguan_core_handled"}
     args, _kwargs = adapter.send.await_args
     assert "张浩" not in args[1]
-    assert "开始处理" in args[1] or "小金A级订正情况" in args[1]
+    assert "开始处理" in args[1] or "学生丙A级订正情况" in args[1]
     tasks = json.loads((_isolated_tuoguan_home / "tasks.json").read_text(encoding="utf-8"))
     next_task = next(task for task in tasks if task["id"] == "task-a-next")
     assert next_task["status"] == "active"
@@ -2996,7 +2996,7 @@ async def test_continue_without_pending_next_does_not_create_student_record(_iso
 
     plugin._ROUTER = None
     _seed_payroll_users(_isolated_tuoguan_home)
-    _write_json(_isolated_tuoguan_home / "students.json", "{\"小金\": {\"teacher\": \"teacher1\", \"campus_id\": \"main\"}}")
+    _write_json(_isolated_tuoguan_home / "students.json", "{\"学生丙\": {\"teacher\": \"teacher1\", \"campus_id\": \"main\"}}")
     adapter = SimpleNamespace(send=AsyncMock(return_value=SimpleNamespace(success=True)))
 
     result = plugin._on_pre_gateway_dispatch(
@@ -3018,7 +3018,7 @@ async def test_short_ack_without_context_does_not_create_student_record(_isolate
 
     plugin._ROUTER = None
     _seed_payroll_users(_isolated_tuoguan_home)
-    _write_json(_isolated_tuoguan_home / "students.json", "{\"小金\": {\"teacher\": \"teacher1\", \"campus_id\": \"main\"}}")
+    _write_json(_isolated_tuoguan_home / "students.json", "{\"学生丙\": {\"teacher\": \"teacher1\", \"campus_id\": \"main\"}}")
     adapter = SimpleNamespace(send=AsyncMock(return_value=SimpleNamespace(success=True)))
 
     for text in ("好的", "收到", "可以"):
@@ -3042,12 +3042,12 @@ async def test_natural_life_records_archive_without_record_keyword(_isolated_tuo
 
     plugin._ROUTER = None
     _seed_payroll_users(_isolated_tuoguan_home)
-    _write_json(_isolated_tuoguan_home / "students.json", "{\"李四\": {\"teacher\": \"teacher1\", \"campus_id\": \"main\"}}")
+    _write_json(_isolated_tuoguan_home / "students.json", "{\"学生乙\": {\"teacher\": \"teacher1\", \"campus_id\": \"main\"}}")
     adapter = SimpleNamespace(send=AsyncMock(return_value=SimpleNamespace(success=True)))
 
     samples = [
-        ("李四今天午餐吃饭比昨天主动，米饭基本吃完了，青菜一开始不太愿意吃，我提醒后也吃了一些，整体进餐状态比昨天好。", "meal_care"),
-        ("李四今天午休时有点坐不住，我提醒后能安静下来，后半段休息状态比昨天好。", "nap_care"),
+        ("学生乙今天午餐吃饭比昨天主动，米饭基本吃完了，青菜一开始不太愿意吃，我提醒后也吃了一些，整体进餐状态比昨天好。", "meal_care"),
+        ("学生乙今天午休时有点坐不住，我提醒后能安静下来，后半段休息状态比昨天好。", "nap_care"),
     ]
     for text, _expected in samples:
         result = plugin._on_pre_gateway_dispatch(
@@ -3059,7 +3059,7 @@ async def test_natural_life_records_archive_without_record_keyword(_isolated_tuo
         assert result == {"action": "skip", "reason": "tuoguan_core_handled"}
         args, _kwargs = adapter.send.await_args
         assert "没有明确写入正式记录" not in args[1]
-        assert "已记录李四的情况" in args[1]
+        assert "已记录学生乙的情况" in args[1]
         assert "绩效" in args[1]
 
     records = json.loads((_isolated_tuoguan_home / "records.json").read_text(encoding="utf-8"))
@@ -3075,12 +3075,12 @@ async def test_natural_safety_event_creates_safety_task_and_sanitized_script(_is
 
     plugin._ROUTER = None
     _seed_payroll_users(_isolated_tuoguan_home)
-    _write_json(_isolated_tuoguan_home / "students.json", "{\"李四\": {\"teacher\": \"teacher1\", \"campus_id\": \"main\"}}")
+    _write_json(_isolated_tuoguan_home / "students.json", "{\"学生乙\": {\"teacher\": \"teacher1\", \"campus_id\": \"main\"}}")
     adapter = SimpleNamespace(send=AsyncMock(return_value=SimpleNamespace(success=True)))
 
     result = plugin._on_pre_gateway_dispatch(
         event=_event_from(
-            "李四今天进教室时手指不小心被门缝夹了一下，我马上查看了孩子手指，目前没有破皮、没有出血，手指能正常活动，情绪也稳定。我已经提醒孩子进出门时慢一点，不要把手放在门缝附近。",
+            "学生乙今天进教室时手指不小心被门缝夹了一下，我马上查看了孩子手指，目前没有破皮、没有出血，手指能正常活动，情绪也稳定。我已经提醒孩子进出门时慢一点，不要把手放在门缝附近。",
             "teacher1",
             "王老师",
         ),
@@ -3114,11 +3114,11 @@ async def test_explicit_safety_record_script_has_no_internal_words(_isolated_tuo
 
     plugin._ROUTER = None
     _seed_payroll_users(_isolated_tuoguan_home)
-    _write_json(_isolated_tuoguan_home / "students.json", "{\"李四\": {\"teacher\": \"teacher1\", \"campus_id\": \"main\"}}")
+    _write_json(_isolated_tuoguan_home / "students.json", "{\"学生乙\": {\"teacher\": \"teacher1\", \"campus_id\": \"main\"}}")
     adapter = SimpleNamespace(send=AsyncMock(return_value=SimpleNamespace(success=True)))
 
     plugin._on_pre_gateway_dispatch(
-        event=_event_from("安全记录：李四今天在教室走动时膝盖不小心磕到桌角，我马上查看了孩子膝盖，目前只是轻微发红，没有破皮出血，孩子走路正常，情绪稳定。我已经提醒他在教室里慢走，后续继续观察。", "teacher1", "王老师"),
+        event=_event_from("安全记录：学生乙今天在教室走动时膝盖不小心磕到桌角，我马上查看了孩子膝盖，目前只是轻微发红，没有破皮出血，孩子走路正常，情绪稳定。我已经提醒他在教室里慢走，后续继续观察。", "teacher1", "王老师"),
         gateway=_gateway(adapter),
         session_store=SimpleNamespace(),
     )
@@ -3146,18 +3146,18 @@ async def test_task_completion_notifies_boss_for_s_and_a_tasks(_isolated_tuoguan
     plugin._ROUTER = None
     monkeypatch.setenv("HERMES_TUOGUAN_DASHBOARD_BASE_URL", "https://example.test/h")
     _seed_payroll_users(_isolated_tuoguan_home)
-    _write_json(_isolated_tuoguan_home / "students.json", "{\"李四\": {\"teacher\": \"teacher1\", \"campus_id\": \"main\"}, \"小金\": {\"teacher\": \"teacher1\", \"campus_id\": \"main\"}}")
+    _write_json(_isolated_tuoguan_home / "students.json", "{\"学生乙\": {\"teacher\": \"teacher1\", \"campus_id\": \"main\"}, \"学生丙\": {\"teacher\": \"teacher1\", \"campus_id\": \"main\"}}")
     _write_json(
         _isolated_tuoguan_home / "tasks.json",
         """
         [
           {
             "id": "task-safe-complete-notify",
-            "title": "李四膝盖磕碰安全闭环",
+            "title": "学生乙膝盖磕碰安全闭环",
             "type": "safety_incident",
             "level": "S",
             "status": "waiting_confirmation",
-            "student_name": "李四",
+            "student_name": "学生乙",
             "assignee_userid": "teacher1",
             "due_at": "2026-06-21T20:00:00",
             "created_at": "2026-06-21T10:00:00",
@@ -3171,16 +3171,16 @@ async def test_task_completion_notifies_boss_for_s_and_a_tasks(_isolated_tuoguan
           },
           {
             "id": "task-a-complete-notify",
-            "title": "小金家长沟通跟进",
+            "title": "学生丙家长沟通跟进",
             "type": "parent_anxiety",
             "level": "A",
             "status": "pending",
-            "student_name": "小金",
+            "student_name": "学生丙",
             "assignee_userid": "teacher1",
             "source_type": "manual_assignment",
             "due_at": "2026-06-21T21:00:00",
             "created_at": "2026-06-21T10:01:00",
-            "evidence_summary": "已和小金妈妈沟通数学计算问题，家长表示理解，明天继续观察计算准确率。"
+            "evidence_summary": "已和学生丙妈妈沟通数学计算问题，家长表示理解，明天继续观察计算准确率。"
           }
         ]
         """,
@@ -3194,7 +3194,7 @@ async def test_task_completion_notifies_boss_for_s_and_a_tasks(_isolated_tuoguan
     )
     await asyncio_sleep()
     sent = "\n".join(call.args[1] for call in adapter.send.await_args_list)
-    assert "【任务完成】李四膝盖磕碰安全闭环" in sent
+    assert "【任务完成】学生乙膝盖磕碰安全闭环" in sent
     assert "老板看板：" in sent
 
     plugin._on_pre_gateway_dispatch(
@@ -3210,7 +3210,7 @@ async def test_task_completion_notifies_boss_for_s_and_a_tasks(_isolated_tuoguan
     )
     await asyncio_sleep()
     sent = "\n".join(call.args[1] for call in adapter.send.await_args_list)
-    assert "【任务完成】小金家长沟通跟进" in sent
+    assert "【任务完成】学生丙家长沟通跟进" in sent
     assert "boss1" in [call.args[0] for call in adapter.send.await_args_list]
 
 
@@ -3221,18 +3221,18 @@ async def test_active_a_level_learning_task_treats_followup_as_task_evidence(_is
 
     plugin._ROUTER = None
     _seed_payroll_users(_isolated_tuoguan_home)
-    _write_json(_isolated_tuoguan_home / "students.json", "{\"小金\": {\"teacher\": \"teacher1\", \"campus_id\": \"main\"}}")
+    _write_json(_isolated_tuoguan_home / "students.json", "{\"学生丙\": {\"teacher\": \"teacher1\", \"campus_id\": \"main\"}}")
     _write_json(
         _isolated_tuoguan_home / "tasks.json",
         """
         [
           {
             "id": "task-a-math-evidence",
-            "title": "小金数学计算题订正情况",
+            "title": "学生丙数学计算题订正情况",
             "type": "academic_issue",
             "level": "A",
             "status": "pending",
-            "student_name": "小金",
+            "student_name": "学生丙",
             "assignee_userid": "teacher1",
             "due_at": "2026-06-21T21:00:00",
             "created_at": "2026-06-21T10:01:00"
@@ -3249,7 +3249,7 @@ async def test_active_a_level_learning_task_treats_followup_as_task_evidence(_is
     )
     await asyncio_sleep()
     args, _kwargs = adapter.send.await_args
-    assert "小金数学计算题订正情况" in args[1]
+    assert "学生丙数学计算题订正情况" in args[1]
 
     result = plugin._on_pre_gateway_dispatch(
         event=_event_from("需要", "teacher1", "王老师"),
@@ -3263,7 +3263,7 @@ async def test_active_a_level_learning_task_treats_followup_as_task_evidence(_is
     assert json.loads((_isolated_tuoguan_home / "active_task_context.json").read_text(encoding="utf-8"))["teacher1"]["task_id"] == "task-a-math-evidence"
 
     evidence_text = (
-        "小金今天把之前错的4道计算题重新做了一遍，订正后还错1道。"
+        "学生丙今天把之前错的4道计算题重新做了一遍，订正后还错1道。"
         "我又让他重新列竖式讲了一遍思路，最后能说出错因。"
         "家长这边暂未单独沟通，这次先做校内订正跟进；如果明天计算还是不稳定，再和家长同步。"
         "明天继续关注他的计算准确率。"
@@ -3304,18 +3304,18 @@ async def test_pending_a_level_learning_task_with_rich_evidence_recovers_without
 
     plugin._ROUTER = None
     _seed_payroll_users(_isolated_tuoguan_home)
-    _write_json(_isolated_tuoguan_home / "students.json", "{\"小金\": {\"teacher\": \"teacher1\", \"campus_id\": \"main\"}}")
+    _write_json(_isolated_tuoguan_home / "students.json", "{\"学生丙\": {\"teacher\": \"teacher1\", \"campus_id\": \"main\"}}")
     _write_json(
         _isolated_tuoguan_home / "tasks.json",
         """
         [
           {
             "id": "task-a-math-pending-recover",
-            "title": "小金数学计算题订正情况",
+            "title": "学生丙数学计算题订正情况",
             "type": "academic_issue",
             "level": "A",
             "status": "pending",
-            "student_name": "小金",
+            "student_name": "学生丙",
             "assignee_userid": "teacher1",
             "due_at": "2026-06-21T21:00:00",
             "created_at": "2026-06-21T10:01:00"
@@ -3325,7 +3325,7 @@ async def test_pending_a_level_learning_task_with_rich_evidence_recovers_without
     )
     adapter = SimpleNamespace(send=AsyncMock(return_value=SimpleNamespace(success=True)))
     evidence_text = (
-        "小金今天把之前错的4道计算题重新做了一遍，订正后还错1道。"
+        "学生丙今天把之前错的4道计算题重新做了一遍，订正后还错1道。"
         "我又让他重新列竖式讲了一遍思路，最后能说出错因。"
         "家长这边暂未单独沟通，这次先做校内订正跟进；如果明天计算还是不稳定，再和家长同步。"
         "明天继续关注他的计算准确率。"
@@ -3365,7 +3365,7 @@ async def test_new_student_record_bypasses_existing_active_task(_isolated_tuogua
         """
         {
           "周温暖": {"teacher": "teacher1", "campus_id": "main"},
-          "王小明": {"teacher": "teacher1", "campus_id": "main"}
+          "学生甲": {"teacher": "teacher1", "campus_id": "main"}
         }
         """,
     )
@@ -3391,7 +3391,7 @@ async def test_new_student_record_bypasses_existing_active_task(_isolated_tuogua
     adapter = SimpleNamespace(send=AsyncMock(return_value=SimpleNamespace(success=True)))
 
     result = plugin._on_pre_gateway_dispatch(
-        event=_event_from("王小明今天撞到头了，有点疼。", "teacher1", "王老师"),
+        event=_event_from("学生甲今天撞到头了，有点疼。", "teacher1", "王老师"),
         gateway=_gateway(adapter),
         session_store=SimpleNamespace(),
     )
@@ -3402,7 +3402,7 @@ async def test_new_student_record_bypasses_existing_active_task(_isolated_tuogua
     assert len(tasks) == 2
     assert tasks[0]["student_name"] == "周温暖"
     assert tasks[0]["evidence_summary"] == ""
-    assert tasks[1]["student_name"] == "王小明"
+    assert tasks[1]["student_name"] == "学生甲"
     assert tasks[1]["type"] == "safety_incident"
 
 
@@ -3774,7 +3774,7 @@ async def test_teacher_growth_report_draft_and_parent_share_link(_isolated_tuogu
     assert "下面这段可以直接复制到微信发给家长" in args[1]
     assert "https://example.test/h/tuoguan/r/" in args[1]
     assert "token=" not in args[1]
-    assert "【优益托管｜周温暖本周成长反馈】" in args[1]
+    assert "【示例机构托管｜周温暖本周成长反馈】" in args[1]
     assert "点击查看孩子本期成长反馈" in args[1]
     assert "不包含内部记录和风险判断" not in args[1]
     assert "已审核，可转发给家长查看" not in args[1]
@@ -4029,12 +4029,12 @@ async def test_conversation_state_links_student_duplicate_from_short_reply(_isol
     _seed_payroll_users(_isolated_tuoguan_home)
     _write_json(
         _isolated_tuoguan_home / "students.json",
-        json.dumps({"金小金": {"grade": "二年级", "phone": "13800000000", "teacher": "teacher1"}}, ensure_ascii=False),
+        json.dumps({"金学生丙": {"grade": "二年级", "phone": "13800000000", "teacher": "teacher1"}}, ensure_ascii=False),
     )
     store = TuoguanStore(_isolated_tuoguan_home)
     result = bulk_import_summer_students(
         store,
-        [{"孩子姓名": "小金", "年级": "二年级", "暑假班分组": "一二年级组", "家长联系电话": "13800000000"}],
+        [{"孩子姓名": "学生丙", "年级": "二年级", "暑假班分组": "一二年级组", "家长联系电话": "13800000000"}],
         actor_userid="boss1",
         actor_role="boss",
         confirmed=True,
@@ -4047,7 +4047,7 @@ async def test_conversation_state_links_student_duplicate_from_short_reply(_isol
         state_type="pending_student_duplicate_confirm",
         last_system_prompt="发现疑似已有学生档案，请确认：1 关联为同一个学生 2 创建为新学生 3 暂不导入",
         expected_replies=["关联", "新建", "跳过"],
-        payload={"issue_id": issue_id, "candidate_student_name": "金小金", "import_student_name": "小金"},
+        payload={"issue_id": issue_id, "candidate_student_name": "金学生丙", "import_student_name": "学生丙"},
         source_handler="summer_import",
     )
     adapter = SimpleNamespace(send=AsyncMock(return_value=SimpleNamespace(success=True)))
@@ -4114,9 +4114,9 @@ async def test_weekly_feedback_state_modifies_only_current_child(_isolated_tuogu
         store,
         identity,
         state_type="pending_weekly_feedback_child_review",
-        last_system_prompt="现在生成第 1/40 个孩子，小金反馈草稿，请确认/修改/跳过。",
+        last_system_prompt="现在生成第 1/40 个孩子，学生丙反馈草稿，请确认/修改/跳过。",
         expected_replies=["确认", "修改", "跳过", "简短生成"],
-        payload={"student_name": "小金", "index": 1, "total": 40},
+        payload={"student_name": "学生丙", "index": 1, "total": 40},
         source_handler="weekly_feedback",
     )
     adapter = SimpleNamespace(send=AsyncMock(return_value=SimpleNamespace(success=True)))
@@ -4130,7 +4130,7 @@ async def test_weekly_feedback_state_modifies_only_current_child(_isolated_tuogu
 
     assert dispatch == {"action": "skip", "reason": "tuoguan_core_handled"}
     sent = "\n".join(call.args[1] for call in adapter.send.await_args_list)
-    assert "小金" in sent
+    assert "学生丙" in sent
     assert "只影响这个孩子" in sent
 
 
@@ -4149,9 +4149,9 @@ async def test_low_record_child_state_accepts_short_generate(_isolated_tuoguan_h
         store,
         identity,
         state_type="pending_weekly_feedback_child_review",
-        last_system_prompt="小金本周记录较少，补充 / 简短生成 / 跳过。",
+        last_system_prompt="学生丙本周记录较少，补充 / 简短生成 / 跳过。",
         expected_replies=["补充", "简短生成", "跳过"],
-        payload={"student_name": "小金", "reason": "low_record"},
+        payload={"student_name": "学生丙", "reason": "low_record"},
         source_handler="weekly_feedback",
     )
     adapter = SimpleNamespace(send=AsyncMock(return_value=SimpleNamespace(success=True)))
@@ -4165,7 +4165,7 @@ async def test_low_record_child_state_accepts_short_generate(_isolated_tuoguan_h
 
     assert dispatch == {"action": "skip", "reason": "tuoguan_core_handled"}
     sent = "\n".join(call.args[1] for call in adapter.send.await_args_list)
-    assert "小金" in sent
+    assert "学生丙" in sent
     assert "简短反馈草稿" in sent
 
 
@@ -4214,7 +4214,7 @@ async def test_conversation_state_is_isolated_by_user(_isolated_tuoguan_home):
 
     assert dispatch == {"action": "skip", "reason": "tuoguan_core_handled"}
     sent = "\n".join(call.args[1] for call in adapter.send.await_args_list)
-    assert "只有金总/老板账号可以确认执行" in sent
+    assert "只有机构负责人/老板账号可以确认执行" in sent
     changes = json.loads((_isolated_tuoguan_home / "pending_config_changes.json").read_text(encoding="utf-8"))
     assert changes[-1]["status"] == "waiting_confirmation"
     state = json.loads((_isolated_tuoguan_home / "conversation_state.json").read_text(encoding="utf-8"))

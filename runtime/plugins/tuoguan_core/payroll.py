@@ -1093,7 +1093,7 @@ def _best_names_by_user(mapping: dict[str, Any]) -> dict[str, str]:
 
 
 def _name_score(name: str) -> int:
-    blocked = {"未分配", "优益托管", "执行校长", "老板"}
+    blocked = {"未分配", "示例机构托管", "执行校长", "老板"}
     if not name or name in blocked:
         return -100
     if "?" in name or "\ufffd" in name:

@@ -14,7 +14,7 @@ def test_current_tenant_id_defaults_to_youyi(monkeypatch):
 
     monkeypatch.delenv("HERMES_TENANT_ID", raising=False)
 
-    assert current_tenant_id() == "youyi_tuoguan"
+    assert current_tenant_id() == "example_institution"
 
 
 def test_current_tenant_id_uses_env(monkeypatch):

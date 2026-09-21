@@ -151,7 +151,7 @@ def classify_task_reply(text: str) -> dict[str, str]:
             "确认",
             "闭环",
             "可以闭环",
-            "金总知道",
+            "机构负责人知道",
             "老板知道",
         )
     ):

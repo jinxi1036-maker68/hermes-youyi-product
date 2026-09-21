@@ -220,8 +220,8 @@ def _target_accounts(store: TuoguanStore, overrides: dict[str, str] | None) -> d
     wecom = store.read_json("wecom_whitelist.json", {})
     name_map = store.read_json("teacher_wecom_map.json", {})
     if isinstance(name_map, dict):
-        result["boss"] = str(name_map.get("金总") or name_map.get("老板") or result["boss"])
-        result["teacher"] = str(name_map.get("李老师") or result["teacher"])
+        result["boss"] = str(name_map.get("机构负责人") or name_map.get("老板") or result["boss"])
+        result["teacher"] = str(name_map.get("示例老师") or result["teacher"])
     if isinstance(wecom, dict):
         managers = wecom.get("manager_ids")
         if isinstance(managers, list) and managers:
@@ -229,7 +229,7 @@ def _target_accounts(store: TuoguanStore, overrides: dict[str, str] | None) -> d
         elif wecom.get("manager_id"):
             result["manager"] = str(wecom.get("manager_id"))
         super_users = wecom.get("super_users")
-        if not (isinstance(name_map, dict) and name_map.get("金总")) and isinstance(super_users, list) and super_users:
+        if not (isinstance(name_map, dict) and name_map.get("机构负责人")) and isinstance(super_users, list) and super_users:
             result["boss"] = str(super_users[0])
     if isinstance(configured, dict) and isinstance(configured.get("target_accounts"), dict):
         result.update({str(k): str(v) for k, v in configured["target_accounts"].items() if str(v or "").strip()})
@@ -352,9 +352,9 @@ def _data_reason(scenario_id: str, sources: dict[str, Any], term: dict[str, Any]
 def _recommended_scope(ready: list[dict[str, Any]], blocking: list[dict[str, Any]]) -> str:
     ready_ids = {str(item.get("id") or "") for item in ready}
     if blocking:
-        return "先限老板账号和李老师账号做人工观察验收，暂不扩大到更多老师。"
+        return "先限老板账号和示例老师账号做人工观察验收，暂不扩大到更多老师。"
     if {"boss_goal", "teacher_record", "manager_gap_query"} <= ready_ids:
-        return "可进入老板、店长、李老师小范围真实渠道灰度，仍需人工观察。"
+        return "可进入老板、店长、示例老师小范围真实渠道灰度，仍需人工观察。"
     return "先做老板账号只读/低风险写入验收，暂不扩大。"
 
 
@@ -406,7 +406,7 @@ def _runtime_capability_cards_ready(config: Any) -> bool:
     runtime = config.get("runtime_foundation")
     if isinstance(runtime, dict) and runtime.get("enabled") is True:
         return True
-    return _user_allowed(config, "boss1") or _user_allowed(config, "JinWenJie")
+    return _user_allowed(config, "boss1") or _user_allowed(config, "owner_test")
 
 
 def _yes_no(value: Any) -> str:

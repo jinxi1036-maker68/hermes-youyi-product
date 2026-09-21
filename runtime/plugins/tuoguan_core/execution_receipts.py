@@ -137,6 +137,28 @@ def build_execution_receipt(
     idempotency_result: str = "applied",
 ) -> dict[str, Any]:
     payload = deepcopy(result) if isinstance(result, dict) else {"ok": False, "error": "invalid_operation_result"}
+    # A retry must report the *original* durable truth.  Rebuilding a failed
+    # receipt as ``replayed`` used to make one unknown execution appear first
+    # as "applied" and later as a successful idempotent replay.  Preserve the
+    # original status/writeback/idempotency outcome and expose the retry only
+    # as a separate observation.
+    prior_receipt = payload.get("execution_receipt")
+    if idempotency_result == "replayed" and isinstance(prior_receipt, dict):
+        prior = deepcopy(prior_receipt)
+        data = _data(payload)
+        payload["already_applied"] = bool(
+            str(prior.get("status") or "") == "completed"
+            and bool(prior.get("writeback_verified"))
+        )
+        payload["idempotency_replay_observed"] = True
+        if isinstance(payload.get("data"), dict):
+            payload["data"] = {
+                **data,
+                "execution_receipt": prior,
+                "idempotency_replay_observed": True,
+            }
+        payload["execution_receipt"] = prior
+        return payload
     data = _data(payload)
     no_write_performed = bool(data.get("no_write_performed"))
     explicit_writeback = payload.get("writeback_verified")

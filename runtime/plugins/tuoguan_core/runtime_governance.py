@@ -51,6 +51,18 @@ class ModuleOwnership:
 
 MODULE_OWNERSHIP = (
     ModuleOwnership(
+        category="personnel_service_governance_capability",
+        modules=(
+            "personnel_service_governance_v1.py", "governance_claims_v1.py",
+            "governance_claims_tool_surface_v1.py", "personnel_service_tool_port_v1.py",
+        ),
+        boundary=(
+            "explicit, human-confirmed personnel and service governance facts; "
+            "old data is reference-only and every write must cross the trusted "
+            "Capability receipt/writeback seam"
+        ),
+    ),
+    ModuleOwnership(
         category="maintenance_and_repair",
         modules=(
             "acceptance_v1.py", "cleanup.py", "cli.py", "data_upgrade.py", "migrate.py",
@@ -68,22 +80,40 @@ MODULE_OWNERSHIP = (
         boundary="tenant-specific or seasonal capability behind tenant and permission boundaries",
     ),
     ModuleOwnership(
+        category="retired_deterministic_dispatch",
+        modules=("router.py", "semantic_router.py"),
+        boundary="historical audit source only; excluded from every capability package and never registered on the model-led runtime path",
+    ),
+    ModuleOwnership(
         category="compatibility_runtime",
         modules=(
             "capability_contracts_v1.py", "context_arbitration.py", "conversation_state.py",
-            "core_understanding.py", "message_history.py", "router.py", "runtime_ownership.py",
-            "semantic_router.py", "shadow_command_bus.py", "task_query_gray.py", "wakeup_v2.py",
+            "core_understanding.py", "message_history.py", "runtime_ownership.py",
+            "shadow_command_bus.py", "task_query_gray.py", "wakeup_v2.py",
             "workflow_semantics.py",
         ),
         boundary="compatibility projection or observation only; no new independent source of truth",
+    ),
+    ModuleOwnership(
+        category="work_runtime_capability",
+        modules=(
+            "agenda_runtime.py", "agenda_service_policy.py", "agenda_task_lifecycle.py", "direct_reply_recovery.py",
+            "work_runtime.py", "work_runtime_channels.py",
+            "work_runtime_receipts.py", "wecom_outbox_port.py", "proactive_delivery_authority.py",
+        ),
+        boundary=(
+            "durable, content-blind coordination and receipt/delivery evidence only; "
+            "must remain inside the Institution Workspace and may not interpret work, "
+            "select business Tools, modify Receipt truth, or generate business replies"
+        ),
     ),
     ModuleOwnership(
         category="common_production",
         modules=(
             "__init__.py", "active_work_context.py", "analytics.py", "autonomous_employee_loop.py",
             "autonomous_wakeup_runner.py", "config_changes.py", "daily_push.py", "daily_reporter.py",
-            "capability_facades.py",
-            "dashboard_auth.py", "dashboard_builder.py", "dashboard_http.py", "dashboard_refresh_runner.py", "dashboard_workbench_v1.py", "digital_employee_state.py",
+            "business_object_context.py", "capability_facades.py", "domain_runtime.py", "outbound_policy.py",
+            "dashboard_auth.py", "dashboard_builder.py", "dashboard_http.py", "dashboard_server.py", "dashboard_workbench_v1.py", "digital_employee_state.py",
             "employee_identity.py", "escalation.py", "execution_receipts.py", "external_learning_runner.py", "goal_operator.py",
             "gray_observation_review.py", "gray_review_v1.py", "gray_scenario_cards.py",
             "growth_plan_exporter.py", "growth_reports.py", "identity.py", "knowledge.py",
@@ -92,16 +122,16 @@ MODULE_OWNERSHIP = (
             "permission_guard.py", "permissions.py", "proactive_work.py", "programs.py", "project_opportunities.py", "queries.py",
             "provider_resilience.py", "model_context_budget.py",
             "record_evaluation.py", "record_reply_composer.py", "records.py", "reports.py", "research.py",
-            "responsibility_resolver.py", "runtime.py", "runtime_foundation.py", "runtime_governance.py",
+            "responsibility_resolver.py", "runtime.py", "runtime_contract.py", "runtime_foundation.py", "runtime_governance.py",
             "runtime_performance.py",
             "self_evolution.py", "social_market_research.py", "staff_administration.py", "staff_config.py",
             "staff_conversation_activity.py", "staff_directory.py", "store.py", "student_daily_records.py",
-            "student_record_guidance.py", "student_resolver.py", "system_self_knowledge.py", "tasks.py",
+            "student_directory.py", "student_record_guidance.py", "student_resolver.py", "system_self_knowledge.py", "tasks.py",
             "supervision.py", "supervision_runner.py",
             "teacher_coaching.py",
             "temporal_grounding.py", "tenant_context.py", "tool_service.py", "tools.py", "turn_fence.py", "turn_trace.py",
             "work_context_snapshot.py",
-            "workstyle_profiles.py", "write_guard.py",
+            "workspace.py", "workstyle_profiles.py", "write_guard.py",
         ),
         boundary="shared production behavior governed by the runtime constitution and verified stores",
     ),
@@ -190,6 +220,29 @@ STATE_RESOURCE_OWNERS: dict[str, str] = {
     "supervision_repairs.jsonl": "supervision_domain",
 }
 
+# These are canonical *Workspace* resources for the independently versioned
+# Work Runtime.  They are deliberately absent from ``PROTECTED_BUSINESS_FILES``:
+# none is a business source of truth and none may substitute for the existing
+# Permission -> CommandBus -> Repository -> Receipt chain.  Their explicit
+# ownership prevents a future host integration from treating them as anonymous
+# SQLite scratch files or relocating them into a Hermes installation directory.
+WORK_RUNTIME_STATE_RESOURCES: dict[str, str] = {
+    "work_runtime_trusted_bindings.sqlite": "work_runtime_trusted_binding_evidence",
+    "work_runtime_inbox.sqlite": "work_runtime_durable_inbox",
+    "work_runtime_reply_outbox.sqlite": "work_runtime_reply_delivery_state",
+    "durable_reply_outbox.sqlite": "work_runtime_reply_delivery_state",
+    "agenda_work_runtime.sqlite": "agenda_work_runtime_inbox_and_ticket_evidence",
+    "direct_reply_recovery.sqlite": "work_runtime_trusted_direct_reply_evidence",
+    "work_runtime_public_tool_receipts.sqlite": "work_runtime_public_receipt_evidence",
+    "agenda_service_policy_audit.jsonl": "agenda_service_policy_audit",
+    "proactive_delivery_authorization_v1.json": "institutional_proactive_delivery_authority",
+    "proactive_delivery_authorization_audit_v1.jsonl": "institutional_proactive_delivery_audit",
+    "personnel_service_governance_v1.json": "personnel_service_governance_authority",
+    "governance_claims_v1.json": "personnel_service_governance_claim_audit",
+}
+
+STATE_RESOURCE_OWNERS.update(WORK_RUNTIME_STATE_RESOURCES)
+
 COMPATIBILITY_PROJECTIONS = {
     "active_task_context.json", "pending_next_task_context.json", "model_focus.json",
     "core_workflow_contexts.json", "dashboard_cache.json",
@@ -225,4 +278,26 @@ def state_ownership(resource_names: set[str] | list[str] | tuple[str, ...]) -> d
         "unowned": sorted(names - set(STATE_RESOURCE_OWNERS)),
         "owners": {name: STATE_RESOURCE_OWNERS[name] for name in sorted(names & set(STATE_RESOURCE_OWNERS))},
         "compatibility_projections": sorted(names & COMPATIBILITY_PROJECTIONS),
+    }
+
+
+def work_runtime_governance() -> dict[str, Any]:
+    """Return the formal governance boundary for the Work Runtime capability."""
+
+    return {
+        "capability_modules": [
+            "agenda_runtime.py", "agenda_service_policy.py", "agenda_task_lifecycle.py", "direct_reply_recovery.py",
+            "work_runtime.py", "work_runtime_channels.py", "work_runtime_receipts.py",
+            "wecom_outbox_port.py", "proactive_delivery_authority.py",
+        ],
+        "workspace_state_resources": dict(WORK_RUNTIME_STATE_RESOURCES),
+        "prohibitions": [
+            "payload_text_interpretation",
+            "business_tool_selection",
+            "business_write_execution",
+            "receipt_mutation",
+            "business_reply_generation",
+            "host_install_directory_state",
+        ],
+        "business_truth_owner": "permission_commandbus_repository_execution_receipt_writeback",
     }

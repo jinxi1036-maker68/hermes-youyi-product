@@ -25,8 +25,8 @@ def _store(tmp_path: Path):
 
     _write_json(tmp_path, "write_guard_config.json", {"enabled": True})
     _write_json(tmp_path, "wecom_whitelist.json", {"super_users": ["boss1"], "allowed_users": ["teacher1"], "user_roles": {"boss1": "boss", "teacher1": "teacher"}})
-    _write_json(tmp_path, "teacher_wecom_map.json", {"金总": "boss1", "李老师": "teacher1"})
-    _write_json(tmp_path, "staff.json", {"teacher1": {"name": "李老师", "role": "teacher"}})
+    _write_json(tmp_path, "teacher_wecom_map.json", {"机构负责人": "boss1", "示例老师": "teacher1"})
+    _write_json(tmp_path, "staff.json", {"teacher1": {"name": "示例老师", "role": "teacher"}})
     _write_json(tmp_path, "students.json", {})
     _write_json(tmp_path, "tasks.json", [{"id": "closed-task", "title": "已完成", "status": "completed", "owner_user_id": "teacher1"}])
     _write_json(tmp_path, "active_task_context.json", {"teacher1": {"task_id": "closed-task"}})
@@ -38,19 +38,19 @@ def _store(tmp_path: Path):
     ])
     _write_json(tmp_path, "dashboard_cache.json", {"generated_at": "2026-08-20T10:00:00+08:00"})
     _append_jsonl(tmp_path, "reply_ledger.jsonl", [{
-        "tenant_id": "youyi_tuoguan",
+        "tenant_id": "example_institution",
         "message_id": "reply-1",
         "completed_at": "2026-08-25T10:05:00+08:00",
         "workstyle_adaptation": {"unverified_commitment": True},
     }])
     _append_jsonl(tmp_path, "turn_traces.jsonl", [{
-        "tenant_id": "youyi_tuoguan",
+        "tenant_id": "example_institution",
         "trace_id": "timeout-1",
         "completed_at": "2026-08-25T10:05:00+08:00",
         "failure_type": "provider_timeout_or_interruption",
         "final_outcome": "failed",
     }, {
-        "tenant_id": "youyi_tuoguan",
+        "tenant_id": "example_institution",
         "trace_id": "timeout-2",
         "completed_at": "2026-08-25T10:06:00+08:00",
         "failure_type": "provider_timeout_or_interruption",
@@ -62,7 +62,7 @@ def _store(tmp_path: Path):
 def _boss():
     from plugins.tuoguan_core.models import UserIdentity
 
-    return UserIdentity("wecom_callback", "boss1", "boss1", "金总", "boss", "approved")
+    return UserIdentity("wecom_callback", "boss1", "boss1", "机构负责人", "boss", "approved")
 
 
 def test_work_commitment_reuses_authoritative_work_item_without_task_or_outbox(tmp_path):
@@ -166,7 +166,7 @@ def test_supervision_accepts_legacy_naive_ledger_timestamps(tmp_path):
 
     store = _store(tmp_path)
     _append_jsonl(tmp_path, "reply_ledger.jsonl", [{
-        "tenant_id": "youyi_tuoguan",
+        "tenant_id": "example_institution",
         "message_id": "legacy-reply",
         "completed_at": "2026-08-25T10:06:00",
         "workstyle_adaptation": {"unverified_commitment": True},
@@ -221,7 +221,7 @@ def test_supervision_closes_historical_workstyle_failure_after_preference_is_sup
         )
         assert saved["ok"] is True
         store.append_jsonl_verified("reply_ledger.jsonl", {
-            "tenant_id": "youyi_tuoguan",
+            "tenant_id": "example_institution",
             "message_id": "reply-workstyle-failure",
             "completed_at": "2026-08-25T10:05:00+08:00",
             "workstyle_adaptation": {"application_result": {"application": {
@@ -258,7 +258,7 @@ def test_supervision_council_is_read_only_and_rejects_incomplete_advice(tmp_path
 
     before = sorted(path.name for path in tmp_path.iterdir())
     result = run_supervision_council(
-        {"tenant_id": "youyi_tuoguan", "generated_at": "2026-08-25T10:00:00+08:00", "privacy": {}, "source_counts": {}, "boundary": {}},
+        {"tenant_id": "example_institution", "generated_at": "2026-08-25T10:00:00+08:00", "privacy": {}, "source_counts": {}, "boundary": {}},
         [{"finding_id": "finding-1", "category": "stale_context_projection", "severity": "p1", "state": "classified", "summary": "stale", "scope": "context"}],
         advisor_call=lambda role, _snapshot: {
             "problem": f"{role} found a projection issue",

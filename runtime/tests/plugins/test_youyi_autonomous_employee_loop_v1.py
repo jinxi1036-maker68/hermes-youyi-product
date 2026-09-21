@@ -26,8 +26,8 @@ def _seed_store(tmp_path: Path):
         "wecom_whitelist.json",
         {"super_users": ["boss1"], "allowed_users": ["teacher1"], "user_roles": {"boss1": "boss", "teacher1": "teacher"}},
     )
-    _write_json(tmp_path, "teacher_wecom_map.json", {"金总": "boss1", "李老师": "teacher1"})
-    _write_json(tmp_path, "staff.json", {"teacher1": {"name": "李老师", "role": "teacher"}})
+    _write_json(tmp_path, "teacher_wecom_map.json", {"机构负责人": "boss1", "示例老师": "teacher1"})
+    _write_json(tmp_path, "staff.json", {"teacher1": {"name": "示例老师", "role": "teacher"}})
     _write_json(tmp_path, "students.json", {})
     _write_json(tmp_path, "tasks.json", [])
     _write_json(tmp_path, "notification_outbox.json", [])
@@ -38,7 +38,7 @@ def _seed_store(tmp_path: Path):
         [
             {
                 "work_item_id": "work-goal-1",
-                "tenant_id": "youyi_tuoguan",
+                "tenant_id": "example_institution",
                 "record_type": "work_item",
                 "status": "waiting",
                 "focus_key": "goal:sept_renewal",
@@ -59,7 +59,7 @@ def _seed_store(tmp_path: Path):
 def _decision(_materials: dict) -> dict:
     return {
         "employee_summary": "目标卡在责任确认，不是已经完成。",
-        "institution_understanding": "优益托管当前缺少服务类型和部分主责老师事实。",
+        "institution_understanding": "示例机构托管当前缺少服务类型和部分主责老师事实。",
         "goal_progress_view": "应先补事实，再准备第一批沟通名单。",
         "observations": [{"event_type": "goal_blocked_by_missing_facts", "event_text": "续费目标缺服务关系事实。"}],
         "work_item_updates": [
@@ -83,7 +83,7 @@ def _decision(_materials: dict) -> dict:
             {
                 "focus_key": "goal:sept_renewal",
                 "reason": "目标推进缺老板确认事实。",
-                "message": "金总，我现在推进“九月份续费率更稳”卡在责任确认：需要你确认服务类型、主责老师和当前优先级。确认后我会先准备第一批重点沟通名单，不会直接安排老师或发家长。",
+                "message": "机构负责人，我现在推进“九月份续费率更稳”卡在责任确认：需要你确认服务类型、主责老师和当前优先级。确认后我会先准备第一批重点沟通名单，不会直接安排老师或发家长。",
                 "urgency": "normal",
             }
         ],
@@ -114,7 +114,7 @@ def test_daytime_employee_loop_queues_owner_attention_only(tmp_path):
     assert outbox[0]["auto_effects"]["sends_teacher_messages"] is False
     assert json.loads((tmp_path / "tasks.json").read_text(encoding="utf-8")) == []
 
-    identity = UserIdentity(platform="system", platform_user_id="boss1", canonical_user_id="boss1", person_name="金总", role="boss", approval_state="approved")
+    identity = UserIdentity(platform="system", platform_user_id="boss1", canonical_user_id="boss1", person_name="机构负责人", role="boss", approval_state="approved")
     item = query_hermes_work_items(store, identity=identity, focus_key="goal:sept_renewal")["items"][0]
     assert item["blocked_by"][0]["type"] == "missing_fact"
     assert item["ask_candidates"][0]["ask_role"] == "boss"
@@ -146,7 +146,7 @@ def test_employee_loop_can_discover_one_evidence_bound_institution_work_item_wit
     now = datetime(2026, 7, 28, 21, 0, tzinfo=timezone(timedelta(hours=8)))
     result = run_autonomous_employee_loop(store, now=now, decision_provider=discovery_decision)
 
-    identity = UserIdentity("system", "boss1", "boss1", "金总", "boss", "approved")
+    identity = UserIdentity("system", "boss1", "boss1", "机构负责人", "boss", "approved")
     items = query_institution_work(store, identity=identity, focus_key="institution:pickup_safety_process")["items"]
     assert result["ok"] is True
     assert any(row["kind"] == "institution_work_discovery" and row["ok"] for row in result["writes"])
@@ -173,7 +173,7 @@ def test_autonomous_policy_is_not_blanket_ban_on_asking(tmp_path):
     from plugins.tuoguan_core.models import UserIdentity
 
     store = _seed_store(tmp_path)
-    identity = UserIdentity(platform="system", platform_user_id="boss1", canonical_user_id="boss1", person_name="金总", role="boss", approval_state="approved")
+    identity = UserIdentity(platform="system", platform_user_id="boss1", canonical_user_id="boss1", person_name="机构负责人", role="boss", approval_state="approved")
     materials = build_employee_loop_materials(store, identity=identity, timestamp=datetime(2026, 7, 28, 20, 0, tzinfo=timezone(timedelta(hours=8))))
 
     assert materials["owner_attention_policy"]["not_a_blanket_ban"]
@@ -188,24 +188,24 @@ def test_autonomous_materials_use_confirmed_public_employee_name(tmp_path):
     store = _seed_store(tmp_path)
     (tmp_path / "operational_facts.json").write_text(json.dumps({
         "schema_version": 1,
-        "tenant_id": "youyi_tuoguan",
+        "tenant_id": "example_institution",
         "facts": [
             {
                 "fact_id": "fact_name_xiaoyou",
-                "tenant_id": "youyi_tuoguan",
+                "tenant_id": "example_institution",
                 "fact_type": "owner_rule",
                 "subject": "数字员工称呼",
                 "value": "对外称呼为\"小优\"",
                 "scope": "institution",
                 "risk_level": "low",
                 "status": "active",
-                "source_text": "金总说：我给你起一个名字，你以后叫小优",
+                "source_text": "机构负责人说：我给你起一个名字，你以后叫小优",
                 "confirmed_by": "boss1",
                 "confirmed_at": "2026-08-01T21:37:53+08:00",
             }
         ],
     }, ensure_ascii=False), encoding="utf-8")
-    identity = UserIdentity(platform="system", platform_user_id="boss1", canonical_user_id="boss1", person_name="金总", role="boss", approval_state="approved")
+    identity = UserIdentity(platform="system", platform_user_id="boss1", canonical_user_id="boss1", person_name="机构负责人", role="boss", approval_state="approved")
     materials = build_employee_loop_materials(store, identity=identity, timestamp=datetime(2026, 8, 3, 8, 0, tzinfo=timezone(timedelta(hours=8))))
 
     assert materials["public_identity"]["public_name"] == "小优"
@@ -219,7 +219,7 @@ def test_autonomous_materials_default_public_employee_name_is_xiaoyou(tmp_path):
     from plugins.tuoguan_core.models import UserIdentity
 
     store = _seed_store(tmp_path)
-    identity = UserIdentity("system", "boss1", "boss1", "金总", "boss", "approved")
+    identity = UserIdentity("system", "boss1", "boss1", "机构负责人", "boss", "approved")
     materials = build_employee_loop_materials(
         store,
         identity=identity,
@@ -241,11 +241,11 @@ def test_proactive_work_radar_uses_handbook_employee_map(tmp_path):
         "institution_operating_model.json",
         {
             "schema_version": 1,
-            "institution_name": "优益托管",
+            "institution_name": "示例机构托管",
             "programs": {"regular_tuoguan": {"label": "正式托管"}},
         },
     )
-    identity = UserIdentity(platform="system", platform_user_id="boss1", canonical_user_id="boss1", person_name="金总", role="boss", approval_state="approved")
+    identity = UserIdentity(platform="system", platform_user_id="boss1", canonical_user_id="boss1", person_name="机构负责人", role="boss", approval_state="approved")
 
     radar = query_proactive_work_radar(store, identity=identity, limit=10)
 
@@ -269,7 +269,7 @@ def test_autonomous_materials_include_proactive_work_radar(tmp_path):
     from plugins.tuoguan_core.models import UserIdentity
 
     store = _seed_store(tmp_path)
-    identity = UserIdentity(platform="system", platform_user_id="boss1", canonical_user_id="boss1", person_name="金总", role="boss", approval_state="approved")
+    identity = UserIdentity(platform="system", platform_user_id="boss1", canonical_user_id="boss1", person_name="机构负责人", role="boss", approval_state="approved")
     materials = build_employee_loop_materials(store, identity=identity, timestamp=datetime(2026, 8, 8, 9, 0, tzinfo=timezone(timedelta(hours=8))))
     payload = _model_payload(materials)
 
@@ -285,7 +285,7 @@ def test_autonomous_materials_quarantine_stale_work_and_use_trusted_staff_identi
     from plugins.tuoguan_core.models import UserIdentity
 
     store = _seed_store(tmp_path)
-    identity = UserIdentity("system", "boss1", "boss1", "金总", "boss", "approved")
+    identity = UserIdentity("system", "boss1", "boss1", "机构负责人", "boss", "approved")
     materials = build_employee_loop_materials(
         store,
         identity=identity,
@@ -298,7 +298,7 @@ def test_autonomous_materials_quarantine_stale_work_and_use_trusted_staff_identi
     assert materials["materials_summary"]["historical_open_work_item_count"] == 1
     staff = materials["trusted_staff_identities"]["staff"]
     teacher = next(row for row in staff if row["user_id"] == "teacher1")
-    assert teacher["business_name"] == "李老师"
+    assert teacher["business_name"] == "示例老师"
     assert teacher["full_name_confirmed"] is False
     assert materials["trusted_staff_identities"]["confirmed_full_names"] == []
     assert payload["trusted_staff_identities"]["confirmed_full_names"] == []
@@ -329,7 +329,7 @@ def test_active_goal_state_excludes_withdrawn_goal_and_stale_goal_waiting(tmp_pa
             },
         ]
     })
-    identity = UserIdentity("system", "boss1", "boss1", "金总", "boss", "approved")
+    identity = UserIdentity("system", "boss1", "boss1", "机构负责人", "boss", "approved")
 
     result = query_active_goal_work_state(
         store,
@@ -352,7 +352,7 @@ def test_autonomous_loop_rejects_invented_staff_full_name_before_writes(tmp_path
 
     def invented_name(materials: dict) -> dict:
         result = _decision(materials)
-        result["institution_understanding"] = "李老师全名已确认为李晓静。"
+        result["institution_understanding"] = "示例老师全名已确认为李晓静。"
         return result
 
     result = run_autonomous_employee_loop(
@@ -396,7 +396,7 @@ def test_autonomous_identity_guard_allows_honest_unconfirmed_full_name(tmp_path)
 
     def honest_gap(materials: dict) -> dict:
         result = _decision(materials)
-        result["institution_understanding"] = "李老师全名是待确认事实，当前只确认了业务称呼和 user_id。"
+        result["institution_understanding"] = "示例老师全名是待确认事实，当前只确认了业务称呼和 user_id。"
         result["boss_attention_candidates"] = []
         result["questions_to_humans"] = []
         return result
@@ -418,7 +418,7 @@ def test_autonomous_identity_guard_allows_business_name_beside_user_id(tmp_path)
 
     def honest_business_name(materials: dict) -> dict:
         result = _decision(materials)
-        result["institution_understanding"] = "李老师（user_id: teacher1）是业务称呼；全名未确认。"
+        result["institution_understanding"] = "示例老师（user_id: teacher1）是业务称呼；全名未确认。"
         result["boss_attention_candidates"] = []
         result["questions_to_humans"] = []
         return result
@@ -627,7 +627,7 @@ def test_generic_owner_attention_candidate_is_rejected(tmp_path):
             {
                 "focus_key": "goal:sept_renewal",
                 "reason": "需要沟通。",
-                "message": "金总，我整理好了情况。",
+                "message": "机构负责人，我整理好了情况。",
                 "urgency": "normal",
             }
         ]
@@ -710,7 +710,7 @@ def test_autonomous_loop_rejects_model_provider_identity(tmp_path):
     def provider(_materials):
         return {
             "employee_summary": "小优，Sapiens AI 数字员工；本轮已查看事实。",
-            "institution_understanding": "优益托管事实可用。",
+            "institution_understanding": "示例机构托管事实可用。",
             "goal_progress_view": "暂无新增动作。",
             "observations": [],
             "work_item_updates": [],
@@ -745,14 +745,14 @@ def test_autonomous_loop_drops_old_task_delivery_question_when_nothing_is_open(t
 
     def provider(_materials):
         return {
-            "employee_summary": "小优已核验优益托管当前事实。",
-            "institution_understanding": "优益托管事实可用。",
+            "employee_summary": "小优已核验示例机构托管当前事实。",
+            "institution_understanding": "示例机构托管事实可用。",
             "goal_progress_view": "当前没有开放任务或可用工作项。",
             "observations": [],
             "work_item_updates": [],
             "questions_to_humans": [{
                 "ask_role": "boss",
-                "question": "李老师是否收到了之前派发的任务提醒？当前开放任务为0，请确认是否需要重新下发。",
+                "question": "示例老师是否收到了之前派发的任务提醒？当前开放任务为0，请确认是否需要重新下发。",
             }],
             "boss_attention_candidates": [],
             "relationship_touch_candidates": [],
@@ -834,7 +834,7 @@ def test_autonomous_evidence_queries_use_tenant_owner_without_identity_pollution
 
     whitelist = store.read_json("wecom_whitelist.json", {})
     assert whitelist.get("pending_users") in (None, [])
-    assert "JinWenJie" not in json.dumps(whitelist, ensure_ascii=False)
+    assert "owner_test" not in json.dumps(whitelist, ensure_ascii=False)
 
 
 def test_autonomous_evidence_queries_fail_closed_when_tenant_owner_is_missing(tmp_path):
@@ -939,9 +939,9 @@ def test_evening_relationship_touch_is_candidate_only_even_when_policy_window_is
             "relationship_touch_candidates": [{
                 "target_role": "teacher",
                 "target_user_id": "teacher1",
-                "target_name": "李老师",
+                "target_name": "示例老师",
                 "touch_type": "material_support",
-                "message": "李老师，方便时请帮我确认一下当前任务还缺哪项事实？",
+                "message": "示例老师，方便时请帮我确认一下当前任务还缺哪项事实？",
                 "reason": "当前任务证据缺一项老师一手事实。",
                 "value": "补齐后才能继续核验任务。",
                 "work_related": True,

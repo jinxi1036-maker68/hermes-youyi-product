@@ -23,13 +23,13 @@ def _seed_store(tmp_path: Path):
             "user_roles": {"boss1": "boss", "teacher1": "teacher"},
         },
     )
-    _write_json(tmp_path, "teacher_wecom_map.json", {"金总": "boss1", "李老师": "teacher1"})
+    _write_json(tmp_path, "teacher_wecom_map.json", {"机构负责人": "boss1", "示例老师": "teacher1"})
     _write_json(
         tmp_path,
         "staff.json",
         {
-            "boss1": {"user_id": "boss1", "name": "金总", "role": "super_admin"},
-            "teacher1": {"user_id": "teacher1", "name": "李老师", "role": "teacher", "campus_ids": ["main"]},
+            "boss1": {"user_id": "boss1", "name": "机构负责人", "role": "super_admin"},
+            "teacher1": {"user_id": "teacher1", "name": "示例老师", "role": "teacher", "campus_ids": ["main"]},
         },
     )
     _write_json(tmp_path, "students.json", {})
@@ -46,18 +46,18 @@ def test_model_created_task_persists_teacher_context_for_natural_completion(tmp_
         store=store,
         platform="wecom_callback",
         user_id="boss1",
-        user_name="金总",
+        user_name="机构负责人",
         chat_id="boss1",
         session_key="boss1",
     )
 
     result = service.create_task(
-        title="明天早上8点跟小金家长沟通，沟通后汇报给老板",
+        title="明天早上8点跟学生丙家长沟通，沟通后汇报给老板",
         assignee_user_id="teacher1",
         operation_id="op-create-task-1",
         due_at="2026-08-06T08:00:00",
         level="B",
-        student_name="小金",
+        student_name="学生丙",
     )
 
     assert result["ok"] is True
@@ -82,7 +82,7 @@ def test_renewal_task_persists_full_companion_contract(tmp_path):
         store=store,
         platform="wecom_callback",
         user_id="boss1",
-        user_name="金总",
+        user_name="机构负责人",
         chat_id="boss1",
         session_key="boss1",
     )
@@ -115,11 +115,11 @@ def test_teacher_contextual_student_query_is_scoped_to_active_task(tmp_path, mon
         tmp_path,
         "students.json",
         {
-            "小金": {"teacher": "teacher1", "phone": "old-student"},
+            "学生丙": {"teacher": "teacher1", "phone": "old-student"},
             "李依晨": {"teacher": "teacher1", "phone": "current-student"},
         },
     )
-    boss = TuoguanToolService(store=store, platform="wecom_callback", user_id="boss1", user_name="金总", chat_id="boss1", session_key="boss1")
+    boss = TuoguanToolService(store=store, platform="wecom_callback", user_id="boss1", user_name="机构负责人", chat_id="boss1", session_key="boss1")
     created = boss.create_task(
         title="今晚8点联系李依晨家长沟通下学期续费事宜",
         assignee_user_id="teacher1",
@@ -127,7 +127,7 @@ def test_teacher_contextual_student_query_is_scoped_to_active_task(tmp_path, mon
         due_at="2026-08-13T20:00:00+08:00",
         student_name="李依晨",
     )
-    teacher = TuoguanToolService(store=store, platform="wecom_callback", user_id="teacher1", user_name="李老师", chat_id="teacher1", session_key="wecom_callback:teacher1")
+    teacher = TuoguanToolService(store=store, platform="wecom_callback", user_id="teacher1", user_name="示例老师", chat_id="teacher1", session_key="wecom_callback:teacher1")
     monkeypatch.setattr(runtime_foundation, "current_raw_text", lambda _user_id: "我怎么给他家长沟通呀")
 
     queried = teacher.query_students()
@@ -138,7 +138,7 @@ def test_teacher_contextual_student_query_is_scoped_to_active_task(tmp_path, mon
 
     context = task_companion_context(store, identity=teacher.identity, raw_text="我不知道怎么说")
     assert "任务对象：李依晨" in context
-    assert "小金" not in context
+    assert "学生丙" not in context
     assert "陪伴式工作" in context
 
 
@@ -147,18 +147,18 @@ def test_parent_script_rejects_student_from_old_session(tmp_path, monkeypatch):
     from plugins.tuoguan_core.tool_service import TuoguanToolService
 
     store = _seed_store(tmp_path)
-    _write_json(tmp_path, "students.json", {"小金": {"teacher": "teacher1"}, "李依晨": {"teacher": "teacher1"}})
-    boss = TuoguanToolService(store=store, platform="wecom_callback", user_id="boss1", user_name="金总", chat_id="boss1", session_key="boss1")
+    _write_json(tmp_path, "students.json", {"学生丙": {"teacher": "teacher1"}, "李依晨": {"teacher": "teacher1"}})
+    boss = TuoguanToolService(store=store, platform="wecom_callback", user_id="boss1", user_name="机构负责人", chat_id="boss1", session_key="boss1")
     boss.create_task(
         title="今晚联系李依晨家长沟通续费",
         assignee_user_id="teacher1",
         operation_id="op-entity-guard-task",
         student_name="李依晨",
     )
-    teacher = TuoguanToolService(store=store, platform="wecom_callback", user_id="teacher1", user_name="李老师", chat_id="teacher1", session_key="wecom_callback:teacher1")
+    teacher = TuoguanToolService(store=store, platform="wecom_callback", user_id="teacher1", user_name="示例老师", chat_id="teacher1", session_key="wecom_callback:teacher1")
     monkeypatch.setattr(runtime_foundation, "current_raw_text", lambda _user_id: "我不知道怎么说")
 
-    result = teacher.parent_script_context(request="帮我准备沟通内容", student_name="小金")
+    result = teacher.parent_script_context(request="帮我准备沟通内容", student_name="学生丙")
 
     assert result["ok"] is False
     assert result["error"] == "active_task_entity_mismatch"
@@ -170,14 +170,14 @@ def test_active_task_result_cannot_create_duplicate_record_task(tmp_path, monkey
 
     store = _seed_store(tmp_path)
     _write_json(tmp_path, "students.json", {"李依晨": {"teacher": "teacher1", "program_id": "regular_tuoguan"}})
-    boss = TuoguanToolService(store=store, platform="wecom_callback", user_id="boss1", user_name="金总", chat_id="boss1", session_key="boss1")
+    boss = TuoguanToolService(store=store, platform="wecom_callback", user_id="boss1", user_name="机构负责人", chat_id="boss1", session_key="boss1")
     created = boss.create_task(
         title="今晚联系李依晨家长沟通续费",
         assignee_user_id="teacher1",
         operation_id="op-no-duplicate-task",
         student_name="李依晨",
     )
-    teacher = TuoguanToolService(store=store, platform="wecom_callback", user_id="teacher1", user_name="李老师", chat_id="teacher1", session_key="wecom_callback:teacher1")
+    teacher = TuoguanToolService(store=store, platform="wecom_callback", user_id="teacher1", user_name="示例老师", chat_id="teacher1", session_key="wecom_callback:teacher1")
     teacher._approved = lambda: None
     monkeypatch.setattr(teacher, "_trusted_runtime_raw_text", lambda _operation: "我已经沟通过了，他家长说到开学的时候再考虑")
 
@@ -198,14 +198,14 @@ def test_ordinary_renewal_contact_closes_with_parent_response_and_next_condition
     from plugins.tuoguan_core.tool_service import TuoguanToolService
 
     store = _seed_store(tmp_path)
-    boss = TuoguanToolService(store=store, platform="wecom_callback", user_id="boss1", user_name="金总", chat_id="boss1", session_key="boss1")
+    boss = TuoguanToolService(store=store, platform="wecom_callback", user_id="boss1", user_name="机构负责人", chat_id="boss1", session_key="boss1")
     created = boss.create_task(
         title="今晚联系李依晨家长沟通续费",
         assignee_user_id="teacher1",
         operation_id="op-rigorous-renewal",
         student_name="李依晨",
     )
-    teacher = TuoguanToolService(store=store, platform="wecom_callback", user_id="teacher1", user_name="李老师", chat_id="teacher1", session_key="wecom_callback:teacher1")
+    teacher = TuoguanToolService(store=store, platform="wecom_callback", user_id="teacher1", user_name="示例老师", chat_id="teacher1", session_key="wecom_callback:teacher1")
 
     first = teacher.update_task(
         task_id=created["task_id"],
@@ -222,14 +222,14 @@ def test_task_update_uses_live_teacher_words_not_model_enrichment(tmp_path, monk
     from plugins.tuoguan_core.tool_service import TuoguanToolService
 
     store = _seed_store(tmp_path)
-    boss = TuoguanToolService(store=store, platform="wecom_callback", user_id="boss1", user_name="金总", chat_id="boss1", session_key="boss1")
+    boss = TuoguanToolService(store=store, platform="wecom_callback", user_id="boss1", user_name="机构负责人", chat_id="boss1", session_key="boss1")
     created = boss.create_task(
         title="今晚联系李依晨家长沟通续费",
         assignee_user_id="teacher1",
         operation_id="op-trusted-teacher-words",
         student_name="李依晨",
     )
-    teacher = TuoguanToolService(store=store, platform="wecom_callback", user_id="teacher1", user_name="李老师", chat_id="teacher1", session_key="wecom_callback:teacher1")
+    teacher = TuoguanToolService(store=store, platform="wecom_callback", user_id="teacher1", user_name="示例老师", chat_id="teacher1", session_key="wecom_callback:teacher1")
     teacher_words = "我已经沟通过了，他家长说到开学的时候再考虑。"
     monkeypatch.setattr(teacher, "_trusted_runtime_raw_text", lambda _operation: teacher_words)
 
@@ -253,17 +253,17 @@ def test_boss_can_cancel_just_created_task_by_focus_and_clear_context(tmp_path):
         store=store,
         platform="wecom_callback",
         user_id="boss1",
-        user_name="金总",
+        user_name="机构负责人",
         chat_id="boss1",
         session_key="boss1",
     )
     created = service.create_task(
-        title="今天下午4:30跟小金家长沟通",
+        title="今天下午4:30跟学生丙家长沟通",
         assignee_user_id="teacher1",
         operation_id="op-create-cancel-focus",
         due_at="2026-08-09T16:30:00+08:00",
         level="B",
-        student_name="小金",
+        student_name="学生丙",
     )
 
     assert created["ok"] is True
@@ -295,17 +295,17 @@ def test_update_task_refuses_cancel_intent_and_points_to_cancel_tool(tmp_path):
         store=store,
         platform="wecom_callback",
         user_id="boss1",
-        user_name="金总",
+        user_name="机构负责人",
         chat_id="boss1",
         session_key="boss1",
     )
     created = service.create_task(
-        title="今天下午4:30跟小金家长沟通",
+        title="今天下午4:30跟学生丙家长沟通",
         assignee_user_id="teacher1",
         operation_id="op-create-wrong-update-cancel",
         due_at="2026-08-09T16:30:00+08:00",
         level="B",
-        student_name="小金",
+        student_name="学生丙",
     )
 
     result = service.update_task(
@@ -329,9 +329,9 @@ def test_teacher_completion_uses_active_context_before_expired_model_focus(tmp_p
     from plugins.tuoguan_core.tool_service import TuoguanToolService
 
     store = _seed_store(tmp_path)
-    boss = TuoguanToolService(store=store, platform="wecom_callback", user_id="boss1", user_name="金总", chat_id="boss1", session_key="boss1")
+    boss = TuoguanToolService(store=store, platform="wecom_callback", user_id="boss1", user_name="机构负责人", chat_id="boss1", session_key="boss1")
     contact = boss.create_task(
-        title="下午4点联系金总",
+        title="下午4点联系机构负责人",
         assignee_user_id="teacher1",
         operation_id="op-active-contact",
         due_at="2026-08-24T16:00:00+08:00",
@@ -355,7 +355,7 @@ def test_teacher_completion_uses_active_context_before_expired_model_focus(tmp_p
             "focus_expires_at": "2026-08-20T18:00:00+08:00",
         },
     })
-    teacher = TuoguanToolService(store=store, platform="wecom_callback", user_id="teacher1", user_name="李老师", chat_id="teacher1", session_key="wecom_callback:teacher1")
+    teacher = TuoguanToolService(store=store, platform="wecom_callback", user_id="teacher1", user_name="示例老师", chat_id="teacher1", session_key="wecom_callback:teacher1")
 
     result = teacher.update_task(reply="完成了", operation_id="op-complete-active")
 
@@ -375,29 +375,29 @@ def test_parent_communication_manual_assignment_closes_from_natural_teacher_evid
         store=store,
         platform="wecom_callback",
         user_id="boss1",
-        user_name="金总",
+        user_name="机构负责人",
         chat_id="boss1",
         session_key="boss1",
     )
     created = boss.create_task(
-        title="小金家长沟通任务",
+        title="学生丙家长沟通任务",
         assignee_user_id="teacher1",
         operation_id="op-parent-comm-create",
         due_at="2026-08-09T18:00:00+08:00",
         level="B",
-        student_name="小金",
+        student_name="学生丙",
     )
     assert created["ok"] is True
     teacher = TuoguanToolService(
         store=store,
         platform="wecom_callback",
         user_id="teacher1",
-        user_name="李老师",
+        user_name="示例老师",
         chat_id="teacher1",
         session_key="",
     )
 
-    first = teacher.update_task(reply="小金妈妈说孩子最近挺好，也很感谢咱们。", operation_id="op-parent-comm-1")
+    first = teacher.update_task(reply="学生丙妈妈说孩子最近挺好，也很感谢咱们。", operation_id="op-parent-comm-1")
     second = teacher.update_task(reply="她很满意，我下一步准备再继续跟进。", operation_id="op-parent-comm-2")
 
     assert first["ok"] is True
@@ -417,13 +417,13 @@ def test_boss_can_close_own_manual_assignment_and_suppress_pending_notifications
     store = _seed_store(tmp_path)
     task = {
         "id": "task_manual_1",
-        "title": "明天早上8点跟小金家长沟通",
+        "title": "明天早上8点跟学生丙家长沟通",
         "type": "manual_assignment",
         "level": "B",
         "status": "pending",
-        "student_name": "小金",
+        "student_name": "学生丙",
         "assignee_userid": "teacher1",
-        "assignee_name": "李老师",
+        "assignee_name": "示例老师",
         "assignee_role": "teacher",
         "created_by": "boss1",
         "created_at": datetime(2026, 8, 5, 21, 30).isoformat(timespec="seconds"),
@@ -452,7 +452,7 @@ def test_boss_can_close_own_manual_assignment_and_suppress_pending_notifications
         ],
     )
 
-    identity = UserIdentity("wecom_callback", "boss1", "boss1", "金总", "boss", "approved")
+    identity = UserIdentity("wecom_callback", "boss1", "boss1", "机构负责人", "boss", "approved")
     reply = TuoguanRouter(store)._route_admin_close_task(identity, "这个任务闭关了吧，原因：刚才安排错了")
 
     assert reply is not None
@@ -476,7 +476,7 @@ def test_repair_task_context_rebuilds_missing_manual_assignment_context(tmp_path
                 "id": "task_manual_1",
                 "type": "manual_assignment",
                 "status": "active",
-                "title": "请李老师明天10点汇报沟通结果",
+                "title": "请示例老师明天10点汇报沟通结果",
                 "level": "A",
                 "assignee_userid": "teacher1",
                 "created_by": "boss1",
@@ -513,7 +513,7 @@ def test_repair_task_context_rebuilds_missing_manual_assignment_context(tmp_path
     pending = json.loads((tmp_path / "pending_next_task_context.json").read_text(encoding="utf-8"))
     assert active["teacher1"]["task_id"] == "task_manual_1"
     assert active["teacher1"]["latest_outbox_id"] == "task_manual_1:teacher:task_created"
-    assert pending["teacher1"]["original_owner_text"] == "请李老师明天10点汇报沟通结果"
+    assert pending["teacher1"]["original_owner_text"] == "请示例老师明天10点汇报沟通结果"
 
 
 def test_repair_task_context_skips_boss_assigned_legacy_tasks(tmp_path):

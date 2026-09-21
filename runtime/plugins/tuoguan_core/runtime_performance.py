@@ -11,8 +11,9 @@ from typing import Any
 
 DEFAULT_TOOL_CALL_BUDGET = 4
 # A real model may first omit a required field, then remove an unsupported
-# compatibility field, then make the corrected call.  Do not lock that third
-# call out; loops are still bounded separately by the per-turn tool budget.
+# compatibility field, then make the corrected call.  These are the number of
+# *completed failed* calls permitted before one further corrected call is
+# evaluated.  The old >= comparison blocked that correction itself.
 MAX_CORRECTABLE_FAILURES = 3
 _CORRECTABLE_ERRORS = {
     "unknown_facade_operation",
@@ -77,11 +78,11 @@ def guard_turn_tool_call(
         state = _TURN_BUDGETS.get(key)
         if state is None:
             return None
-        if int(state.get("correctable_failure_count") or 0) >= MAX_CORRECTABLE_FAILURES:
+        if int(state.get("correctable_failure_count") or 0) > MAX_CORRECTABLE_FAILURES:
             return {
                 "action": "block",
                 "message": (
-                    "本轮业务能力已经连续两次收到无效工具或参数。请停止继续试工具，"
+                    "本轮业务能力已经连续三次收到无效工具或参数。请停止继续试工具，"
                     "只根据已验证结果回答；若仍缺事实，只说明一个关键缺口。"
                 ),
                 "reason": "corrective_tool_retry_exhausted",

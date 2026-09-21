@@ -23,7 +23,7 @@ def _seed_store(tmp_path: Path):
 
     _write_json(tmp_path, "write_guard_config.json", {"enabled": True})
     _write_json(tmp_path, "wecom_whitelist.json", {"super_users": ["boss1"], "user_roles": {"boss1": "boss"}})
-    _write_json(tmp_path, "teacher_wecom_map.json", {"金总": "boss1"})
+    _write_json(tmp_path, "teacher_wecom_map.json", {"机构负责人": "boss1"})
     _write_json(tmp_path, "notification_outbox.json", [])
     _write_json(tmp_path, "students.json", {})
     _write_json(tmp_path, "tasks.json", [])
@@ -34,7 +34,7 @@ def _seed_store(tmp_path: Path):
             {
                 "record_type": "work_item",
                 "work_item_id": "work-goal-1",
-                "tenant_id": "youyi_tuoguan",
+                "tenant_id": "example_institution",
                 "focus_key": "goal:sept_renewal",
                 "title": "目标推进：九月份续费率更稳",
                 "status": "waiting",
@@ -183,7 +183,7 @@ def test_owner_daily_report_applies_saved_concise_workstyle(tmp_path):
         platform="wecom",
         platform_user_id="boss1",
         canonical_user_id="boss1",
-        person_name="金总",
+        person_name="机构负责人",
         role="boss",
         approval_state="approved",
     )
@@ -219,7 +219,7 @@ def test_queued_daily_report_records_workstyle_and_evolution_application_evidenc
     from plugins.tuoguan_core.write_guard import authorized_system_write
 
     store = _seed_store(tmp_path)
-    identity = UserIdentity("wecom", "boss1", "boss1", "金总", "boss", "approved")
+    identity = UserIdentity("wecom", "boss1", "boss1", "机构负责人", "boss", "approved")
     with authorized_system_write(
         store.data_dir,
         job_name="test_daily_report_application_evidence",
@@ -271,7 +271,7 @@ def test_daily_report_keeps_concise_rule_when_spacing_feedback_arrives_later(tmp
     from plugins.tuoguan_core.write_guard import authorized_system_write
 
     store = _seed_store(tmp_path)
-    identity = UserIdentity("wecom", "boss1", "boss1", "金总", "boss", "approved")
+    identity = UserIdentity("wecom", "boss1", "boss1", "机构负责人", "boss", "approved")
     with authorized_system_write(
         store.data_dir,
         job_name="test_owner_report_format_feedback",
@@ -332,7 +332,7 @@ def test_daily_report_applies_next_day_self_evolution_context(tmp_path):
     from plugins.tuoguan_core.write_guard import authorized_system_write
 
     store = _seed_store(tmp_path)
-    identity = UserIdentity("system", "boss1", "boss1", "金总", "boss", "approved")
+    identity = UserIdentity("system", "boss1", "boss1", "机构负责人", "boss", "approved")
     with authorized_system_write(
         store.data_dir,
         job_name="test_daily_report_self_evolution",
@@ -373,7 +373,7 @@ def test_morning_report_does_not_relabel_yesterday_relative_time_as_today(tmp_pa
                 "record_type": "self_evolution_event",
                 "evolution_event_id": "relative-time-report",
                 "semantic_fingerprint": "relative-time-report",
-                "tenant_id": "youyi_tuoguan",
+                "tenant_id": "example_institution",
                 "candidate_type": "self_correction",
                     "summary": "今日21:01老板反问后，应主动追问具体缺口。",
                     "evidence": [{"source": "conversation_replay", "text": "老板21:01反问当前事项。"}],
@@ -425,7 +425,7 @@ def test_daily_report_does_not_surface_stale_owner_attention_as_today_focus(tmp_
                 "record_type": "attention_thread",
                 "attention_id": "attention_old_li",
                 "focus_key": "report:xiaojin_parent_comm_20260806",
-                "question_text": "昨晚您说要明天10点汇报李老师沟通结果，需要确认吗？",
+                "question_text": "昨晚您说要明天10点汇报示例老师沟通结果，需要确认吗？",
                 "status": "queued",
                 "target_user_id": "boss1",
                 "created_at": "2026-08-06T21:30:00+08:00",
@@ -448,7 +448,7 @@ def test_daily_report_does_not_surface_stale_owner_attention_as_today_focus(tmp_
 
     assert report["ok"] is True
     assert "昨晚" not in report["content"]
-    assert "李老师沟通结果" not in report["content"]
+    assert "示例老师沟通结果" not in report["content"]
     assert "明天10点" not in report["content"]
     assert "本地市场观察" in report["content"]
     assert report["source_counts"]["open_attention_count"] == 1
@@ -466,7 +466,7 @@ def test_daily_report_does_not_render_empty_json_detail(tmp_path):
             {
                 "record_type": "work_item",
                 "work_item_id": "work-empty-json",
-                "tenant_id": "youyi_tuoguan",
+                "tenant_id": "example_institution",
                 "focus_key": "goal:empty_json",
                 "title": "已合并到主工作项，不再独立推进。",
                 "status": "active",
@@ -497,7 +497,7 @@ def test_daily_report_excludes_old_active_item_from_today_focus(tmp_path):
             {
                 "record_type": "work_item",
                 "work_item_id": "work-old-active",
-                "tenant_id": "youyi_tuoguan",
+                "tenant_id": "example_institution",
                 "focus_key": "historical:old_active",
                 "title": "五天前的待确认事项",
                 "focus_summary": "五天前曾经需要确认，当前没有新证据。",
@@ -531,7 +531,7 @@ def test_daily_report_never_leaks_internal_phase_key(tmp_path):
             {
                 "record_type": "work_item",
                 "work_item_id": "work-current-phase",
-                "tenant_id": "youyi_tuoguan",
+                "tenant_id": "example_institution",
                 "focus_key": "goal:current_phase",
                 "title": "核验当前服务记录",
                 "focus_summary": "核验本周服务记录是否齐全。",
@@ -563,7 +563,7 @@ def test_daily_report_does_not_apply_high_risk_evolution_detail(tmp_path):
     from plugins.tuoguan_core.write_guard import authorized_system_write
 
     store = _seed_store(tmp_path)
-    identity = UserIdentity("system", "boss1", "boss1", "金总", "boss", "approved")
+    identity = UserIdentity("system", "boss1", "boss1", "机构负责人", "boss", "approved")
     with authorized_system_write(
         store.data_dir,
         job_name="test_daily_report_high_risk_evolution",
@@ -613,7 +613,7 @@ def test_daily_report_drain_bypasses_active_conversation_quiet_period(tmp_path, 
                 "role": "boss",
                 "target_user_id": "boss1",
                 "touser": "boss1",
-                "content": "金总，今晚给你交一下今天的工作日报。",
+                "content": "机构负责人，今晚给你交一下今天的工作日报。",
                 "summary": "小优每日晚间工作日报",
                 "created_at": now.astimezone(cn_tz).isoformat(timespec="seconds"),
                 "attempt_count": 0,
@@ -660,7 +660,7 @@ def test_non_daily_drain_tolerates_naive_active_conversation_timestamp(tmp_path,
                 "action": "task_due",
                 "target_user_id": "teacher1",
                 "touser": "teacher1",
-                "content": "李老师，这条任务需要回执。",
+                "content": "示例老师，这条任务需要回执。",
                 "created_at": datetime.now().astimezone().isoformat(timespec="seconds"),
                 "attempt_count": 0,
             }
@@ -699,7 +699,7 @@ def test_stale_daily_report_becomes_visible_failure_not_suppressed(tmp_path, mon
                 "role": "boss",
                 "target_user_id": "boss1",
                 "touser": "boss1",
-                "content": "金总，早上好，这是今天的自主工作安排。",
+                "content": "机构负责人，早上好，这是今天的自主工作安排。",
                 "summary": "小优每日早间工作安排",
                 "created_at": "2026-08-08T08:30:00+08:00",
                 "attempt_count": 0,

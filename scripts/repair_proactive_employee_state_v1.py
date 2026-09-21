@@ -67,7 +67,7 @@ def build_plan(store: TuoguanStore) -> dict[str, Any]:
     touches = query_relationship_touch_candidates(store, identity=identity, include_closed=True, limit=100)
     stale_touches = [
         row for row in touches.get("candidates") or []
-        if str(row.get("target_user_id") or "") == "CeShi"
+        if str(row.get("target_user_id") or "") == "teacher_test"
         and str(row.get("status") or "") == "candidate"
         and str(row.get("created_at") or "")[:10] <= "2026-08-13"
     ]
@@ -90,7 +90,7 @@ def build_plan(store: TuoguanStore) -> dict[str, Any]:
     for row in work.get("items") or []:
         waiting = row.get("current_waiting") if isinstance(row.get("current_waiting"), dict) else {}
         text = json.dumps(waiting, ensure_ascii=False)
-        if any(term in text for term in ("李老师全名", "看板获取方式")):
+        if any(term in text for term in ("示例老师全名", "看板获取方式")):
             stale_work.append(row)
     current_auth = query_proactive_authorizations(store, identity=identity, include_inactive=False)
     active_pairs = {
@@ -98,10 +98,10 @@ def build_plan(store: TuoguanStore) -> dict[str, Any]:
         for row in current_auth.get("authorizations") or []
     }
     authorization_additions = []
-    if ("boss", ("JinWenJie",)) not in active_pairs:
-        authorization_additions.append({"role": "boss", "users": ["JinWenJie"], "daily_limit": 2})
-    if ("teacher", ("CeShi",)) not in active_pairs:
-        authorization_additions.append({"role": "teacher", "users": ["CeShi"], "daily_limit": 2})
+    if ("boss", ("owner_test",)) not in active_pairs:
+        authorization_additions.append({"role": "boss", "users": ["owner_test"], "daily_limit": 2})
+    if ("teacher", ("teacher_test",)) not in active_pairs:
+        authorization_additions.append({"role": "teacher", "users": ["teacher_test"], "daily_limit": 2})
     goal_doc = store.read_json("goal_operator_goals.json", {"goals": []})
     active_goals = [
         row for row in (goal_doc.get("goals") or [] if isinstance(goal_doc, dict) else [])
@@ -184,7 +184,7 @@ def apply_plan(store: TuoguanStore, plan: dict[str, Any]) -> dict[str, Any]:
                 focus_summary="旧等待条件已经失效；后续从当前人员目录、目标行动和真实回执恢复。",
                 current_waiting={},
                 blocked_by=[],
-                update_text="清除等待李老师全名或看板方式的失效状态，不删除历史。",
+                update_text="清除等待示例老师全名或看板方式的失效状态，不删除历史。",
                 source_text="主动工作 V1 历史状态收口",
                 operation_id=f"repair-proactive:work:{focus_key}",
             ))
@@ -198,7 +198,7 @@ def apply_plan(store: TuoguanStore, plan: dict[str, Any]) -> dict[str, Any]:
                 action_types=["owner_decision", "ask_work_fact", "ask_operating_fact", "ask_task_result", "ask_student_service_fact", "follow_up", "assign_low_risk_goal_task"],
                 daily_limit=int(addition.get("daily_limit") or 1),
                 rollout_stage="pilot_jin_and_li",
-                source_text="2026-08-13 老板明确授权小优主动找金总和李老师，并自主判断询问对象、时间和具体工作事实。",
+                source_text="2026-08-13 老板明确授权小优主动找机构负责人和示例老师，并自主判断询问对象、时间和具体工作事实。",
             ))
         for goal_id in plan.get("goal_action_seed_goal_ids") or []:
             results.append(submit_goal_action(

@@ -30,12 +30,12 @@ def _seed_store(tmp_path: Path):
             "user_roles": {"boss1": "boss", "teacher1": "teacher", "teacher2": "teacher", "manager1": "manager"},
         },
     )
-    _write_json(tmp_path, "teacher_wecom_map.json", {"金总": "boss1", "李老师": "teacher1", "赵老师": "teacher2", "王店长": "manager1"})
+    _write_json(tmp_path, "teacher_wecom_map.json", {"机构负责人": "boss1", "示例老师": "teacher1", "赵老师": "teacher2", "王店长": "manager1"})
     _write_json(
         tmp_path,
         "staff.json",
         {
-            "teacher1": {"name": "李老师", "role": "teacher", "campus_ids": ["main"], "program_ids": ["regular_tuoguan"]},
+            "teacher1": {"name": "示例老师", "role": "teacher", "campus_ids": ["main"], "program_ids": ["regular_tuoguan"]},
             "teacher2": {"name": "赵老师", "role": "teacher", "campus_ids": ["main"], "program_ids": ["regular_tuoguan"]},
             "manager1": {"name": "王店长", "role": "manager", "campus_ids": ["main"], "program_ids": ["regular_tuoguan"]},
         },
@@ -127,7 +127,7 @@ def test_work_item_create_update_merge_and_forbidden_fields_are_not_saved(tmp_pa
         focus_summary="先查事实、看缺口，不直接派老师任务。",
         related_staff_user_ids=["teacher1"],
         pending_judgements=[{"model_intent": "bad", "text": "需要查近况"}],
-        current_waiting={"target_user_id": "teacher1", "target_person": "李老师", "reason": "等老师补充最近孩子状态", "next_tool": "bad"},
+        current_waiting={"target_user_id": "teacher1", "target_person": "示例老师", "reason": "等老师补充最近孩子状态", "next_tool": "bad"},
         next_attention_at="2026-07-28T10:00:00+08:00",
         status="waiting",
         operation_id="op-work-1",
@@ -167,8 +167,8 @@ def test_teacher_scope_only_sees_related_work_items(tmp_path):
     _enter_model(store, "boss1", "boss", "m-scope-1", "保存两个自主事项做权限测试。")
     assert boss.submit_hermes_work_item(
         focus_key="teacher1:item",
-        title="李老师相关事项",
-        focus_summary="只和李老师相关。",
+        title="示例老师相关事项",
+        focus_summary="只和示例老师相关。",
         related_staff_user_ids=["teacher1"],
         operation_id="op-scope-1",
     )["ok"]
@@ -185,7 +185,7 @@ def test_teacher_scope_only_sees_related_work_items(tmp_path):
     teacher_view = _service(store, "teacher1").query_hermes_work_items(include_closed=True)
     assert teacher_view["ok"] is True
     titles = {item["title"] for item in teacher_view["data"]["items"]}
-    assert titles == {"李老师相关事项"}
+    assert titles == {"示例老师相关事项"}
 
 
 def test_wakeup_business_event_action_execution_and_brief(tmp_path):
@@ -205,7 +205,7 @@ def test_wakeup_business_event_action_execution_and_brief(tmp_path):
     _enter_model(store, "boss1", "boss", "m-brief-2", "老师刚才还没有回复。")
     assert service.submit_business_event(
         event_type="teacher_no_reply",
-        event_text="李老师暂未回复目标相关问题。",
+        event_text="示例老师暂未回复目标相关问题。",
         related_objects=[{"teacher_user_id": "teacher1"}],
         operation_id="op-event-1",
     )["ok"]

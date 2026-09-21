@@ -98,9 +98,9 @@ def test_public_reply_uses_xiaoyou_name_but_preserves_technical_version_referenc
     assert "我不是小优助手" in mixed
     assert "Hermes v0.20" in mixed
     identity = _sanitize_external_reply(
-        "我是 Agnes 2.5 模型。", actor_role="teacher", actor_name="李老师", identity_query=True,
+        "我是 Agnes 2.5 模型。", actor_role="teacher", actor_name="示例老师", identity_query=True,
     )
-    assert identity == "当前企业微信识别到您是李老师，角色是老师。我是小优。"
+    assert identity == "当前企业微信识别到您是示例老师，角色是老师。我是小优。"
     cancelled = _authoritative_task_write_reply({
         "tool_calls": [{"tool": "tuoguan_tasks"}],
         "tool_results": [{
@@ -127,15 +127,15 @@ def test_self_evolution_is_deduplicated_scoped_and_applied(tmp_path: Path):
     from plugins.tuoguan_core.store import TuoguanStore
 
     store = TuoguanStore(tmp_path)
-    boss = _identity("JinWenJie", "boss")
-    teacher = _identity("CeShi", "teacher")
+    boss = _identity("owner_test", "boss")
+    teacher = _identity("teacher_test", "teacher")
     first = submit_self_evolution_event(
         store,
         identity=boss,
         operation_id="evo-1",
         candidate_type="self_correction",
         summary="给老板汇报时先说结论，避免重复解释。",
-        applies_to_user_id="JinWenJie",
+        applies_to_user_id="owner_test",
         evidence=[{"source": "conversation_replay", "text": "老板要求先说结论。"}],
     )
     repeated = submit_self_evolution_event(
@@ -144,7 +144,7 @@ def test_self_evolution_is_deduplicated_scoped_and_applied(tmp_path: Path):
         operation_id="evo-2",
         candidate_type="self_correction",
         summary="给老板汇报时先说结论，避免重复解释。",
-        applies_to_user_id="JinWenJie",
+        applies_to_user_id="owner_test",
         evidence=[{"source": "second_occurrence", "text": "老板再次要求先说结论。"}],
     )
     submit_self_evolution_event(
@@ -152,9 +152,9 @@ def test_self_evolution_is_deduplicated_scoped_and_applied(tmp_path: Path):
         identity=teacher,
         operation_id="evo-3",
         candidate_type="self_correction",
-        summary="给李老师回复时不要重复追问已经回答的事实。",
-        applies_to_user_id="CeShi",
-        evidence=[{"source": "conversation_replay", "text": "李老师已经回答该事实。"}],
+        summary="给示例老师回复时不要重复追问已经回答的事实。",
+        applies_to_user_id="teacher_test",
+        evidence=[{"source": "conversation_replay", "text": "示例老师已经回答该事实。"}],
     )
 
     assert first["ok"] is True
@@ -164,8 +164,8 @@ def test_self_evolution_is_deduplicated_scoped_and_applied(tmp_path: Path):
     boss_brief = build_self_evolution_brief(store, identity=boss, limit=10)
     teacher_brief = build_self_evolution_brief(store, identity=teacher, limit=10)
     assert any("老板" in line for line in boss_brief["next_day_context"])
-    assert all("李老师" not in line for line in boss_brief["next_day_context"])
-    assert any("李老师" in line for line in teacher_brief["next_day_context"])
+    assert all("示例老师" not in line for line in boss_brief["next_day_context"])
+    assert any("示例老师" in line for line in teacher_brief["next_day_context"])
 
     applied = record_self_evolution_application(
         store,
@@ -187,11 +187,11 @@ def test_self_evolution_is_deduplicated_scoped_and_applied(tmp_path: Path):
 def test_core_skill_context_is_current_person_only():
     from plugins.tuoguan_core import _xiaoyou_core_skill_context
 
-    context = _xiaoyou_core_skill_context(identity=_identity("CeShi", "teacher"))
+    context = _xiaoyou_core_skill_context(identity=_identity("teacher_test", "teacher"))
     assert "xiaoyou-core" in context
-    assert "user_id=CeShi" in context
+    assert "user_id=teacher_test" in context
     assert "role=teacher" in context
-    assert "JinWenJie" not in context
+    assert "owner_test" not in context
 
 
 def test_global_user_memory_migrates_to_isolated_profiles(tmp_path: Path):
@@ -202,9 +202,9 @@ def test_global_user_memory_migrates_to_isolated_profiles(tmp_path: Path):
     memory = tmp_path / "memories" / "USER.md"
     memory.parent.mkdir(parents=True)
     memory.write_text(
-        "金总沟通偏好直接简洁，先给结论和重点。\n§\n"
-        "李老师（CeShi）做任务时不喜欢反复追问。\n§\n"
-        "李老师（CeShi）提供完整事实时直接闭环当前任务。\n§\n"
+        "机构负责人沟通偏好直接简洁，先给结论和重点。\n§\n"
+        "示例老师（teacher_test）做任务时不喜欢反复追问。\n§\n"
+        "示例老师（teacher_test）提供完整事实时直接闭环当前任务。\n§\n"
         "无论是谁都不能伪造业务成功。",
         encoding="utf-8",
     )
@@ -213,10 +213,10 @@ def test_global_user_memory_migrates_to_isolated_profiles(tmp_path: Path):
     teacher_dimensions = {
         item["dimension_key"]
         for item in dry_run["candidates"]
-        if item["target_user_id"] == "CeShi"
+        if item["target_user_id"] == "teacher_test"
     }
     assert teacher_dimensions == {"avoidance", "followup_method"}
-    assert memory.read_text(encoding="utf-8").startswith("金总")
+    assert memory.read_text(encoding="utf-8").startswith("机构负责人")
 
     applied = run(memory_file=memory, data_dir=tmp_path, apply=True)
     assert applied["writeback_verified"] is True
@@ -227,20 +227,20 @@ def test_global_user_memory_migrates_to_isolated_profiles(tmp_path: Path):
     store = TuoguanStore(tmp_path)
     boss_profile = query_person_workstyle_profile(
         store,
-        identity=_identity("JinWenJie", "boss"),
-        target_user_id="JinWenJie",
+        identity=_identity("owner_test", "boss"),
+        target_user_id="owner_test",
         target_role="boss",
     )
     teacher_profile = query_person_workstyle_profile(
         store,
-        identity=_identity("CeShi", "teacher"),
-        target_user_id="CeShi",
+        identity=_identity("teacher_test", "teacher"),
+        target_user_id="teacher_test",
         target_role="teacher",
     )
     assert boss_profile["preference_count"] == 1
     assert teacher_profile["preference_count"] == 2
     assert set(teacher_profile["applied_dimensions"]) == {"avoidance", "followup_method"}
-    assert "李老师" not in boss_profile["rendered_text"]
+    assert "示例老师" not in boss_profile["rendered_text"]
 
 
 def test_xiaoyou_skill_bundle_installs_with_writeback(tmp_path: Path):

@@ -16,6 +16,8 @@ from typing import Any, Callable
 from hermes_constants import get_hermes_home
 from utils import atomic_json_write
 
+from .workspace import workspace_data_dir
+
 
 class TuoguanStoreError(RuntimeError):
     """Raised when tutoring-center data cannot be read or written safely."""
@@ -48,6 +50,12 @@ def _owner_for_root_write(path: Path) -> tuple[int, int] | None:
 def resolve_tuoguan_data_dir(path: str | Path | None = None) -> Path:
     if path is not None and str(path).strip():
         return Path(path).expanduser()
+    # New product installations keep institution facts outside the Hermes
+    # installation.  This comes before the historical HERMES_* test/deploy
+    # override so a capability bundle can be moved to a new Core unchanged.
+    workspace_dir = workspace_data_dir()
+    if workspace_dir is not None:
+        return workspace_dir
     env_path = os.getenv("HERMES_TUOGUAN_DATA_DIR", "").strip()
     if env_path:
         return Path(env_path).expanduser()

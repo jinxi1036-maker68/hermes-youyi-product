@@ -22,7 +22,7 @@ def _seed_store(tmp_path: Path):
 
     _write_json(tmp_path, "write_guard_config.json", {"enabled": True})
     _write_json(tmp_path, "wecom_whitelist.json", {"super_users": ["boss1"], "user_roles": {"boss1": "boss"}})
-    _write_json(tmp_path, "teacher_wecom_map.json", {"金总": "boss1"})
+    _write_json(tmp_path, "teacher_wecom_map.json", {"机构负责人": "boss1"})
     _write_json(tmp_path, "notification_outbox.json", [])
     _write_json(tmp_path, "youyi_operating_model.json", {"city": "项城", "business_area": "向阳"})
     return TuoguanStore(tmp_path)
@@ -223,7 +223,7 @@ def test_external_learning_brief_is_read_only_material(tmp_path, monkeypatch):
     store = _seed_store(tmp_path)
     cn_tz = timezone(timedelta(hours=8))
     run_external_learning("monthly_market", store=store, now=datetime(2026, 9, 1, 9, 30, tzinfo=cn_tz))
-    identity = UserIdentity("wecom", "boss1", "boss1", "金总", "boss", "approved")
+    identity = UserIdentity("wecom", "boss1", "boss1", "机构负责人", "boss", "approved")
 
     brief = query_external_learning_brief(store, identity=identity)
 
@@ -239,7 +239,7 @@ def test_public_learning_health_exposes_relevance_evidence_without_actions(tmp_p
     now = datetime.now(timezone.utc)
     (tmp_path / "external_research_runs.jsonl").write_text(
         json.dumps({
-            "tenant_id": "youyi_tuoguan",
+            "tenant_id": "example_institution",
             "mode": "weekly_industry",
             "status": "completed_no_relevant_sources",
             "evidence_count": 0,

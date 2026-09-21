@@ -16,11 +16,11 @@ def test_duplicate_task_repair_preserves_history_and_closes_completed_contact(tm
     _write(tmp_path, "tasks.json", [
         {
             "id": "primary", "title": "联系李依晨家长沟通续费", "type": "manual_assignment",
-            "status": "pending", "student_name": "李依晨", "assignee_userid": "CeShi", "created_by": "JinWenJie",
+            "status": "pending", "student_name": "李依晨", "assignee_userid": "teacher_test", "created_by": "owner_test",
         },
         {
             "id": "duplicate", "title": "李依晨续费风险任务", "type": "renewal_risk",
-            "status": "completed", "student_name": "李依晨", "assignee_userid": "CeShi",
+            "status": "completed", "student_name": "李依晨", "assignee_userid": "teacher_test",
         },
     ])
     store = TuoguanStore(tmp_path)
@@ -52,8 +52,8 @@ def test_duplicate_task_repair_refuses_cross_student_pair(tmp_path):
 
     _write(tmp_path, "write_guard_config.json", {"enabled": False})
     _write(tmp_path, "tasks.json", [
-        {"id": "primary", "status": "pending", "student_name": "李依晨", "assignee_userid": "CeShi"},
-        {"id": "duplicate", "status": "completed", "student_name": "小金", "assignee_userid": "CeShi"},
+        {"id": "primary", "status": "pending", "student_name": "李依晨", "assignee_userid": "teacher_test"},
+        {"id": "duplicate", "status": "completed", "student_name": "学生丙", "assignee_userid": "teacher_test"},
     ])
     result = repair_duplicate_task_pair(
         TuoguanStore(tmp_path), primary_task_id="primary", duplicate_task_id="duplicate", evidence_text="真实反馈", apply=True,

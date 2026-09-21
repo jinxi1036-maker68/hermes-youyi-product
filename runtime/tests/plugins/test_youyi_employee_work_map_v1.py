@@ -22,9 +22,9 @@ def _seed_store(tmp_path: Path):
             "user_roles": {"boss1": "boss", "teacher1": "teacher"},
         },
     )
-    _write_json(tmp_path, "teacher_wecom_map.json", {"金总": "boss1", "李老师": "teacher1"})
-    _write_json(tmp_path, "staff.json", {"teacher1": {"user_id": "teacher1", "name": "李老师", "role": "teacher"}})
-    _write_json(tmp_path, "institution_operating_model.json", {"institution_name": "优益托管", "programs": {"regular_tuoguan": {"label": "正式托管"}}})
+    _write_json(tmp_path, "teacher_wecom_map.json", {"机构负责人": "boss1", "示例老师": "teacher1"})
+    _write_json(tmp_path, "staff.json", {"teacher1": {"user_id": "teacher1", "name": "示例老师", "role": "teacher"}})
+    _write_json(tmp_path, "institution_operating_model.json", {"institution_name": "示例机构托管", "programs": {"regular_tuoguan": {"label": "正式托管"}}})
     _write_json(tmp_path, "students.json", {})
     _write_json(tmp_path, "records.json", [])
     _write_json(tmp_path, "tasks.json", [])
@@ -48,7 +48,7 @@ def test_employee_work_map_shows_known_unknown_and_fact_owners_without_routing(t
     from plugins.tuoguan_core.models import UserIdentity
 
     store = _seed_store(tmp_path)
-    identity = UserIdentity("wecom_callback", "boss1", "boss1", "金总", "boss", "approved")
+    identity = UserIdentity("wecom_callback", "boss1", "boss1", "机构负责人", "boss", "approved")
 
     result = query_employee_work_map(store, identity=identity, limit=10)
 
@@ -74,12 +74,12 @@ def test_employee_work_map_tool_is_registered_and_permission_scoped(tmp_path):
     names = {name for name, _schema, _handler in TOOLS}
     assert "tuoguan_query_employee_work_map" in names
 
-    boss = TuoguanToolService(store, platform="wecom_callback", user_id="boss1", user_name="金总")
+    boss = TuoguanToolService(store, platform="wecom_callback", user_id="boss1", user_name="机构负责人")
     result = boss.query_employee_work_map(limit=10)
     assert result["ok"] is True
     assert result["data"]["report_type"] == "employee_work_map_v1"
 
-    teacher = TuoguanToolService(store, platform="wecom_callback", user_id="teacher1", user_name="李老师")
+    teacher = TuoguanToolService(store, platform="wecom_callback", user_id="teacher1", user_name="示例老师")
     denied = teacher.query_employee_work_map(limit=10)
     assert denied["ok"] is False
     assert denied["error"] == "permission_denied"

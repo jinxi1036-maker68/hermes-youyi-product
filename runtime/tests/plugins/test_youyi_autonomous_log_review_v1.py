@@ -37,12 +37,12 @@ def _seed_store(tmp_path: Path):
             "user_roles": {"boss1": "boss", "teacher1": "teacher", "manager1": "manager"},
         },
     )
-    _write_json(tmp_path, "teacher_wecom_map.json", {"金总": "boss1", "李老师": "teacher1", "王店长": "manager1"})
+    _write_json(tmp_path, "teacher_wecom_map.json", {"机构负责人": "boss1", "示例老师": "teacher1", "王店长": "manager1"})
     _write_json(
         tmp_path,
         "staff.json",
         {
-            "teacher1": {"name": "李老师", "role": "teacher", "campus_ids": ["main"], "program_ids": ["regular_tuoguan"]},
+            "teacher1": {"name": "示例老师", "role": "teacher", "campus_ids": ["main"], "program_ids": ["regular_tuoguan"]},
             "manager1": {"name": "王店长", "role": "manager", "campus_ids": ["main"], "program_ids": ["regular_tuoguan"]},
         },
     )
@@ -58,7 +58,7 @@ def _seed_store(tmp_path: Path):
                 "timestamp": "2026-07-27T10:00:00+08:00",
                 "user_id": "boss1",
                 "raw_text": "刚才那个目标你现在推进到哪一步了？还在等什么？",
-                "final_reply": "我看到现在还在等李老师回复，会先核验最新事实。",
+                "final_reply": "我看到现在还在等示例老师回复，会先核验最新事实。",
                 "tool_calls": [{"tool": "tuoguan_query_hermes_work_items"}],
                 "tool_results": [{"tool": "tuoguan_query_hermes_work_items", "ok": True}],
             },

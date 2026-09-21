@@ -52,7 +52,7 @@ def test_turn_trace_is_sanitized_and_writeback_verified(tmp_path):
         record_tool_event,
     )
 
-    secret_text = "李老师说学生小明家长电话是13800000000"
+    secret_text = "示例老师说学生小明家长电话是13800000000"
     secret_reply = "我已经记录学生小明的信息"
     clear_turn_traces()
     begin_turn_trace(

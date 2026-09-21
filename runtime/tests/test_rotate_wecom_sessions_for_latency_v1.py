@@ -21,9 +21,9 @@ def _seed(state_db: Path, sessions_json: Path) -> None:
         """
     )
     rows = [
-        ("boss-long", "wecom_callback", "JinWenJie", "key:boss", 129, 1.0, 0, None, None, 3000, None, None),
-        ("teacher-long", "wecom_callback", "CeShi", "key:teacher", 145, 2.0, 0, None, None, 40000, None, None),
-        ("teacher-short", "wecom_callback", "CeShi", "key:short", 10, 3.0, 0, None, None, 1000, None, None),
+        ("boss-long", "wecom_callback", "owner_test", "key:boss", 129, 1.0, 0, None, None, 3000, None, None),
+        ("teacher-long", "wecom_callback", "teacher_test", "key:teacher", 145, 2.0, 0, None, None, 40000, None, None),
+        ("teacher-short", "wecom_callback", "teacher_test", "key:short", 10, 3.0, 0, None, None, 1000, None, None),
         ("other-long", "wecom_callback", "OtherTeacher", "key:other", 200, 4.0, 0, None, None, 90000, None, None),
     ]
     connection.executemany("INSERT INTO sessions VALUES (?,?,?,?,?,?,?,?,?,?,?,?)", rows)
@@ -55,7 +55,7 @@ def test_rotation_is_dry_run_then_soft_archives_only_target_long_sessions(tmp_pa
     dry = rotate(
         state_db=state_db,
         sessions_json=sessions_json,
-        users={"JinWenJie", "CeShi"},
+        users={"owner_test", "teacher_test"},
         min_messages=80,
         apply=False,
     )
@@ -65,7 +65,7 @@ def test_rotation_is_dry_run_then_soft_archives_only_target_long_sessions(tmp_pa
     applied = rotate(
         state_db=state_db,
         sessions_json=sessions_json,
-        users={"JinWenJie", "CeShi"},
+        users={"owner_test", "teacher_test"},
         min_messages=80,
         apply=True,
     )
@@ -104,7 +104,7 @@ def test_rotation_uses_live_prompt_threshold_even_before_message_count(tmp_path:
     result = rotate(
         state_db=state_db,
         sessions_json=sessions_json,
-        users={"CeShi"},
+        users={"teacher_test"},
         min_messages=999,
         max_input_tokens=32000,
         apply=False,
@@ -128,7 +128,7 @@ def test_rotation_never_uses_cumulative_input_tokens_as_a_live_context_measure(t
     result = rotate(
         state_db=state_db,
         sessions_json=sessions_json,
-        users={"CeShi"},
+        users={"teacher_test"},
         min_messages=999,
         max_input_tokens=32_000,
         apply=False,

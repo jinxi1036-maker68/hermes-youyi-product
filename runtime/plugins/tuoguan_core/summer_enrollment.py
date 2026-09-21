@@ -629,7 +629,7 @@ def guess_unknown_student_name(text: str) -> str:
     if not match:
         return ""
     candidate = match.group(1)
-    if candidate.endswith(("老师", "店长")) or candidate in {"金总", "老板"}:
+    if candidate.endswith(("老师", "店长")) or candidate in {"机构负责人", "老板"}:
         return ""
     if candidate in {"我是", "我在", "你是", "你在", "他是", "他在", "她是", "她在", "这是", "这在", "那个"}:
         return ""

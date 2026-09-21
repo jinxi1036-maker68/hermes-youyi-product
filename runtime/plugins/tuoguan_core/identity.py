@@ -41,6 +41,18 @@ class IdentityService:
         for name, user_id in mapping.items():
             if str(user_id) == sender_id:
                 return str(name)
+        # The legacy channel-name map is optional in the current Institution
+        # Workspace.  A fresh Hermes session must still recover the person's
+        # business display name from the trusted personnel record instead of
+        # exposing the transport userid (for example ``owner_test``).  This is
+        # read-only identity presentation; role/approval remain sourced from
+        # the server-owned channel directory below.
+        staff = self.store.read_json("staff.json", {})
+        profile = staff.get(sender_id) if isinstance(staff, dict) else None
+        if isinstance(profile, dict):
+            business_name = str(profile.get("business_name") or profile.get("name") or "").strip()
+            if business_name:
+                return business_name
         return ""
 
     def _canonical_user_id(

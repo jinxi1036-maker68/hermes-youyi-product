@@ -3,16 +3,20 @@
 from __future__ import annotations
 
 from copy import deepcopy
+from contextlib import closing
 from datetime import datetime, timedelta
 import hashlib
+import json
 import os
 import re
+import sqlite3
 import uuid
 from typing import Any, Callable
 from urllib.parse import quote
 
 from .dashboard_auth import DashboardAuthError, sign_dashboard_token, token_expiry_datetime
 from .dashboard_builder import refresh_dashboard_cache
+from .dashboard_http import verify_public_dashboard_route
 from .execution_receipts import build_execution_receipt
 from .escalation import build_notification_plan
 from .identity import IdentityService
@@ -24,9 +28,18 @@ from .knowledge import (
 )
 from .permissions import PermissionService
 from .models import UserIdentity
+from .tenant_context import current_tenant_id
 from .programs import resolve_record_program
 from .programs import is_summer_operator
 from .records import analyze_teacher_record, save_analysis
+from .student_resolver import resolve_student_for_record
+from .student_directory import filter_candidates_by_classroom, find_student_candidates, safe_candidate_labels
+from .business_object_context import (
+    remember_candidate_set,
+    remember_resolved_object,
+    resolve_confirmed_object,
+    resolve_pending_candidate_confirmation,
+)
 from .summer_records import save_summer_lesson_record
 from .store import JSON_NO_CHANGE, TuoguanStore, TuoguanStoreError
 from .summer_points import change_points, query_points_ranking, query_student_points
@@ -286,6 +299,7 @@ class TuoguanToolService:
         user_name: str = "",
         chat_id: str = "",
         session_key: str = "",
+        identity: UserIdentity | None = None,
     ) -> None:
         self.store = store or TuoguanStore()
         self.platform = str(platform or "")
@@ -293,7 +307,11 @@ class TuoguanToolService:
         self.user_name = str(user_name or "")
         self.chat_id = str(chat_id or "")
         self.session_key = str(session_key or "")
-        self.identity = IdentityService(self.store).resolve(
+        # Runtime Tool handlers pass the immutable identity established by the
+        # XiaoYou Runtime Contract.  Direct service construction remains for
+        # offline/domain tests, where the caller still has to resolve through
+        # the same repository-backed IdentityService.
+        self.identity = identity or IdentityService(self.store).resolve(
             self.platform,
             self.user_id,
             user_name=self.user_name,
@@ -333,6 +351,306 @@ class TuoguanToolService:
             "account_not_approved",
             "当前渠道账号尚未通过托管系统身份审核。",
         )
+
+    def read_agenda_work_facts(self) -> dict[str, Any]:
+        """Read only the server-attested facts for this exact Agenda turn.
+
+        The method has no model-provided object selector.  It can therefore
+        neither widen the service identity's visibility nor turn a fact from a
+        different tenant/partition into business context.
+        """
+
+        denied = self._approved()
+        if denied:
+            return denied
+        try:
+            from .runtime_contract import current_trusted_turn
+
+            turn = current_trusted_turn()
+            database = str(os.getenv("XIAOYOU_AGENDA_SERVICE_INGRESS_DB") or "").strip()
+            if turn is None or not database or str(getattr(turn, "platform", "")) != "agenda_service_work":
+                return self._error("agenda_work_facts_untrusted", "当前回合没有可信 Agenda 工作事实，本轮未读取。")
+            with closing(sqlite3.connect(database, timeout=5.0)) as connection:
+                connection.row_factory = sqlite3.Row
+                ticket = connection.execute(
+                    "SELECT ticket_id,work_ids_json FROM agenda_service_tickets "
+                    "WHERE tenant_id=? AND service_identity=? AND agent_session_id=? AND agent_turn_id=? AND state='agent_claimed'",
+                    (str(getattr(turn, "tenant_id", "")), str(self.identity.canonical_user_id), str(getattr(turn, "session_id", "")), str(getattr(turn, "turn_id", ""))),
+                ).fetchone()
+                if ticket is None:
+                    return self._error("agenda_work_facts_ticket_missing", "当前 Agenda 工单未通过可信关联，本轮未读取。")
+                work_ids = [str(value) for value in json.loads(str(ticket["work_ids_json"]))]
+                facts: list[dict[str, Any]] = []
+                for work_id in work_ids:
+                    fact = connection.execute(
+                        "SELECT payload_ref FROM work_facts WHERE work_id=? AND tenant_id=?",
+                        (work_id, str(getattr(turn, "tenant_id", ""))),
+                    ).fetchone()
+                    if fact is None:
+                        continue
+                    payload = connection.execute(
+                        "SELECT payload_json FROM agenda_workspace_payloads WHERE payload_ref=? AND tenant_id=?",
+                        (str(fact["payload_ref"]), str(getattr(turn, "tenant_id", ""))),
+                    ).fetchone()
+                    if payload is None:
+                        continue
+                    decoded = json.loads(str(payload["payload_json"]))
+                    if isinstance(decoded, dict):
+                        # The original payload is intentionally immutable, but
+                        # a continuation turn must reason from the *current*
+                        # authoritative lifecycle state rather than repeat a
+                        # stale question. This uses no model-selected object:
+                        # the task id came from the attested ticket fact.
+                        if str(decoded.get("source_kind") or "") == "workspace_task":
+                            task_id = str(decoded.get("task_id") or "")
+                            current = next(
+                                (
+                                    row for row in self.store.load_tasks()
+                                    if isinstance(row, dict) and str(row.get("id") or "") == task_id
+                                ),
+                                None,
+                            )
+                            if isinstance(current, dict) and str(current.get("tenant_id") or "") == str(getattr(turn, "tenant_id", "")):
+                                decoded = {
+                                    **decoded,
+                                    "current_lifecycle": {
+                                        "status": str(current.get("status") or "pending"),
+                                        "updated_at": str(current.get("updated_at") or ""),
+                                        "agenda_followup": (
+                                            dict(current.get("agenda_followup"))
+                                            if isinstance(current.get("agenda_followup"), dict)
+                                            else {}
+                                        ),
+                                        "agenda_continuation": (
+                                            dict(current.get("agenda_continuation"))
+                                            if isinstance(current.get("agenda_continuation"), dict)
+                                            else {}
+                                        ),
+                                        "agenda_contact_history": [
+                                            dict(value)
+                                            for value in (current.get("agenda_contact_history") or [])
+                                            if isinstance(value, dict)
+                                        ][-12:],
+                                        # Durable outbox state is the only
+                                        # delivery fact.  A staged contact is
+                                        # not a delivered message, while a
+                                        # WeCom-accepted delivery still is not
+                                        # evidence of a human reply or task
+                                        # completion.  Keep this structured
+                                        # and read-only so Hermes can decide
+                                        # whether actual progress is possible.
+                                        "contact_delivery_observations": self._agenda_task_delivery_observations(
+                                            tenant_id=str(getattr(turn, "tenant_id", "")),
+                                            task=current,
+                                            current_ticket_id=str(ticket["ticket_id"]),
+                                        ),
+                                    },
+                                }
+                        facts.append(decoded)
+        except (OSError, ValueError, sqlite3.Error, json.JSONDecodeError):
+            return self._error("agenda_work_facts_unavailable", "可信 Agenda 工作事实暂时不可读取，本轮未据此执行。")
+        return self._ok(
+            "read_agenda_work_facts",
+            data={"ticket_id": str(ticket["ticket_id"]), "facts": facts, "count": len(facts)},
+            message="已读取本回合可信 Agenda 工作事实。",
+        )
+
+    def _agenda_task_delivery_observations(
+        self,
+        *,
+        tenant_id: str,
+        task: dict[str, Any],
+        current_ticket_id: str,
+    ) -> list[dict[str, Any]]:
+        """Return delivery observations for one current task without IDs.
+
+        Agenda uses this only to correct an earlier loss of truth in which a
+        locally staged reply was treated as the entire contact history.  It
+        does not query model-selected people or work, and it intentionally
+        exposes no reply, operation, ticket or channel identifiers to Hermes.
+        """
+
+        contact_rows = [
+            dict(item) for item in (task.get("agenda_contact_history") or [])
+            if isinstance(item, dict)
+        ]
+        ticket_ids = {str(current_ticket_id or "").strip()}
+        for item in contact_rows:
+            ticket = str(item.get("ticket_id") or "").strip()
+            if ticket:
+                ticket_ids.add(ticket)
+        operation_labels: dict[str, tuple[str, str]] = {
+            "agenda-notice:" + ticket: ("agenda_status_notice", "")
+            for ticket in ticket_ids if ticket
+        }
+        for item in contact_rows:
+            ticket = str(item.get("ticket_id") or "").strip()
+            if ticket:
+                operation_labels["agenda-notice:" + ticket] = (
+                    "agenda_status_notice",
+                    str(item.get("recorded_at") or ""),
+                )
+        for item in contact_rows:
+            candidate_id = str(item.get("candidate_id") or "").strip()
+            if candidate_id:
+                operation_labels[
+                    "proactive-notice:relationship_touch:" + str(tenant_id) + ":relationship_touch:" + candidate_id
+                ] = ("model_selected_task_party_followup", str(item.get("recorded_at") or ""))
+        if not operation_labels:
+            return []
+        try:
+            from .direct_reply_recovery import get_direct_reply_recovery_manager
+
+            outbox = get_direct_reply_recovery_manager().outbox
+            rows = []
+            for operation_id, (kind, recorded_at) in operation_labels.items():
+                job = outbox.get(operation_id)
+                if job is None or job.tenant_id != str(tenant_id):
+                    continue
+                state = str(job.delivery_state or "not_ready")
+                rows.append({
+                    "kind": kind,
+                    "delivery_observation": (
+                        "wecom_accepted" if state == "delivered"
+                        else "delivery_failed" if state in {"failed", "suppressed"}
+                        else "delivery_pending" if state in {"pending", "leased", "sending"}
+                        else "not_deliverable"
+                    ),
+                    "human_response_observation": "not_observed",
+                    "recorded_at": recorded_at,
+                })
+            return rows[-20:]
+        except Exception:
+            # Failure to read the outbox must never become a false claim that
+            # a contact failed or was delivered.
+            return []
+
+    def agenda_contact_current_task_party(
+        self,
+        *,
+        message: str,
+        reason: str,
+        action_type: str = "ask_task_fact",
+        evidence_requirement: str = "",
+        operation_id: str,
+    ) -> dict[str, Any]:
+        """Let Hermes progress its one attested task by contacting its assignee.
+
+        The model may choose this Tool or a later recheck and composes the
+        message/reason.  It cannot select a tenant, task, recipient, channel,
+        delivery identity or operation id: all of those are derived from the
+        current signed Agenda ticket and checked again at delivery.
+        """
+
+        denied = self._approved()
+        if denied:
+            return denied
+        normalized_action = str(action_type or "ask_task_fact").strip()
+        if normalized_action not in {"ask_task_fact", "ask_task_result", "task_companion_followup"}:
+            return self._error("agenda_task_contact_action_invalid", "当前任务只能围绕进度、结果或明确工作事实联系责任人。")
+
+        def execute() -> dict[str, Any]:
+            from .agenda_task_lifecycle import (
+                AgendaTaskLifecycleError,
+                current_task_contact_target,
+                record_current_task_contact_attempt,
+            )
+            from .proactive_work import effective_proactive_permission
+
+            try:
+                target = current_task_contact_target(self)
+            except AgendaTaskLifecycleError as exc:
+                return self._error(str(exc), "当前任务的可信责任人已经变化，本轮没有联系任何人。")
+            permission = effective_proactive_permission(
+                self.store,
+                target_role=target["target_role"],
+                target_user_id=target["target_user_id"],
+                action_type=normalized_action,
+                related_task_id=target["task_id"],
+            )
+            if not permission.get("allowed"):
+                return self._error(
+                    str(permission.get("reason_code") or "agenda_task_contact_not_allowed"),
+                    "当前责任人不满足主动联系的可信授权或可达条件，本轮没有创建外发。",
+                )
+            candidate = submit_relationship_touch_candidate(
+                self.store,
+                identity=self.identity,
+                target_role=target["target_role"],
+                target_user_id=target["target_user_id"],
+                target_name=target["target_name"],
+                touch_type="record_relief" if target["target_role"] == "teacher" else "manager_assist",
+                message=str(message or "").strip(),
+                reason=str(reason or "").strip(),
+                value="当前逾期或待确认任务的模型自主推进",
+                work_related=True,
+                private_emotional_support=False,
+                requires_authorization=False,
+                external_send_allowed=True,
+                suggested_send_at="",
+                status="candidate",
+                operation_id=operation_id + ":candidate",
+                source_text=str(reason or "").strip(),
+                source_message_id=target["message_id"],
+                action_type=normalized_action,
+                related_task_id=target["task_id"],
+                evidence_requirement=str(evidence_requirement or "").strip(),
+                agenda_ticket_id=target["ticket_id"],
+            )
+            if not candidate.get("ok"):
+                return candidate
+            candidate_row = candidate.get("candidate") if isinstance(candidate.get("candidate"), dict) else {}
+            candidate_id = str(candidate_row.get("candidate_id") or "")
+            if not candidate_id:
+                return self._error("agenda_task_contact_candidate_missing", "当前主动联系候选没有形成可信编号，本轮未发送。")
+            execution = execute_relationship_touch_state(
+                self.store,
+                identity=self.identity,
+                candidate_id=candidate_id,
+                operation_id=operation_id + ":deliver",
+            )
+            if not execution.get("ok"):
+                # Candidate persistence is real, but delivery did not become
+                # a fact.  Return that distinction instead of turning a
+                # partially completed attempt into a fictitious send.
+                return self._ok(
+                    "agenda_contact_current_task_party",
+                    data={
+                        "candidate": candidate_row,
+                        "contact_attempt": "not_delivered",
+                        "delivery_error": str(execution.get("error") or "delivery_not_created"),
+                        "writeback_verified": bool(candidate.get("writeback_verified")),
+                    },
+                    message="已记录本次需要联系责任人的工作事实，但当前没有取得可信发送结果。",
+                )
+            recorded = record_current_task_contact_attempt(
+                service=self,
+                target_user_id=target["target_user_id"],
+                candidate_id=candidate_id,
+                delivery_state=str(execution.get("delivery_state") or "not_ready"),
+                delivery_id=str(execution.get("delivery_id") or ""),
+                operation_id=operation_id,
+            )
+            verified = bool(execution.get("writeback_verified") and recorded.get("writeback_verified"))
+            return self._ok(
+                "agenda_contact_current_task_party",
+                data={
+                    "task_id": target["task_id"],
+                    "contact_attempt": (
+                        "wecom_accepted" if bool(execution.get("wecom_accepted"))
+                        else "delivery_pending"
+                    ),
+                    "human_response_observation": "not_observed",
+                    "writeback_verified": verified,
+                },
+                message=(
+                    "已取得企业微信接受回执；仍需等待责任人的真实回复或任务结果。"
+                    if bool(execution.get("wecom_accepted"))
+                    else "已进入可信投递链路；尚未取得企业微信接受回执，不能声称对方已收到。"
+                ),
+            )
+
+        return self._operation(operation_id, "agenda_contact_current_task_party", execute)
 
     def _visible_students(self) -> dict[str, dict[str, Any]]:
         return self._visible_students_for(self.identity)
@@ -899,6 +1217,37 @@ class TuoguanToolService:
         except Exception:
             return ""
 
+    @staticmethod
+    def _normalize_unverified_exception_truth(result: dict[str, Any]) -> dict[str, Any]:
+        """Project a legacy failed exception as one truthful outcome.
+
+        Older ledgers could contain ``system_error`` + failed/unverified
+        Receipt but an ``applied`` idempotency label.  The original immutable
+        audit entry is retained; every business read/replay now observes the
+        only defensible interpretation: result unknown, never verified as
+        applied.  This is an audit compatibility projection, not a retry and
+        not a claim that no write occurred.
+        """
+
+        normalized = deepcopy(result if isinstance(result, dict) else {})
+        receipt = normalized.get("execution_receipt")
+        if not isinstance(receipt, dict):
+            return normalized
+        if not (
+            str(normalized.get("error") or receipt.get("error_code") or "") == "system_error"
+            and str(receipt.get("status") or "") == "failed"
+            and not bool(receipt.get("writeback_verified"))
+            and str(receipt.get("idempotency_result") or "") in {"applied", "replayed"}
+        ):
+            return normalized
+        corrected = {**receipt, "idempotency_result": "result_unknown"}
+        normalized["execution_receipt"] = corrected
+        normalized["already_applied"] = False
+        normalized["execution_truth_projection"] = "legacy_unverified_exception_result_unknown"
+        if isinstance(normalized.get("data"), dict):
+            normalized["data"] = {**normalized["data"], "execution_receipt": corrected}
+        return normalized
+
     def _operation(
         self,
         operation_id: str,
@@ -911,6 +1260,18 @@ class TuoguanToolService:
                 "operation_id_required",
                 "写操作缺少 operation_id，未执行，避免产生重复数据。",
             ), operation_id="", operation=operation, idempotency_result="rejected")
+        try:
+            from .agenda_service_policy import enforce_agenda_service_write_operation
+            service_policy_denial = enforce_agenda_service_write_operation(service=self, operation=operation)
+        except Exception:
+            service_policy_denial = {"ok": False, "error": "agenda_service_policy_unavailable", "message": "后台服务策略不可用，本轮未执行。", "data": {}}
+        if service_policy_denial is not None:
+            return build_execution_receipt(
+                service_policy_denial,
+                operation_id=key,
+                operation=operation,
+                idempotency_result="rejected",
+            )
         from .runtime_foundation import write_authorization_for
         from .write_guard import authorized_business_write, guard_enabled, record_unauthorized_tool_attempt
 
@@ -972,7 +1333,12 @@ class TuoguanToolService:
             "update_relationship_touch",
             "submit_goal_action",
             "update_attention_thread",
+            "agenda_contact_current_task_party",
             "review_project_opportunity",
+            "governance_claim_query_reference",
+            "governance_claim_submit",
+            "governance_claim_record",
+            "governance_claim_confirm",
         }
         if compact_raw in {
             "你再试一下",
@@ -1026,9 +1392,10 @@ class TuoguanToolService:
             except Exception:
                 ledger_probe = ""
             try:
-                from gateway.session_context import get_session_env
-                session_user_probe = get_session_env("HERMES_SESSION_USER_ID", "")
-                session_id_probe = get_session_env("HERMES_SESSION_ID", "")
+                from .runtime_contract import current_trusted_turn
+                trusted_turn = current_trusted_turn()
+                session_user_probe = str(getattr(trusted_turn, "actor_user_id", "") or "")
+                session_id_probe = str(getattr(trusted_turn, "session_id", "") or "")
             except Exception:
                 session_user_probe = ""
                 session_id_probe = ""
@@ -1092,8 +1459,12 @@ class TuoguanToolService:
         ):
             self.store.update_json("tool_operations.json", {}, claim_receipt)
         if isinstance(receipt_claim.get("existing_result"), dict):
-            result = deepcopy(receipt_claim["existing_result"])
-            result["already_applied"] = True
+            result = self._normalize_unverified_exception_truth(receipt_claim["existing_result"])
+            prior_receipt = result.get("execution_receipt") if isinstance(result.get("execution_receipt"), dict) else {}
+            result["already_applied"] = bool(
+                str(prior_receipt.get("status") or "") == "completed"
+                and bool(prior_receipt.get("writeback_verified"))
+            )
             return build_execution_receipt(
                 result, operation_id=key, operation=operation, idempotency_result="replayed"
             )
@@ -1127,11 +1498,19 @@ class TuoguanToolService:
             result["message"] = "已理解并执行该操作，但写入反查没有完全通过，暂时不能确认成功。"
         if result.get("ok"):
             result["already_applied"] = False
+        if result.get("ok"):
+            idempotency_outcome = "not_applied" if no_write_performed else "applied"
+        elif str(result.get("error") or "") in {"system_error", "writeback_consistency_failed"}:
+            # The protected operation raised or failed its post-write proof.
+            # We cannot truthfully say that it either did or did not write.
+            idempotency_outcome = "result_unknown"
+        else:
+            idempotency_outcome = "not_applied"
         result = build_execution_receipt(
             result,
             operation_id=key,
             operation=operation,
-            idempotency_result="not_applied" if no_write_performed else "applied",
+            idempotency_result=idempotency_outcome,
         )
         def finish_receipt(receipts: Any) -> dict[str, Any]:
             receipts = receipts if isinstance(receipts, dict) else {}
@@ -1155,63 +1534,116 @@ class TuoguanToolService:
             self.store.update_json("tool_operations.json", {}, finish_receipt)
         return result
 
+    def execute_capability_write(
+        self,
+        *,
+        operation_id: str,
+        operation: str,
+        execute: Callable[[], dict[str, Any]],
+    ) -> dict[str, Any]:
+        """Run a declared Capability write through XiaoYou's receipt fence.
+
+        Capability packages may provide their own domain storage contracts, but
+        they must not bypass the product's trusted-turn authorization,
+        idempotency ledger, ExecutionReceipt or writeback gate.  This small
+        public-to-the-package seam deliberately receives an already selected
+        operation and a closure; it never sees user text and never selects a
+        business action.
+        """
+
+        return self._operation(
+            str(operation_id or ""),
+            str(operation or ""),
+            execute,
+        )
+
     def _enqueue_notifications(self, notifications: list[dict[str, Any]]) -> dict[str, Any]:
-        stamp = datetime.now().isoformat(timespec="seconds")
+        """Stage current-runtime delivery facts; never write the retired queue.
+
+        A task receipt proves only that the task exists.  Its initial notice is
+        a separate, server-attested Work Runtime delivery job.  Due reminders
+        are intentionally left to Agenda, which later gives Hermes the real
+        task fact and an opportunity to decide the appropriate follow-up.
+        """
+
+        from .direct_reply_recovery import get_direct_reply_recovery_manager
+        from .proactive_delivery_authority import ProactiveDeliveryAuthority
+        from .work_runtime import ReplyDestination
+
+        tenant = str(current_tenant_id() or "").strip()
+        authority = ProactiveDeliveryAuthority(self.store.data_dir)
+        manager = get_direct_reply_recovery_manager()
         requested_ids: list[str] = []
-
-        def append_notifications(outbox: Any) -> list[dict[str, Any]]:
-            outbox = outbox if isinstance(outbox, list) else []
-            existing = {
-                str(item.get("id") or "")
-                for item in outbox
-                if isinstance(item, dict)
-            }
-            for item in notifications:
-                notification_id = ":".join(
-                    (
-                        str(item.get("task_id") or ""),
-                        str(item.get("role") or ""),
-                        str(item.get("action") or ""),
-                    )
-                )
-                if notification_id:
-                    requested_ids.append(notification_id)
-                if not notification_id or notification_id in existing:
-                    continue
-                outbox.append(
-                    {
-                        **deepcopy(item),
-                        "id": notification_id,
-                        "status": "pending",
-                        "delivery_mode": "direct_wecom",
-                        "created_at": stamp,
-                        "attempt_count": 0,
-                    }
-                )
-                existing.add(notification_id)
-            return outbox[-2000:]
-
-        self.store.update_json("notification_outbox.json", [], append_notifications)
-        rows = self.store.read_json("notification_outbox.json", [])
-        rows = rows if isinstance(rows, list) else []
-        requested = set(requested_ids)
-        queued = {
-            str(item.get("id") or "")
-            for item in rows
-            if isinstance(item, dict)
-            and str(item.get("id") or "") in requested
-            and str(item.get("status") or "") in {"pending", "retry_pending", "sending", "sent"}
-        }
-        queued_actions = [
-            str(item.get("action") or "")
-            for item in rows
-            if isinstance(item, dict) and str(item.get("id") or "") in queued
-        ]
+        outcomes: list[dict[str, Any]] = []
+        for item in notifications:
+            task_id = str(item.get("task_id") or "").strip()
+            action = str(item.get("action") or "").strip()
+            recipient = str(item.get("touser") or "").strip()
+            notice_id = ":".join((task_id, "teacher", action))
+            if notice_id:
+                requested_ids.append(notice_id)
+            if action == "task_due":
+                # The durable task fact is already in Workspace.  Agenda, not
+                # a hidden timer/template queue, owns any future due-time turn.
+                outcomes.append({
+                    "notification_id": notice_id,
+                    "action": action,
+                    "delivery_state": "agenda_managed",
+                    "wecom_accepted": False,
+                })
+                continue
+            if action != "task_created" or not all((tenant, task_id, recipient, str(item.get("content") or "").strip())):
+                outcomes.append({
+                    "notification_id": notice_id,
+                    "action": action,
+                    "delivery_state": "not_deliverable",
+                    "reason": "task_delivery_required_fields_missing",
+                    "wecom_accepted": False,
+                })
+                continue
+            destination = ReplyDestination(
+                tenant_id=tenant,
+                channel="wecom_callback",
+                recipient_id=recipient,
+                source_identity="task_delivery:" + tenant,
+            )
+            decision = authority.decide(destination)
+            if not decision.allowed:
+                outcomes.append({
+                    "notification_id": notice_id,
+                    "action": action,
+                    "delivery_state": "not_deliverable",
+                    "reason": decision.reason,
+                    "wecom_accepted": False,
+                })
+                continue
+            job = manager.stage_proactive_notice(
+                tenant_id=tenant,
+                recipient_id=recipient,
+                source_kind="task_delivery",
+                notice_id=notice_id,
+                notice_text=str(item.get("content") or ""),
+                trace_ref="verified-task-notice:" + task_id + ":" + action,
+            )
+            outcomes.append({
+                "notification_id": notice_id,
+                "action": action,
+                "delivery_state": str(job.delivery_state),
+                "wecom_accepted": bool(job.delivery_state == "delivered"),
+                "reason": "institutional_proactive_authorization_active",
+            })
+        initial = next((row for row in outcomes if row.get("action") == "task_created"), {})
         return {
+            # Compatibility names intentionally describe a current durable job,
+            # never the retired ``notification_outbox.json`` queue.
             "requested_notification_ids": requested_ids,
-            "queued_notification_ids": sorted(queued),
-            "queued_actions": queued_actions,
-            "writeback_verified": bool(requested) and queued == requested,
+            "queued_notification_ids": [str(row.get("notification_id") or "") for row in outcomes if row.get("delivery_state") == "pending"],
+            "queued_actions": [str(row.get("action") or "") for row in outcomes if row.get("delivery_state") == "pending"],
+            "outcomes": outcomes,
+            "initial_delivery_state": str(initial.get("delivery_state") or "not_deliverable"),
+            "initial_delivery_reason": str(initial.get("reason") or ""),
+            "initial_wecom_accepted": bool(initial.get("wecom_accepted")),
+            "writeback_verified": bool(initial),
         }
 
     def context(self) -> dict[str, Any]:
@@ -1250,12 +1682,15 @@ class TuoguanToolService:
         self,
         *,
         student_name: str = "",
+        student_id: str = "",
         teacher_name: str = "",
         query_scope: str = "",
         grade: str = "",
+        class_name: str = "",
         name: str = "",
         role: str = "",
         limit: int = 30,
+        offset: int = 0,
     ) -> dict[str, Any]:
         denied = self._approved()
         if denied:
@@ -1266,6 +1701,9 @@ class TuoguanToolService:
                 "学生查询不能按员工角色筛选；请改用 tuoguan_query_staff_directory 查询老师、店长或老板。",
             )
         requested = str(student_name or "").strip()
+        requested_student_id = str(student_id or "").strip()
+        requested_class_name = str(class_name or "").strip()
+        requested_grade = str(grade or "").strip()
         alias_name = str(name or "").strip()
         if requested and alias_name and requested != alias_name:
             return self._error("ambiguous_target", "student_name 与 name 指向不同学生，请只保留一个明确姓名。")
@@ -1297,7 +1735,21 @@ class TuoguanToolService:
                 if active_student:
                     requested = active_student
                     scope_reason = "active_task_student"
+        session_object_evidence: dict[str, Any] | None = None
+        if requested_student_id and self.session_key:
+            # A model-provided ID is never itself a write authority.  It can
+            # only continue a student the same trusted session had already
+            # established for protected work.
+            session_object_evidence = resolve_confirmed_object(
+                self.store,
+                self.identity,
+                session_key=self.session_key,
+                object_type="student",
+                object_id=requested_student_id,
+                require_write_authorization=True,
+            )
         safe_limit = max(1, min(int(limit or 30), 100))
+        safe_offset = max(0, int(offset or 0))
         target_identity = self.identity
         requested_teacher = str(teacher_name or "").strip()
         if not requested_teacher and self.identity.role in {"boss", "manager"}:
@@ -1311,7 +1763,152 @@ class TuoguanToolService:
             if not self._manager_can_view_teacher(target_identity.canonical_user_id):
                 return self._error("permission_denied", f"老师“{requested_teacher}”不在当前店长管理范围内。")
         visible = self._visible_students_for(target_identity)
+        if requested_student_id:
+            # An ID can only originate from a prior authorised directory
+            # result.  Resolve it through the repository again; never trust
+            # a client/model-supplied profile or bypass PermissionService.
+            requested = requested_student_id
         if requested:
+            directory_candidates = find_student_candidates(self.store, requested)
+            authorised_candidates = [
+                entry for entry in directory_candidates
+                if self.permissions.can_view_student(target_identity, str(entry.get("student_id") or ""))
+            ]
+            # Keep the pre-filter cardinality.  A model may offer a class
+            # predicate after seeing a broad directory/context result, but a
+            # hidden predicate must not turn an otherwise ambiguous name into
+            # a writable object.  Only the separately verified pending-set
+            # confirmation below can do that for an ambiguous source set.
+            ambiguous_before_classroom_filter = len(directory_candidates) > 1
+            if (requested_class_name or requested_grade) and directory_candidates:
+                # A class/grade supplied by the model is not a selection
+                # instruction.  It is a concrete repository predicate over
+                # the candidates already authorised for this actor.  We still
+                # reject zero or multiple results below rather than guessing.
+                directory_candidates = filter_candidates_by_classroom(
+                    directory_candidates,
+                    class_name=requested_class_name,
+                    grade=requested_grade,
+                )
+                authorised_candidates = [
+                    entry for entry in directory_candidates
+                    if self.permissions.can_view_student(target_identity, str(entry.get("student_id") or ""))
+                ]
+                if not directory_candidates:
+                    return self._error(
+                        "student_classroom_not_found",
+                        "没有找到与本轮班级或年级确认一致的学生，请重新确认班级或年级。",
+                    )
+            if len(directory_candidates) > 1:
+                if not authorised_candidates:
+                    return self._error("permission_denied", "该学生不在当前账号的负责范围内。")
+                result = self._error("student_name_ambiguous", "存在同名学生，请根据班级确认后使用 student_id 查询或记录。")
+                candidates = safe_candidate_labels(authorised_candidates)
+                result["data"] = {
+                    "candidates": candidates,
+                    "no_write_performed": True,
+                }
+                remember_candidate_set(
+                    self.store,
+                    self.identity,
+                    session_key=self.session_key,
+                    object_type="student",
+                    display_name=requested,
+                    candidates=candidates,
+                    source_tool="tuoguan_query_students",
+                    source_subject_explicit=bool(requested and requested in str(raw_text or "")),
+                )
+                return result
+            if len(directory_candidates) == 1:
+                entry = directory_candidates[0]
+                if not authorised_candidates:
+                    return self._error("permission_denied", "该学生不在当前账号的负责范围内。")
+                profile = deepcopy(entry.get("profile") or {})
+                canonical_name = str(entry.get("student_name") or "")
+                canonical_id = str(entry.get("student_id") or "")
+                records = self.store.read_json("records.json", [])
+                if not isinstance(records, list):
+                    records = []
+                recent = [
+                    deepcopy(item) for item in records
+                    if isinstance(item, dict)
+                    and (
+                        (canonical_id and str(item.get("student_id") or "") == canonical_id)
+                        or (not str(item.get("student_id") or "") and str(item.get("student_name") or item.get("student") or "") == canonical_name)
+                    )
+                ]
+                recent = sorted(recent, key=_record_time, reverse=True)[:5]
+                self._write_focus(student_name=canonical_name)
+                # A query result is read evidence, not an automatic upgrade
+                # to a writable subject.  The model may search a broad list
+                # or infer a name, but it cannot turn that result into a
+                # future write target.  Only a name actually present in the
+                # trusted current turn, an already write-authorised session
+                # object, or the trusted active-task context may issue the
+                # short-lived reference consumed by ``record_student``.
+                authority_basis = ""
+                if requested_student_id and session_object_evidence and str(session_object_evidence.get("object_id") or "") == canonical_id:
+                    authority_basis = "trusted_session_object"
+                elif (
+                    not ambiguous_before_classroom_filter
+                    and requested
+                    and requested in str(raw_text or "")
+                ):
+                    authority_basis = "explicit_subject_in_trusted_turn"
+                elif self.session_key and resolve_pending_candidate_confirmation(
+                    self.store,
+                    self.identity,
+                    session_key=self.session_key,
+                    object_type="student",
+                    display_name=canonical_name,
+                    object_id=canonical_id,
+                    trusted_confirmation_text=str(raw_text or ""),
+                ):
+                    authority_basis = "trusted_pending_candidate_confirmation"
+                elif scope_reason == "active_task_student" and active_task:
+                    authority_basis = "trusted_active_task_subject"
+                object_evidence = None
+                if authority_basis:
+                    object_evidence = remember_resolved_object(
+                        self.store,
+                        self.identity,
+                        session_key=self.session_key,
+                        object_type="student",
+                        object_id=canonical_id,
+                        display_name=canonical_name,
+                        attributes={
+                            key: profile.get(key)
+                            for key in ("class_name", "class", "grade", "campus_id")
+                            if profile.get(key) not in {None, ""}
+                        },
+                        source_tool="tuoguan_query_students",
+                        write_authorized=True,
+                        authority_basis=authority_basis,
+                    )
+                payload = [{
+                    "name": canonical_name,
+                    "student_id": canonical_id,
+                    "profile": profile,
+                    "recent_records": recent,
+                }]
+                rendered_text = f"已查询到{canonical_name}的可见学生档案。"
+                return self._ok(
+                    "query_students",
+                    data={
+                        "count": 1, "result_count": 1, "result_scope": "explicit_student",
+                        "total_count": 1, "returned_count": 1, "truncated": False,
+                        "students": payload, "rendered_text": rendered_text,
+                        "business_object_evidence": object_evidence or {},
+                        # This is a read receipt, never evidence that a
+                        # student record was persisted.
+                        "render_verified": True, "writeback_verified": False,
+                        "scope_user_id": target_identity.canonical_user_id,
+                        "scope_person_name": target_identity.person_name,
+                        "scope_reason": scope_reason or "explicit_student", "query_scope": "visible",
+                        "active_task": deepcopy(active_task) if scope_reason == "active_task_student" and active_task else None,
+                    },
+                    message=rendered_text,
+                )
             students = self.store.read_json("students.json", {})
             exists = isinstance(students, dict) and requested in students
             if not exists:
@@ -1344,6 +1941,16 @@ class TuoguanToolService:
             requested_grade = _normalize_grade(grade)
             if requested_grade:
                 names = [name for name in names if requested_grade in _student_grades(visible.get(name, {}))]
+            if requested_class_name:
+                expected_class = re.sub(r"\s+", "", requested_class_name)
+                names = [
+                    student_name
+                    for student_name in names
+                    if expected_class in {
+                        re.sub(r"\s+", "", str((visible.get(student_name) or {}).get(field) or ""))
+                        for field in ("class_name", "class")
+                    }
+                ]
         # `business_signals.open_task_count` is a legacy display cache.  Never
         # return it as fact: derive the count from the authoritative tasks
         # ledger for this read instead.
@@ -1381,7 +1988,8 @@ class TuoguanToolService:
                 payload.append(student_payload(name, recent))
             rendered_text = _render_student_records(payload)
         else:
-            payload = [student_payload(name, []) for name in names[:safe_limit]]
+            page_names = names[safe_offset:safe_offset + safe_limit]
+            payload = [student_payload(name, []) for name in page_names]
             if scope == "summer":
                 title = "暑假班"
             elif scope == "regular":
@@ -1397,8 +2005,9 @@ class TuoguanToolService:
                 title = "当前可见范围内"
             if _normalize_grade(grade):
                 title += f"{grade}"
-            shown = "、".join(names[:safe_limit])
-            suffix = "等" if len(names) > safe_limit else ""
+            shown = "、".join(page_names)
+            has_more = safe_offset + len(page_names) < len(names)
+            suffix = "等" if has_more else ""
             rendered_text = f"{title}共{len(names)}名学生" + (f"：{shown}{suffix}。" if shown else "。")
             if scope == "regular" and historical:
                 rendered_text += " 当前处于新学期过渡期，这是上学期历史名单数量，不等于已确认的新学期在读人数。"
@@ -1420,11 +2029,17 @@ class TuoguanToolService:
                 "total_count": len(names),
                 "returned_count": len(payload),
                 "truncated": len(payload) < len(names),
+                "offset": safe_offset,
+                "next_offset": safe_offset + len(payload) if safe_offset + len(payload) < len(names) else None,
+                "has_more": safe_offset + len(payload) < len(names),
                 "as_of": as_of,
                 "students": payload,
                 "rendered_text": rendered_text,
                 "render_verified": True,
-                "writeback_verified": True,
+                # Listing visible students is read-only.  A model may use the
+                # returned canonical ID in a later write, but this response
+                # itself must never authorize an "already recorded" claim.
+                "writeback_verified": False,
                 "data_version": data_version,
                 "scope_user_id": target_identity.canonical_user_id,
                 "scope_person_name": target_identity.person_name,
@@ -1642,8 +2257,8 @@ class TuoguanToolService:
                 return self._error("artifact_version_mismatch", "任务必须关联当前已授权的成果版本。")
             # This rollout deliberately keeps institutional execution inside the
             # approved boss/test-teacher sandbox until the owner expands it.
-            if str(assignee_user_id) not in {"JinWenJie", "CeShi"}:
-                return self._error("institution_rollout_target_not_authorized", "当前机构制度落实灰度只允许金总和李老师测试号。")
+            if str(assignee_user_id) not in {"owner_test", "teacher_test"}:
+                return self._error("institution_rollout_target_not_authorized", "当前机构制度落实灰度只允许机构负责人和示例老师测试号。")
             if not assignee_role or assignee_role == "boss":
                 return self._error("institution_task_responsible_role_invalid", "机构落实任务必须由可信目录中的实际执行人承担，不能把老板误写成老师或执行人。")
         if goal_id:
@@ -1787,18 +2402,32 @@ class TuoguanToolService:
                         "task_id": task_id,
                         "touser": assignee_user_id,
                         "action": item["action"],
-                        "status": "queued" if item["action"] in set(queue_receipt.get("queued_actions") or []) else "queue_failed",
+                        "status": next(
+                            (
+                                str(outcome.get("delivery_state") or "not_deliverable")
+                                for outcome in (queue_receipt.get("outcomes") or [])
+                                if isinstance(outcome, dict) and str(outcome.get("action") or "") == str(item["action"])
+                            ),
+                            "not_deliverable",
+                        ),
                     }
                     for item in notifications
                 )
                 result["delivery"] = {
                     "task_created": "task_created",
-                    "notification_queued": bool(queue_receipt.get("writeback_verified")),
-                    "notification_sent": False,
-                    "delivery_status": "queued" if queue_receipt.get("writeback_verified") else "delivery_failed",
+                    "notification_queued": str(queue_receipt.get("initial_delivery_state") or "") == "pending",
+                    "notification_sent": bool(queue_receipt.get("initial_wecom_accepted")),
+                    "delivery_status": str(queue_receipt.get("initial_delivery_state") or "not_deliverable"),
+                    "delivery_reason": str(queue_receipt.get("initial_delivery_reason") or ""),
+                    "wecom_accepted": bool(queue_receipt.get("initial_wecom_accepted")),
+                    "due_reminder_state": "agenda_managed",
                     "queued_notification_ids": list(queue_receipt.get("queued_notification_ids") or []),
                 }
-                result["writeback_verified"] = bool(result.get("writeback_verified") and queue_receipt.get("writeback_verified"))
+                # Task Business Truth is its own Receipt/writeback fact.  A
+                # later channel outcome cannot turn a verified task into a
+                # failed business write, nor can a staged message prove that
+                # WeCom accepted it.
+                result["writeback_verified"] = bool(result.get("writeback_verified"))
                 focus_expires_at = (datetime.now().astimezone() + timedelta(hours=36)).isoformat(timespec="seconds")
                 self._write_focus(
                     task_id=task_id,
@@ -1819,12 +2448,15 @@ class TuoguanToolService:
                 return result
             task = result.get("task") if isinstance(result.get("task"), dict) else {}
             delivery = result.get("delivery") if isinstance(result.get("delivery"), dict) else {}
-            queued = bool(delivery.get("notification_queued"))
-            message = (
-                f"任务已建立，已安排向{assignee_name}发送提醒；目前只有入队回执，是否送达还在等待。"
-                if queued
-                else f"任务已建立，但提醒没有成功入队；我不能说{assignee_name}已经收到。"
-            )
+            delivery_state = str(delivery.get("delivery_status") or "not_deliverable")
+            delivery_reason = str(delivery.get("delivery_reason") or "")
+            if delivery_state == "delivered":
+                message = f"任务已建立，企业微信已接受向{assignee_name}发送的任务通知。"
+            elif delivery_state == "pending":
+                message = f"任务已建立；给{assignee_name}的企业微信通知已进入当前投递链路，但尚未取得企业微信接受回执。"
+            else:
+                suffix = f"原因：{delivery_reason}。" if delivery_reason else ""
+                message = f"任务已建立，但当前未创建向{assignee_name}的企业微信投递。{suffix}我不能说对方已收到。"
             return self._ok(
                 "create_task",
                 data={
@@ -1895,6 +2527,12 @@ class TuoguanToolService:
                 "dashboard_base_url_missing",
                 "托管看板外部访问地址尚未配置，请联系管理员检查 HERMES_TUOGUAN_DASHBOARD_BASE_URL。",
             )
+        route_ready, route_error = verify_public_dashboard_route(base_url)
+        if not route_ready:
+            return self._error(
+                route_error or "dashboard_route_unavailable",
+                "当前托管看板服务暂不可访问，已不发送可能失效的链接，请稍后再试。",
+            )
         try:
             refresh_dashboard_cache(self.store)
         except Exception:
@@ -1919,6 +2557,15 @@ class TuoguanToolService:
                 "role_label": role_label,
                 "expires_at": expires_at,
                 "rendered_text": rendered_text,
+                # A Tool may explicitly nominate one fully rendered external
+                # artifact when a channel must preserve opaque signed material
+                # byte-for-byte.  The Agent still decides whether to call the
+                # Tool; delivery merely preserves its already verified result.
+                "delivery_artifact": {
+                    "version": "xiaoyou.delivery-artifact.v1",
+                    "kind": "reply_text",
+                    "text": rendered_text,
+                },
                 "render_verified": True,
                 "writeback_verified": True,
             },
@@ -1936,6 +2583,7 @@ class TuoguanToolService:
         level: str = "",
         scope: str = "",
         limit: int = 20,
+        offset: int = 0,
         write_focus: bool = True,
     ) -> dict[str, Any]:
         denied = self._approved()
@@ -2022,7 +2670,8 @@ class TuoguanToolService:
                 student_name=str(tasks[0].get("student_name") or ""),
             )
         safe_limit = max(1, min(int(limit or 20), 100))
-        visible_tasks = deepcopy(tasks[:safe_limit])
+        safe_offset = max(0, int(offset or 0))
+        visible_tasks = deepcopy(tasks[safe_offset:safe_offset + safe_limit])
         task_summaries = [
             {
                 "task_id": str(task.get("id") or ""),
@@ -2071,6 +2720,9 @@ class TuoguanToolService:
                 "total_count": len(tasks),
                 "returned_count": len(visible_tasks),
                 "truncated": len(visible_tasks) < len(tasks),
+                "offset": safe_offset,
+                "next_offset": safe_offset + len(visible_tasks) if safe_offset + len(visible_tasks) < len(tasks) else None,
+                "has_more": safe_offset + len(visible_tasks) < len(tasks),
                 "as_of": as_of,
                 "status_counts": status_counts,
                 "tasks": visible_tasks,
@@ -2417,19 +3069,219 @@ class TuoguanToolService:
     def record_student(
         self,
         *,
-        student_name: str,
+        student_name: str = "",
         content: str,
         operation_id: str,
+        student_id: str = "",
+        object_ref: str = "",
+        class_name: str = "",
+        grade: str = "",
     ) -> dict[str, Any]:
         denied = self._approved()
         if denied:
             return denied
-        name = str(student_name or "").strip()
-        if not self.permissions.can_write_student_record(self.identity, name):
+        requested_student_id = str(student_id or "").strip()
+        requested_student_name = str(student_name or "").strip()
+        requested_object_ref = str(object_ref or "").strip()
+        requested_class_name = str(class_name or "").strip()
+        requested_grade = str(grade or "").strip()
+        confirmed_object: dict[str, Any] | None = None
+        # A model-provided ref or ID is never authority.  There is one safe
+        # continuation exception: the same authenticated session may already
+        # contain a source turn that explicitly named an ambiguous subject and
+        # a current source turn that uniquely confirms an original candidate.
+        # In that case this server-side evidence selects the object; any model
+        # ref/ID is merely checked against it below and cannot choose another
+        # student or invent a new target.
+        pending_confirmation: dict[str, Any] | None = None
+        if self.session_key and requested_student_name:
+            pending_confirmation = resolve_pending_candidate_confirmation(
+                self.store,
+                self.identity,
+                session_key=self.session_key,
+                object_type="student",
+                display_name=requested_student_name,
+                object_id=requested_student_id,
+                trusted_confirmation_text=self._trusted_runtime_raw_text("record_student"),
+            )
+        if requested_object_ref:
+            confirmed_object = resolve_confirmed_object(
+                self.store,
+                self.identity,
+                session_key=self.session_key,
+                object_type="student",
+                object_ref=requested_object_ref,
+                require_write_authorization=True,
+            )
+            if confirmed_object is None:
+                confirmed_object = pending_confirmation
+                if confirmed_object is None:
+                    result = self._error(
+                        "student_object_reference_invalid",
+                        "该学生会话引用无效、已过期或不属于当前身份，未执行记录。",
+                    )
+                    result["data"] = {"no_write_performed": True}
+                    return result
+        elif requested_student_id and self.session_key:
+            # An ID must be provenance-backed when it is used to continue a
+            # session.  A coincidentally valid identifier is not an authority
+            # to select a same-name student.
+            confirmed_object = resolve_confirmed_object(
+                self.store,
+                self.identity,
+                session_key=self.session_key,
+                object_type="student",
+                object_id=requested_student_id,
+                require_write_authorization=True,
+            )
+            if confirmed_object is None:
+                confirmed_object = pending_confirmation
+                if confirmed_object is None:
+                    result = self._error(
+                        "student_id_not_authorized_for_session",
+                        "该学生 ID 不是当前会话可信查询确认的对象，未执行记录。",
+                    )
+                    result["data"] = {"no_write_performed": True}
+                    return result
+        elif pending_confirmation is not None:
+            confirmed_object = pending_confirmation
+        if confirmed_object is not None:
+            evidence_id = str(confirmed_object.get("object_id") or "").strip()
+            evidence_name = str(confirmed_object.get("display_name") or "").strip()
+            if requested_student_id and requested_student_id != evidence_id:
+                result = self._error("student_object_reference_mismatch", "学生 ID 与当前会话可信对象不一致，未执行记录。")
+                result["data"] = {"no_write_performed": True}
+                return result
+            if requested_student_name and evidence_name and requested_student_name != evidence_name:
+                result = self._error("student_object_reference_mismatch", "学生姓名与当前会话可信对象不一致，未执行记录。")
+                result["data"] = {"no_write_performed": True}
+                return result
+            requested_student_id = evidence_id
+            requested_student_name = evidence_name
+        inbound_text = self._trusted_runtime_raw_text("record_student")
+        # A current task result must be returned to the task workflow before
+        # the record-specific grounding guard.  This is a tool contract and
+        # leaves the model free to choose its Tool; it prevents a genuine task
+        # result from being misreported as a generic name-grounding failure.
+        if self.identity.role == "teacher":
+            compact_inbound = "".join(str(inbound_text or "").split())
+            active_task = self._active_open_task()
+            active_student = str((active_task or {}).get("student_name") or "").strip()
+            task_result_like = any(
+                term in compact_inbound
+                for term in (
+                    "已沟通", "沟通过了", "家长说", "家长反馈", "已经处理", "处理完了",
+                    "任务完成", "完成了", "结果是", "回复说", "反馈的是", "家长态度",
+                    "开学再考虑", "续费考虑", "暂时不续", "确定续费",
+                )
+            )
+            if active_task and task_result_like and (
+                not requested_student_name or not active_student or requested_student_name == active_student
+            ):
+                result = self._error(
+                    "wrong_tool_for_active_task_update",
+                    "这条消息是当前任务的处理结果，不应另建学生记录任务。请改用 tuoguan_update_task，并把 reply 保持为老师本轮原话。",
+                )
+                result["data"] = {
+                    "suggested_tool": "tuoguan_update_task",
+                    "task_id": str(active_task.get("id") or ""),
+                    "student_name": active_student,
+                    "trusted_reply": str(inbound_text or ""),
+                    "no_write_performed": True,
+                }
+                return result
+        # A model must not select a different student from a broad directory
+        # result when the teacher did not name that child in this turn.  A
+        # continued conversation remains supported through the existing
+        # authorised ``student_id`` path below: for a same-name child the
+        # teacher must additionally give the class/grade cue in this turn.
+        # This is a write-boundary grounding check, not Robot-side parsing or
+        # intent selection, and it performs no name extraction from the text.
+        if (
+            self.session_key
+            and inbound_text
+            and requested_student_name
+            and not requested_student_id
+            and confirmed_object is None
+            and requested_student_name not in inbound_text
+        ):
+            result = self._error(
+                "student_name_not_grounded_in_turn",
+                "当前这句话没有明确该学生姓名；请先自然确认对象，或使用已授权查询返回的 student_id。",
+            )
+            result["data"] = {"no_write_performed": True}
+            return result
+        requested_reference = str(requested_student_id or requested_student_name or "").strip()
+        name, student_profile = resolve_student_for_record(
+            self.store,
+            self.identity,
+            requested_reference,
+            allow_student_id=bool(requested_student_id),
+        )
+        if not name:
+            reason_code = str(student_profile.get("reason_code") or "student_not_found")
+            messages = {
+                "student_name_ambiguous": "存在同名学生，请先查询并根据班级确认具体学生后再记录。",
+                "permission_denied": "当前账号无权记录该学生。",
+                "cross_tenant_denied": "当前账号不能记录其他租户的学生。",
+            }
+            result = self._error(reason_code, messages.get(reason_code, "没有找到可记录的学生。"))
+            if reason_code == "student_name_ambiguous":
+                result["data"] = {
+                    "candidates": list(student_profile.get("candidates") or []),
+                    "no_write_performed": True,
+                }
+            return result
+        canonical_student_id = str(student_profile.get("student_id") or "").strip()
+        if not self.permissions.can_write_student_record(self.identity, canonical_student_id):
             return self._error(
                 "permission_denied",
                 f"当前账号无权记录学生“{name}”。",
             )
+        if requested_class_name or requested_grade:
+            classroom_matches = filter_candidates_by_classroom(
+                [{
+                    "student_id": canonical_student_id,
+                    "student_name": name,
+                    "profile": student_profile,
+                }],
+                class_name=requested_class_name,
+                grade=requested_grade,
+            )
+            if not classroom_matches:
+                result = self._error(
+                    "student_classroom_mismatch",
+                    "提供的班级或年级与已确认学生不一致，未执行记录。",
+                )
+                result["data"] = {"no_write_performed": True}
+                return result
+        if requested_student_id and confirmed_object is None:
+            # A duplicate display name cannot be resolved by the model merely
+            # choosing an ID.  The teacher must provide a class/grade cue in
+            # this new turn; only then may the model pass the canonical ID it
+            # learned from an authorised Tool result.  This keeps the safety
+            # decision in the existing Tool boundary, not in Robot transport.
+            same_name_candidates = [
+                entry for entry in find_student_candidates(self.store, name, allow_identifiers=False)
+                if str(entry.get("student_name") or "") == name
+            ]
+            if len(same_name_candidates) > 1:
+                raw_confirmation = self._trusted_runtime_raw_text("record_student")
+                profile_labels = {
+                    str(student_profile.get(key) or "").strip()
+                    for key in ("class_name", "class", "grade")
+                    if str(student_profile.get(key) or "").strip()
+                }
+                if not any(label in raw_confirmation for label in profile_labels):
+                    result = self._error(
+                        "student_disambiguation_confirmation_required",
+                        "同名学生需要老师在本轮按班级或年级确认后才能记录。",
+                    )
+                    result["data"] = {
+                        "candidates": safe_candidate_labels(same_name_candidates),
+                        "no_write_performed": True,
+                    }
+                    return result
         if self.identity.role == "teacher":
             inbound_text = self._trusted_runtime_raw_text("record_student")
             compact_inbound = "".join(str(inbound_text or "").split())
@@ -2459,7 +3311,13 @@ class TuoguanToolService:
 
         def execute() -> dict[str, Any]:
             text = str(content or "").strip()
-            analysis = analyze_teacher_record(f"{name} {text}", self.store)
+            analysis = analyze_teacher_record(
+                text,
+                self.store,
+                resolved_student_name=name,
+                resolved_student_id=canonical_student_id,
+                resolved_student_profile=student_profile,
+            )
             program_id, _reason = resolve_record_program(self.store, self.identity, text)
             if not program_id:
                 return self._error("program_required", "请先说明记录属于2026暑假班还是托管班。")
@@ -2491,14 +3349,32 @@ class TuoguanToolService:
                 student_name=name,
                 task_id=str(task.get("id") or "") if isinstance(task, dict) else "",
             )
+            object_evidence = remember_resolved_object(
+                self.store,
+                self.identity,
+                session_key=self.session_key,
+                object_type="student",
+                object_id=canonical_student_id,
+                display_name=name,
+                attributes={
+                    key: student_profile.get(key)
+                    for key in ("class_name", "class", "grade", "campus_id")
+                    if student_profile.get(key) not in {None, ""}
+                },
+                source_tool="tuoguan_record_student",
+                write_authorized=True,
+                authority_basis="verified_protected_write",
+            )
             return self._ok(
                 "record_student",
                 data={
                     "record": saved_record,
                     "record_id": record_id,
+                    "student_id": canonical_student_id,
                     "task": task,
                     "task_created": bool(saved.get("created")),
                     "writeback_verified": record_verified,
+                    "business_object_evidence": object_evidence or {},
                 },
                 message=(
                     f"已记录{name}的情况。"
@@ -2520,7 +3396,7 @@ class TuoguanToolService:
         if denied:
             return denied
         if not is_summer_operator(self.store, self.identity):
-            return self._error("permission_denied", "当前账号没有暑假班课程记录权限，请联系金总确认。")
+            return self._error("permission_denied", "当前账号没有暑假班课程记录权限，请联系机构负责人确认。")
 
         def execute() -> dict[str, Any]:
             trusted_text = str(raw_text or "").strip()
@@ -3469,6 +4345,7 @@ class TuoguanToolService:
         target_role: str = "",
         source_text: str = "",
         dimension_key: str = "",
+        presentation_contract: dict[str, Any] | None = None,
         confidence: float | str = 1.0,
         source_turn_id: str = "",
     ) -> dict[str, Any]:
@@ -3492,6 +4369,7 @@ class TuoguanToolService:
                 target_role=target_role,
                 source_text=source_text,
                 dimension_key=dimension_key,
+                presentation_contract=presentation_contract,
                 confidence=confidence,
                 source_turn_id=source_turn_id,
                 operation_id=operation_id,
@@ -4155,6 +5033,36 @@ class TuoguanToolService:
         denied = self._approved()
         if denied:
             return denied
+        # A server-attested Agenda service has no inherited manager authority.
+        # Enforce this independent policy here too, so direct in-process
+        # invocation cannot widen the public Tool boundary.
+        try:
+            from .agenda_service_policy import enforce_agenda_work_item_update
+            policy_args = {
+                "operation_id": operation_id, "work_item_id": work_item_id,
+                "focus_key": focus_key, "status": status,
+                "focus_summary": focus_summary, "execution_plan": execution_plan,
+                "current_phase": current_phase, "next_actions": next_actions,
+                "progress_evidence": progress_evidence, "confirmed_facts": confirmed_facts,
+                "pending_judgements": pending_judgements, "completed_actions": completed_actions,
+                "current_waiting": current_waiting, "blocked_by": blocked_by,
+                "ask_candidates": ask_candidates, "last_human_contact_at": last_human_contact_at,
+                "next_contact_after": next_contact_after, "owner_escalation_reason": owner_escalation_reason,
+                "value_progress_note": value_progress_note, "next_attention_at": next_attention_at,
+                "stop_reason": stop_reason, "update_text": update_text,
+                "source_text": source_text, "source_message_id": source_message_id,
+            }
+            policy_denial = enforce_agenda_work_item_update(
+                service=self,
+                args={
+                    key: value for key, value in policy_args.items()
+                    if value is not None and value != "" and value != [] and value != {}
+                },
+            )
+        except Exception:
+            policy_denial = {"ok": False, "error": "agenda_service_policy_unavailable", "message": "后台服务策略不可用，本轮未执行。", "data": {}}
+        if policy_denial is not None:
+            return policy_denial
         def execute() -> dict[str, Any]:
             result = update_hermes_work_item(
                 self.store,
@@ -4490,15 +5398,56 @@ class TuoguanToolService:
             return self._error("relationship_touch_parent_disabled", "当前阶段小优不能主动联系家长。")
 
         def execute() -> dict[str, Any]:
-            policy = relationship_touch_policy(self.store)
-            role_policy = policy.get(role) if isinstance(policy.get(role), dict) else {}
-            mode = str(role_policy.get("mode") or "candidate").strip()
-            allowed_user_ids = {
-                str(item).strip()
-                for item in (role_policy.get("allowed_target_user_ids") or [])
-                if str(item).strip()
-            }
             target = str(target_user_id or "").strip()
+            resolved_target_name = str(target_name or "").strip()
+            if not target:
+                if not resolved_target_name:
+                    return self._error(
+                        "relationship_touch_target_required",
+                        "请先用当前人员目录确定唯一联系人；本轮没有创建候选或投递。",
+                    )
+                directory = build_staff_directory_report(
+                    self.store,
+                    query=resolved_target_name,
+                    role=role,
+                    include_inactive=False,
+                    limit=5,
+                )
+                matches = [
+                    row for row in (directory.get("staff") or [])
+                    if isinstance(row, dict)
+                    and str(row.get("role") or "") == role
+                    and resolved_target_name in {
+                        str(row.get("business_name") or ""),
+                        str(row.get("staff_name") or ""),
+                        str(row.get("directory_name") or ""),
+                        *{str(alias) for alias in (row.get("known_aliases") or [])},
+                    }
+                ]
+                if len(matches) != 1:
+                    return self._error(
+                        "relationship_touch_target_ambiguous" if matches else "relationship_touch_target_not_found",
+                        "当前人员目录无法唯一确认这位联系人，请先查询人员目录后再发送；本轮没有创建候选或投递。",
+                    )
+                target = str(matches[0].get("user_id") or "").strip()
+                resolved_target_name = str(matches[0].get("business_name") or resolved_target_name)
+            active_target = build_staff_directory_report(
+                self.store,
+                query=target,
+                role=role,
+                include_inactive=False,
+                limit=5,
+            )
+            if not any(
+                isinstance(row, dict)
+                and str(row.get("user_id") or "") == target
+                and bool(row.get("is_active_staff"))
+                for row in (active_target.get("staff") or [])
+            ):
+                return self._error(
+                    "relationship_touch_target_identity_unconfirmed",
+                    "当前联系人尚未形成有效的正式业务身份绑定；本轮没有创建候选或投递。",
+                )
             task_ref = str(related_task_id or "").strip()
             if not task_ref and str(action_type or "") in {"ask_task_fact", "ask_task_result", "task_companion_followup"}:
                 focus_task_id = str(self._read_focus().get("task_id") or "")
@@ -4527,13 +5476,24 @@ class TuoguanToolService:
                         "active_task_reference_required",
                         "这是任务内追问，但当前无法唯一确定任务。请先查询任务并传 related_task_id，不能把它当普通主动消息发送。",
                     )
-            # Direct staff outreach is a test-only privilege and therefore
-            # requires an explicit non-empty allowlist. An empty list must fail
-            # closed instead of silently meaning "all staff".
-            allowed_by_whitelist = role == "boss" or bool(
-                target and allowed_user_ids and target in allowed_user_ids
-            )
-            external_send_allowed = bool(mode == "direct" and allowed_by_whitelist)
+            # Recipient eligibility is one current Runtime fact: the active
+            # institution grant plus a trusted, effective WeCom binding.  The
+            # retired relationship-touch test allowlist is intentionally not
+            # consulted here and cannot contradict this authoritative result.
+            try:
+                from .proactive_delivery_authority import ProactiveDeliveryAuthority
+                from .work_runtime import ReplyDestination
+
+                authority = ProactiveDeliveryAuthority(self.store.data_dir)
+                decision = authority.decide(ReplyDestination(
+                    tenant_id=str(current_tenant_id() or ""),
+                    channel="wecom_callback",
+                    recipient_id=target,
+                    source_identity="relationship_touch:" + str(current_tenant_id() or ""),
+                ))
+            except Exception:
+                decision = None
+            external_send_allowed = bool(decision is not None and decision.allowed)
             requires_authorization = not external_send_allowed
             status = "candidate"
             result = submit_relationship_touch_candidate(
@@ -4545,7 +5505,7 @@ class TuoguanToolService:
                 reason=reason,
                 operation_id=operation_id,
                 target_user_id=target,
-                target_name=target_name,
+                target_name=resolved_target_name,
                 value=value,
                 work_related=work_related,
                 private_emotional_support=private_emotional_support,
@@ -4565,10 +5525,11 @@ class TuoguanToolService:
                 return result
             data = {
                 **result,
-                "relationship_touch_policy": policy,
-                "target_allowed_by_test_whitelist": allowed_by_whitelist,
-                "external_send_allowed_by_policy": external_send_allowed,
-                "policy_mode": mode,
+                "current_institutional_delivery_authority": {
+                    "allowed": external_send_allowed,
+                    "reason": str(getattr(decision, "reason", "institutional_proactive_authority_unavailable")),
+                    "recipient_role": str(getattr(decision, "recipient_role", "")),
+                },
             }
             if external_send_allowed and execute_if_authorized:
                 candidate_id = str((result.get("candidate") or {}).get("candidate_id") or "")
@@ -4585,11 +5546,11 @@ class TuoguanToolService:
                         str(execution.get("message") or "主动候选已保存，但没有进入发送队列。"),
                     )
             message_text = (
-                "主动联系已安排发送；当前只有入队回执，尚不能声称对方已经收到。"
+                "主动联系已进入当前投递链路；尚未取得企业微信接受回执，不能声称对方已经收到。"
                 if external_send_allowed and execute_if_authorized
-                else "已保存可主动触达候选；当前测试白名单允许该对象进入外发候选。"
+                else "已保存可主动触达候选；该对象当前满足机构级主动外发资格，是否实际发送仍取决于后续执行回执。"
                 if external_send_allowed
-                else "已保存内部候选；该对象不在当前直接主动外发范围内，不会真实外发。"
+                else "已保存内部候选；当前未创建外发投递。实际原因已在可信执行结果中记录。"
             )
             return self._ok("submit_relationship_touch_candidate", data=data, message=message_text)
 
@@ -4607,7 +5568,24 @@ class TuoguanToolService:
         )
         if not result.get("ok"):
             return self._error(str(result.get("error") or "authorization_query_failed"), str(result.get("message") or "主动授权查询失败。"))
-        return self._ok("query_proactive_authorizations", data=result, message=str(result.get("rendered_text") or ""))
+        # The historical candidate ledger remains read-only audit material.
+        # Current Work Runtime delivery authority is a separate, durable fact;
+        # include it so a normal WeCom conversation cannot wrongly report
+        # "outbound not enabled" after the owner has granted it.
+        try:
+            from .proactive_delivery_authority import ProactiveDeliveryAuthority
+
+            current_delivery = ProactiveDeliveryAuthority(self.store.data_dir).status(
+                tenant_id=current_tenant_id()
+            )
+        except Exception:
+            current_delivery = {"active": False, "unavailable": True}
+        merged = {**result, "current_work_runtime_delivery_authority": current_delivery}
+        if current_delivery.get("active"):
+            message = "当前机构级主动企业微信授权已生效；小优只能向当前可信、有效且在其角色与数据范围内的工作人员主动发送工作消息。"
+        else:
+            message = str(result.get("rendered_text") or "")
+        return self._ok("query_proactive_authorizations", data=merged, message=message)
 
     def submit_proactive_authorization(
         self,

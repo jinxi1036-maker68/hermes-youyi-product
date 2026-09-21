@@ -26,8 +26,8 @@ def _seed_store(tmp_path: Path):
         "wecom_whitelist.json",
         {"super_users": ["boss1"], "allowed_users": ["teacher1"], "user_roles": {"boss1": "boss", "teacher1": "teacher"}},
     )
-    _write_json(tmp_path, "teacher_wecom_map.json", {"金总": "boss1", "李老师": "teacher1"})
-    _write_json(tmp_path, "staff.json", {"teacher1": {"name": "李老师", "role": "teacher"}})
+    _write_json(tmp_path, "teacher_wecom_map.json", {"机构负责人": "boss1", "示例老师": "teacher1"})
+    _write_json(tmp_path, "staff.json", {"teacher1": {"name": "示例老师", "role": "teacher"}})
     _write_json(tmp_path, "students.json", {})
     _write_json(tmp_path, "tasks.json", [])
     _write_json(tmp_path, "notification_outbox.json", [])
@@ -38,13 +38,13 @@ def _seed_store(tmp_path: Path):
         [
             {
                 "work_item_id": "work-1",
-                "tenant_id": "youyi_tuoguan",
+                "tenant_id": "example_institution",
                 "record_type": "work_item",
                 "status": "waiting",
                 "focus_key": "renewal:sept",
                 "title": "九月续费稳定性",
-                "focus_summary": "等李老师补充事实。",
-                "current_waiting": {"target_user_id": "teacher1", "target_person": "李老师", "reason": "等老师回复"},
+                "focus_summary": "等示例老师补充事实。",
+                "current_waiting": {"target_user_id": "teacher1", "target_person": "示例老师", "reason": "等老师回复"},
                 "next_attention_at": "2026-07-28T08:00:00+00:00",
                 "created_at": "2026-07-27T08:00:00+00:00",
                 "updated_at": "2026-07-27T08:00:00+00:00",
@@ -121,7 +121,7 @@ def test_autonomous_wakeup_does_not_resurface_stale_or_retired_work(tmp_path):
         handle.write(json.dumps({
             "record_type": "work_item",
             "work_item_id": "work-retired",
-            "tenant_id": "youyi_tuoguan",
+            "tenant_id": "example_institution",
             "status": "active",
             "focus_key": "task:merged",
             "title": "已合并旧事项",
@@ -173,7 +173,7 @@ def test_wakeup_report_states_actual_external_effects_and_formal_authorization_b
                     "kind": "relationship_touch_execution",
                     "delivery_state": "queued",
                     "target_role": "teacher",
-                    "target_user_id": "CeShi",
+                    "target_user_id": "teacher_test",
                 }],
                 "decision": {
                     "employee_summary": "小优完成本轮判断。",

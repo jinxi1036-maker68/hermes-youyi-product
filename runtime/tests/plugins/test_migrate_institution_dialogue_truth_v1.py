@@ -22,8 +22,8 @@ def test_dialogue_truth_migration_requires_real_owner_review_and_never_sends(tmp
     from scripts.migrate_institution_dialogue_truth_v1 import migrate
 
     _json(tmp_path, "write_guard_config.json", {"enabled": True})
-    _json(tmp_path, "wecom_whitelist.json", {"super_users": ["JinWenJie"], "user_roles": {"JinWenJie": "boss"}})
-    _json(tmp_path, "teacher_wecom_map.json", {"金总": "JinWenJie"})
+    _json(tmp_path, "wecom_whitelist.json", {"super_users": ["owner_test"], "user_roles": {"owner_test": "boss"}})
+    _json(tmp_path, "teacher_wecom_map.json", {"机构负责人": "owner_test"})
     _json(tmp_path, "students.json", {})
     _json(tmp_path, "records.json", [])
     _json(tmp_path, "tasks.json", [])
@@ -32,7 +32,7 @@ def test_dialogue_truth_migration_requires_real_owner_review_and_never_sends(tmp
         json.dumps({
             "record_type": "work_item",
             "work_item_id": "legacy-umbrella",
-            "tenant_id": "youyi_tuoguan",
+            "tenant_id": "example_institution",
             "work_kind": "institution_change",
             "institution_stage": "discovered",
             "focus_key": "institution:operating_rules_missing",
@@ -62,7 +62,7 @@ def test_dialogue_truth_migration_requires_real_owner_review_and_never_sends(tmp
     assert _json_text(tmp_path, "tasks.json") == "[]"
 
     store = TuoguanStore(tmp_path)
-    boss = UserIdentity("test", "JinWenJie", "JinWenJie", "金总", "boss", "approved")
+    boss = UserIdentity("test", "owner_test", "owner_test", "机构负责人", "boss", "approved")
     work = query_institution_work(store, identity=boss, include_closed=True, limit=20)["items"]
     by_focus = {item["focus_key"]: item for item in work}
     assert by_focus["institution:student_record_policy"]["institution_stage"] == "awaiting_content_approval"

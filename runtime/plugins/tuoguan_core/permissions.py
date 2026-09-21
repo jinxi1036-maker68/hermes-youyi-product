@@ -5,6 +5,7 @@ from __future__ import annotations
 from .models import UserIdentity
 from .programs import can_access_program, item_program_id, student_program_ids
 from .store import TuoguanStore
+from .student_directory import find_student_candidates
 
 
 class PermissionService:
@@ -12,11 +13,13 @@ class PermissionService:
         self.store = store
 
     def _student(self, student_name: str) -> dict:
-        students = self.store.read_json("students.json", {})
-        if not isinstance(students, dict):
+        candidates = find_student_candidates(self.store, student_name)
+        # A display name with more than one repository identity is never a
+        # valid authorisation target.  The caller must obtain a specific ID.
+        if len(candidates) != 1:
             return {}
-        student = students.get(student_name)
-        return student if isinstance(student, dict) else {}
+        profile = candidates[0].get("profile")
+        return profile if isinstance(profile, dict) else {}
 
     def can_view_student(self, identity: UserIdentity, student_name: str) -> bool:
         if identity.approval_state != "approved":

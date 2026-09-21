@@ -63,11 +63,11 @@ def _seed_store(tmp_path, *, student_count: int = 100, affected_count: int = 12,
     store.write_json("records.json", records)
     store.write_json("tasks.json", [])
     store.write_json("wecom_whitelist.json", {
-        "super_users": ["JinWenJie"],
-        "allowed_users": ["CeShi"],
-        "user_roles": {"JinWenJie": "boss", "CeShi": "teacher"},
+        "super_users": ["owner_test"],
+        "allowed_users": ["teacher_test"],
+        "user_roles": {"owner_test": "boss", "teacher_test": "teacher"},
     })
-    store.write_json("teacher_wecom_map.json", {"金总": "JinWenJie", "李老师": "CeShi"})
+    store.write_json("teacher_wecom_map.json", {"机构负责人": "owner_test", "示例老师": "teacher_test"})
     return store
 
 
@@ -205,7 +205,7 @@ def test_dismissed_candidate_obeys_30_day_cooldown(tmp_path):
             store,
             opportunity_id=created["candidate"]["opportunity_id"],
             decision="dismiss",
-            actor_user_id="JinWenJie",
+            actor_user_id="owner_test",
             operation_id="dismiss-1",
             now=NOW,
         )
@@ -300,8 +300,8 @@ def test_tools_are_owner_only_and_review_has_verified_receipt(tmp_path):
             operation_id="tool-visible-opportunity",
             now=NOW,
         )
-    boss = TuoguanToolService(store, platform="wecom_callback", user_id="JinWenJie", user_name="金总")
-    teacher = TuoguanToolService(store, platform="wecom_callback", user_id="CeShi", user_name="李老师")
+    boss = TuoguanToolService(store, platform="wecom_callback", user_id="owner_test", user_name="机构负责人")
+    teacher = TuoguanToolService(store, platform="wecom_callback", user_id="teacher_test", user_name="示例老师")
     assert boss.query_project_opportunities()["ok"] is True
     denied = teacher.query_project_opportunities()
     assert denied["ok"] is False

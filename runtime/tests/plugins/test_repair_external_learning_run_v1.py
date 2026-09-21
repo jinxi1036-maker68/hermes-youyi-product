@@ -58,7 +58,7 @@ def test_quarantine_invalid_external_run_preserves_history_and_hides_active_cont
     assert result["ok"] is True
     assert result["writeback_verified"] is True
     assert len(store.path_for("external_research_runs.jsonl").read_text(encoding="utf-8").splitlines()) == 1
-    identity = UserIdentity("wecom", "boss1", "boss1", "金总", "boss", "approved")
+    identity = UserIdentity("wecom", "boss1", "boss1", "机构负责人", "boss", "approved")
     assert query_industry_learning_candidates(store, identity=identity)["candidate_count"] == 0
     pending = store.read_json("pending_knowledge.json", [])
     assert pending[0]["status"] == "quarantined"

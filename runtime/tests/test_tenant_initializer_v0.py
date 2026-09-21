@@ -7,7 +7,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[2]
 SCRIPT = ROOT / "scripts" / "tenant_initializer.py"
 DEMO_PROFILE = ROOT / "work" / "commercialization" / "demo_tenant_profile.json"
-FORBIDDEN = ("优益", "金总", "李老师", "JinWenJie", "youyi_tuoguan", "九月份续费率")
+FORBIDDEN = ("示例机构", "机构负责人", "示例老师", "owner_test", "example_institution", "九月份续费率")
 
 
 def run_initializer(tmp_path: Path, *extra: str) -> subprocess.CompletedProcess[str]:
@@ -96,7 +96,7 @@ def test_tenant_initializer_generates_clean_demo_tenant(tmp_path):
 def test_tenant_initializer_rejects_forbidden_profile(tmp_path):
     bad_profile = tmp_path / "bad_profile.json"
     data = json.loads(DEMO_PROFILE.read_text(encoding="utf-8"))
-    data["tenant"]["institution_name"] = "优益旧资料"
+    data["tenant"]["institution_name"] = "示例机构旧资料"
     bad_profile.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
 
     result = subprocess.run(

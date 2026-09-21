@@ -8,7 +8,7 @@ def test_shared_memory_sanitizer_archives_personal_memory_before_replacement(tmp
 
     memory = tmp_path / "memories" / "MEMORY.md"
     memory.parent.mkdir()
-    original = "金总是老板。\n§\n李老师偏好五点后提醒。\n"
+    original = "机构负责人是老板。\n§\n示例老师偏好五点后提醒。\n"
     memory.write_text(original, encoding="utf-8")
     archive = tmp_path / "archive"
 

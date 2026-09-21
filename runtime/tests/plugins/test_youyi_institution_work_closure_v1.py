@@ -16,14 +16,14 @@ def _store(tmp_path: Path):
     # bypassed in production.
     _json(tmp_path, "write_guard_config.json", {"enabled": False})
     _json(tmp_path, "wecom_whitelist.json", {
-        "super_users": ["JinWenJie"],
-        "allowed_users": ["CeShi"],
-        "user_roles": {"JinWenJie": "boss", "CeShi": "teacher"},
+        "super_users": ["owner_test"],
+        "allowed_users": ["teacher_test"],
+        "user_roles": {"owner_test": "boss", "teacher_test": "teacher"},
     })
-    _json(tmp_path, "teacher_wecom_map.json", {"金总": "JinWenJie", "李老师": "CeShi"})
+    _json(tmp_path, "teacher_wecom_map.json", {"机构负责人": "owner_test", "示例老师": "teacher_test"})
     _json(tmp_path, "staff.json", {
-        "JinWenJie": {"name": "金总", "role": "boss", "status": "active"},
-        "CeShi": {"name": "李老师", "role": "teacher", "status": "active"},
+        "owner_test": {"name": "机构负责人", "role": "boss", "status": "active"},
+        "teacher_test": {"name": "示例老师", "role": "teacher", "status": "active"},
     })
     _json(tmp_path, "tasks.json", [])
     _json(tmp_path, "notification_outbox.json", [])
@@ -33,7 +33,7 @@ def _store(tmp_path: Path):
 def _boss():
     from plugins.tuoguan_core.models import UserIdentity
 
-    return UserIdentity("test", "JinWenJie", "JinWenJie", "金总", "boss", "approved")
+    return UserIdentity("test", "owner_test", "owner_test", "机构负责人", "boss", "approved")
 
 
 def _safety_chain(store, *, content_source: str = "owner-message-content", authorization_source: str = "owner-message-authorization"):
@@ -45,7 +45,7 @@ def _safety_chain(store, *, content_source: str = "owner-message-content", autho
         action="discover",
         operation_id="discover-safety",
         focus_key="institution:safety_management_policy",
-        title="优益托管安全管理制度",
+        title="示例机构托管安全管理制度",
         summary="需要把现有安全做法整理为可复核草案。",
         evidence=[{"source_kind": "internal_confirmed", "summary": "家长在机构门口接孩子；发生伤情需通知家长。"}],
         source_message_id="owner-message-discover",
@@ -58,7 +58,7 @@ def _safety_chain(store, *, content_source: str = "owner-message-content", autho
         action="save_draft",
         operation_id="draft-safety",
         work_item_id=work_item["work_item_id"],
-        artifact_title="优益托管安全管理制度 V0.1",
+        artifact_title="示例机构托管安全管理制度 V0.1",
         artifact_content="家长在机构门口接孩子；发生伤情需通知家长。留样时长待专业核验。",
         pending_items=["留样时长和标准待官方来源或专业人员核验"],
         source_message_id="owner-message-draft",
@@ -114,7 +114,7 @@ def test_institution_work_requires_two_owner_decisions_and_real_execution_link(t
         operation_id="authorize-safety",
         work_item_id=work_item_id,
         artifact_version_id=version_id,
-        implementation_scope={"targets": ["CeShi"], "boundary": "仅测试号"},
+        implementation_scope={"targets": ["teacher_test"], "boundary": "仅测试号"},
         source_message_id=authorization_source,
     )
     assert authorization["ok"] and authorization["writeback_verified"]
@@ -194,7 +194,7 @@ def test_institution_drafts_are_hidden_from_teacher_until_effective(tmp_path):
 
     store = _store(tmp_path)
     _safety_chain(store)
-    teacher = UserIdentity("test", "CeShi", "CeShi", "李老师", "teacher", "approved")
+    teacher = UserIdentity("test", "teacher_test", "teacher_test", "示例老师", "teacher", "approved")
     assert query_institution_work(store, identity=teacher)["items"] == []
 
 
@@ -206,8 +206,8 @@ def test_institution_drafts_do_not_leak_through_generic_work_or_manager_dashboar
     store = _store(tmp_path)
     _safety_chain(store)
     _json(tmp_path, "staff.json", {
-        "JinWenJie": {"name": "金总", "role": "boss", "status": "active"},
-        "CeShi": {"name": "李老师", "role": "teacher", "status": "active"},
+        "owner_test": {"name": "机构负责人", "role": "boss", "status": "active"},
+        "teacher_test": {"name": "示例老师", "role": "teacher", "status": "active"},
         "manager1": {"name": "崔老师", "role": "manager", "status": "active"},
     })
     manager = UserIdentity("test", "manager1", "manager1", "崔老师", "manager", "approved")
@@ -218,12 +218,12 @@ def test_institution_drafts_do_not_leak_through_generic_work_or_manager_dashboar
     snapshot = build_dashboard_snapshot(store)
     assert "manager1" in snapshot["manager_dashboards"]
     manager_text = json.dumps(snapshot["manager_dashboards"].get("manager1", {}), ensure_ascii=False)
-    teacher_text = json.dumps(snapshot["teacher_dashboards"].get("CeShi", {}), ensure_ascii=False)
+    teacher_text = json.dumps(snapshot["teacher_dashboards"].get("teacher_test", {}), ensure_ascii=False)
     boss_text = json.dumps(snapshot["boss_dashboard"], ensure_ascii=False)
 
-    assert "优益托管安全管理制度 V0.1" not in manager_text
-    assert "优益托管安全管理制度 V0.1" not in teacher_text
-    assert "优益托管安全管理制度 V0.1" in boss_text
+    assert "示例机构托管安全管理制度 V0.1" not in manager_text
+    assert "示例机构托管安全管理制度 V0.1" not in teacher_text
+    assert "示例机构托管安全管理制度 V0.1" in boss_text
 
 
 def test_interaction_pacing_is_its_own_workstyle_dimension():

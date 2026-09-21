@@ -18,9 +18,9 @@ def test_business_due_parser_respects_explicit_date_and_daypart():
 
     now = datetime(2026, 8, 9, 18, 0, tzinfo=timezone(timedelta(hours=8)))
 
-    assert parse_business_due_at("8月9号晚上跟小金家长沟通", now=now) == "2026-08-09T20:00:00+08:00"
+    assert parse_business_due_at("8月9号晚上跟学生丙家长沟通", now=now) == "2026-08-09T20:00:00+08:00"
     assert parse_business_due_at("明天早上8点汇报沟通结果", now=now) == "2026-08-10T08:00:00+08:00"
-    assert parse_business_due_at("两小时后提醒李老师", now=now) == "2026-08-09T20:00:00+08:00"
+    assert parse_business_due_at("两小时后提醒示例老师", now=now) == "2026-08-09T20:00:00+08:00"
 
 
 def test_temporal_context_ignores_stale_task_focus_and_blocks_bedtime_language(tmp_path):
@@ -57,14 +57,14 @@ def test_temporal_context_ignores_stale_task_focus_and_blocks_bedtime_language(t
         {
             "agent:main:wecom_callback:dm:corp1:teacher1": {
                 "task_id": "task_old",
-                "student_name": "小金",
+                "student_name": "学生丙",
                 "focus_source": "explicit_task_interaction",
                 "focus_expires_at": "2026-08-09T18:34:00+08:00",
             }
         },
     )
     store = TuoguanStore(tmp_path)
-    identity = UserIdentity("wecom", "teacher1", "teacher1", "李老师", "teacher", "approved")
+    identity = UserIdentity("wecom", "teacher1", "teacher1", "示例老师", "teacher", "approved")
     now = datetime(2026, 8, 9, 18, 0, tzinfo=timezone(timedelta(hours=8)))
 
     context = build_temporal_grounding_context(
@@ -100,7 +100,7 @@ def test_pre_llm_injects_temporal_grounding_for_generic_task_completion(tmp_path
         {"teacher1": {"task_id": "task_old", "expires_at": "2026-08-11T20:00:00+08:00"}},
     )
     store = TuoguanStore(tmp_path)
-    identity = UserIdentity("wecom", "teacher1", "teacher1", "李老师", "teacher", "approved")
+    identity = UserIdentity("wecom", "teacher1", "teacher1", "示例老师", "teacher", "approved")
     fake_router = SimpleNamespace(
         store=store,
         identities=SimpleNamespace(resolve=lambda *args, **kwargs: identity),
@@ -126,7 +126,7 @@ def test_unverified_task_completion_claim_is_sanitized_without_tool():
 
     reply = (
         "任务正式闭环了！状态已更新为\"已完成\"，不会再给你发提醒了。\n"
-        "小金家长沟通记录已存档，小金档案已更新，可以安心睡觉了，晚安李老师。"
+        "学生丙家长沟通记录已存档，学生丙档案已更新，可以安心睡觉了，晚安示例老师。"
     )
 
     sanitized = _sanitize_external_reply(

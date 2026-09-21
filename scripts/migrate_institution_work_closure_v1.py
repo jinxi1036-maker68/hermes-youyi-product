@@ -222,7 +222,7 @@ def _migrate_workstyle(store: TuoguanStore, *, stamp: str) -> dict[str, Any]:
     mismatch_ids = {str(row.get("preference_id") or "") for row in mismatches if str(row.get("preference_id") or "")}
     existing_pacing = any(
         str(row.get("record_type") or "") == "person_workstyle_preference"
-        and str(row.get("target_user_id") or "") == "JinWenJie"
+        and str(row.get("target_user_id") or "") == "owner_test"
         and str(row.get("dimension_key") or "") == "interaction_pacing"
         and str(row.get("status") or "active") == "active"
         for row in source_rows
@@ -244,8 +244,8 @@ def _migrate_workstyle(store: TuoguanStore, *, stamp: str) -> dict[str, Any]:
             "record_type": "person_workstyle_preference",
             "preference_id": pacing_id,
             "tenant_id": current_tenant_id(),
-            "target_user_id": "JinWenJie",
-            "target_name": "金总",
+            "target_user_id": "owner_test",
+            "target_name": "机构负责人",
             "target_role": "boss",
             "preference_type": "other_low_risk",
             "scope": "all_communication",
@@ -266,7 +266,7 @@ def _create_or_reuse_safety_v01(store: TuoguanStore, *, stamp: str) -> dict[str,
     if item is None:
         discovered = advance_institution_work(
             store, identity=identity, action="discover", operation_id=f"migration:safety:discover:{stamp}",
-            focus_key=SAFETY_FOCUS, title="优益托管安全管理制度", summary="将已确认安全做法整理为待重新审核的 V0.1 草案。",
+            focus_key=SAFETY_FOCUS, title="示例机构托管安全管理制度", summary="将已确认安全做法整理为待重新审核的 V0.1 草案。",
             evidence=[{"source_kind": "internal_confirmed", "summary": text, "source_message_id": "historical_owner_safety_dialogue"} for text in CONFIRMED_FACTS],
             source_text="历史安全制度对话迁移：仅保存老板已明确说明的机构事实。",
             source_message_id="historical_owner_safety_dialogue",
@@ -278,7 +278,7 @@ def _create_or_reuse_safety_v01(store: TuoguanStore, *, stamp: str) -> dict[str,
     v01 = next((row for row in versions if isinstance(row, dict) and str(row.get("title") or "").endswith("V0.1")), None)
     if v01 is None:
         content = "\n".join([
-            "优益托管安全管理制度 V0.1（待重新审核）",
+            "示例机构托管安全管理制度 V0.1（待重新审核）",
             "已确认机构做法：",
             *[f"- {fact}" for fact in CONFIRMED_FACTS],
             "待专业核验，不纳入生效版本：",
@@ -286,7 +286,7 @@ def _create_or_reuse_safety_v01(store: TuoguanStore, *, stamp: str) -> dict[str,
         ])
         drafted = advance_institution_work(
             store, identity=identity, action="save_draft", operation_id=f"migration:safety:draft:{stamp}",
-            work_item_id=str(item.get("work_item_id") or ""), artifact_title="优益托管安全管理制度 V0.1", artifact_content=content,
+            work_item_id=str(item.get("work_item_id") or ""), artifact_title="示例机构托管安全管理制度 V0.1", artifact_content=content,
             pending_items=PENDING_ITEMS, source_text="历史安全制度对话迁移：V0.1待重新审核。", source_message_id="historical_owner_safety_dialogue",
         )
         if not drafted.get("ok"):

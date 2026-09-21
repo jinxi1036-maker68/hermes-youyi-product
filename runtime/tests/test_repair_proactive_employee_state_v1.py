@@ -24,15 +24,15 @@ def test_repair_is_append_only_and_converts_authorization_semantics(tmp_path):
     _write_json(
         tmp_path,
         "goal_operator_goals.json",
-        {"goals": [{"goal_id": "goal1", "status": "confirmed", "goal_text": "提高续费稳定性", "owner_user_id": "JinWenJie"}]},
+        {"goals": [{"goal_id": "goal1", "status": "confirmed", "goal_text": "提高续费稳定性", "owner_user_id": "owner_test"}]},
     )
     _write_json(
         tmp_path,
         "wecom_whitelist.json",
         {
-            "super_users": ["JinWenJie"],
-            "allowed_users": ["JinWenJie", "CeShi"],
-            "user_roles": {"JinWenJie": "boss", "CeShi": "teacher"},
+            "super_users": ["owner_test"],
+            "allowed_users": ["owner_test", "teacher_test"],
+            "user_roles": {"owner_test": "boss", "teacher_test": "teacher"},
         },
     )
     _write_jsonl(
@@ -41,8 +41,8 @@ def test_repair_is_append_only_and_converts_authorization_semantics(tmp_path):
         [{
             "candidate_id": "relationship_touch_old",
             "target_role": "teacher",
-            "target_user_id": "CeShi",
-            "message": "李老师，请确认一项记录。",
+            "target_user_id": "teacher_test",
+            "message": "示例老师，请确认一项记录。",
             "reason": "旧候选",
             "status": "candidate",
             "created_at": "2026-08-13T15:09:00+08:00",
@@ -54,7 +54,7 @@ def test_repair_is_append_only_and_converts_authorization_semantics(tmp_path):
         [{
             "record_type": "person_workstyle_preference",
             "preference_id": "pref_wrong_tone",
-            "target_user_id": "JinWenJie",
+            "target_user_id": "owner_test",
             "scope": "all_communication",
             "dimension_key": "tone",
             "status": "active",
@@ -72,7 +72,7 @@ def test_repair_is_append_only_and_converts_authorization_semantics(tmp_path):
             "title": "目标推进",
             "focus_summary": "旧等待",
             "status": "active",
-            "current_waiting": {"reason": "等待李老师全名和看板获取方式"},
+            "current_waiting": {"reason": "等待示例老师全名和看板获取方式"},
             "created_at": "2026-08-13T12:00:00+08:00",
         }],
     )
@@ -107,12 +107,12 @@ def test_repair_is_append_only_and_converts_authorization_semantics(tmp_path):
     assert touch_rows[-1]["status"] == "superseded"
     preference = query_person_workstyle_profile(
         store,
-        identity=UserIdentity("wecom_callback", "JinWenJie", "JinWenJie", "金总", "boss", "approved"),
-        target_user_id="JinWenJie",
+        identity=UserIdentity("wecom_callback", "owner_test", "owner_test", "机构负责人", "boss", "approved"),
+        target_user_id="owner_test",
     )
     assert preference["preference_count"] == 0
     auth_rows = (tmp_path / "proactive_authorizations.jsonl").read_text(encoding="utf-8")
-    assert "CeShi" in auth_rows and "JinWenJie" in auth_rows
+    assert "teacher_test" in auth_rows and "owner_test" in auth_rows
     action_rows = (tmp_path / "goal_actions.jsonl").read_text(encoding="utf-8")
     assert "goal1" in action_rows
     assert "query_internal_data" in action_rows

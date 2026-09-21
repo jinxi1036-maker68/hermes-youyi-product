@@ -21,8 +21,8 @@ def _seed_dashboard_store(tmp_path: Path):
     from plugins.tuoguan_core.store import TuoguanStore
 
     _write_json(tmp_path, "write_guard_config.json", {"enabled": True})
-    _write_json(tmp_path, "teacher_wecom_map.json", {"李老师": "teacher1", "金总": "JinWenJie"})
-    _write_json(tmp_path, "wecom_whitelist.json", {"super_users": ["JinWenJie"], "allowed_users": ["teacher1"], "user_roles": {"JinWenJie": "boss", "teacher1": "teacher"}})
+    _write_json(tmp_path, "teacher_wecom_map.json", {"示例老师": "teacher1", "机构负责人": "owner_test"})
+    _write_json(tmp_path, "wecom_whitelist.json", {"super_users": ["owner_test"], "allowed_users": ["teacher1"], "user_roles": {"owner_test": "boss", "teacher1": "teacher"}})
     _write_json(tmp_path, "students.json", {"小明": {"teacher": "teacher1", "status": "active", "program_ids": ["regular_tuoguan"]}})
     _write_json(tmp_path, "tasks.json", [])
     _write_json(tmp_path, "task_closure_events.json", [])
@@ -35,7 +35,7 @@ def _seed_dashboard_store(tmp_path: Path):
             "created_at": "2026-07-30T21:00:07+08:00",
         }
     ])
-    _write_json(tmp_path, "payroll_rules.json", {"people": {"teacher1": {"name": "李老师", "position": "part_time"}}})
+    _write_json(tmp_path, "payroll_rules.json", {"people": {"teacher1": {"name": "示例老师", "position": "part_time"}}})
     _write_json(tmp_path, "records.json", [
         {
             "student_name": "小明",
@@ -62,7 +62,7 @@ def _seed_dashboard_store(tmp_path: Path):
         {
             "attention_id": "att1",
             "focus_key": "goal:sept_renewal",
-            "target_user_id": "JinWenJie",
+            "target_user_id": "owner_test",
             "question_text": "请确认优先抓价格、转校、等开学哪一类。",
             "status": "sent",
             "created_at": "2026-07-30T11:00:00+08:00",
@@ -144,8 +144,8 @@ def test_dashboard_v2_uses_folded_latest_state_and_never_resurrects_old_events(t
             "record_type": "attention_thread",
             "attention_id": "att1",
             "focus_key": "goal:sept_renewal",
-            "target_user_id": "JinWenJie",
-            "question_text": "请确认李老师全名。",
+            "target_user_id": "owner_test",
+            "question_text": "请确认示例老师全名。",
             "status": "queued",
             "created_at": "2026-07-30T11:00:00+08:00",
         },
@@ -181,7 +181,7 @@ def test_all_role_dashboards_share_terminal_task_state_and_teacher_today_freshne
     })
     _write_json(tmp_path, "payroll_rules.json", {
         "people": {
-            "teacher1": {"name": "李老师", "position": "part_time"},
+            "teacher1": {"name": "示例老师", "position": "part_time"},
             "manager1": {"name": "崔老师", "team_teacher_ids": ["teacher1"]},
         },
     })

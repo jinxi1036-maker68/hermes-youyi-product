@@ -18,7 +18,7 @@ from .models import UserIdentity
 from .store import TuoguanStore
 
 
-OWNER_USER_ID = "JinWenJie"
+OWNER_USER_ID = "owner_test"
 CONFIG_FILE = "p4_8_test_account_config.json"
 PENDING_USERID = "pending_p4_8_account_userid"
 PENDING_CONFIRM = "pending_p4_8_account_config_confirm"
@@ -118,7 +118,7 @@ def handle_p4_8_account_admin_message(
     if len(roles) != 1:
         return P48AccountAdminResult(
             True,
-            "一次只能配置一个测试角色。请分别设置普通老师账号或申老师终审账号。",
+            "一次只能配置一个测试角色。请分别设置普通老师账号或另一位老师终审账号。",
             "reject_multiple_roles",
         )
     role = next(iter(roles))
@@ -198,7 +198,7 @@ def _propose(
     user_id: str,
 ) -> P48AccountAdminResult:
     if action == "clear":
-        prompt = "准备清空 P4-8 普通老师和申老师测试账号配置。该操作不会修改生产老师表。回复“确认配置”执行，或回复“取消配置”。"
+        prompt = "准备清空 P4-8 普通老师和另一位老师测试账号配置。该操作不会修改生产老师表。回复“确认配置”执行，或回复“取消配置”。"
         payload = {"action": "clear"}
     elif action == "activate":
         label = _role_label(str(role))
@@ -344,7 +344,7 @@ def _roles_in_text(text: str) -> set[str]:
     roles: set[str] = set()
     if "普通老师" in compact:
         roles.add("teacher")
-    if "申老师" in compact or "终审老师" in compact or "终审账号" in compact:
+    if "另一位老师" in compact or "终审老师" in compact or "终审账号" in compact:
         roles.add("manager")
     return roles
 
@@ -355,8 +355,8 @@ def _extract_user_id(text: str) -> str:
 
 
 def _extract_name(text: str, role: str) -> str:
-    if role == "manager" and "申老师" in text:
-        return "申老师"
+    if role == "manager" and "另一位老师" in text:
+        return "另一位老师"
     explicit = re.search(
         r"(?:测试账号|账号)\s*(?:为|：|:)\s*([\u4e00-\u9fff]{1,4}老师)",
         text,
@@ -382,18 +382,18 @@ def _identity(user_id: str) -> UserIdentity:
         platform="wecom_callback",
         platform_user_id=user_id,
         canonical_user_id=user_id,
-        person_name="金总" if user_id == OWNER_USER_ID else "",
+        person_name="机构负责人" if user_id == OWNER_USER_ID else "",
         role="boss" if user_id == OWNER_USER_ID else "unknown",
         approval_state="approved" if user_id == OWNER_USER_ID else "pending",
     )
 
 
 def _denied() -> P48AccountAdminResult:
-    return P48AccountAdminResult(True, "P4-8 测试账号只能由金总在企业微信中配置。", "denied")
+    return P48AccountAdminResult(True, "P4-8 测试账号只能由机构负责人在企业微信中配置。", "denied")
 
 
 def _role_label(role: str) -> str:
-    return "普通老师" if role == "teacher" else "申老师终审"
+    return "普通老师" if role == "teacher" else "另一位老师终审"
 
 
 def _compact(text: str) -> str:

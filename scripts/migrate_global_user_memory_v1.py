@@ -19,8 +19,8 @@ USER.md 不保存任何具体个人的画像、沟通偏好或任务习惯；这
 """
 
 PERSON_MARKERS = {
-    "JinWenJie": ("金总", "boss", ("金总", "老板")),
-    "CeShi": ("李老师", "teacher", ("李老师", "CeShi", "测试老师")),
+    "owner_test": ("机构负责人", "boss", ("机构负责人", "老板")),
+    "teacher_test": ("示例老师", "teacher", ("示例老师", "teacher_test", "测试老师")),
 }
 
 HIGH_RISK_SENTENCE_TERMS = ("删除", "工资", "薪资", "权限", "绩效", "联系家长", "安全事件", "改制度")

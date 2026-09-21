@@ -1,10 +1,13 @@
-﻿"""Read-only aiohttp routes for the tutoring-center mobile dashboard."""
+"""Read-only aiohttp routes for the tutoring-center mobile dashboard."""
 
 from __future__ import annotations
 
 import html
 import os
 from typing import Any
+from urllib.error import HTTPError, URLError
+from urllib.parse import urlsplit, urlunsplit
+from urllib.request import Request, urlopen
 
 from aiohttp import web
 
@@ -13,7 +16,7 @@ from .dashboard_auth import (
     verify_dashboard_token,
     verify_parent_report_token,
 )
-from .dashboard_builder import CACHE_FRESHNESS_SECONDS, load_dashboard_cache
+from .dashboard_builder import load_dashboard_cache, refresh_dashboard_cache
 from .dashboard_workbench_v1 import DASHBOARD_WORKBENCH_V1_HTML
 from .growth_reports import (
     growth_report_by_id,
@@ -29,7 +32,50 @@ _NO_CACHE_HEADERS = {
     "Cache-Control": "no-store, no-cache, max-age=0, must-revalidate",
     "Pragma": "no-cache",
     "Expires": "0",
+    "X-XiaoYou-Dashboard": "current-workspace-v1",
 }
+
+_DASHBOARD_SERVICE_HEADER = "X-XiaoYou-Dashboard"
+_DASHBOARD_SERVICE_VALUE = "current-workspace-v1"
+
+
+def verify_public_dashboard_route(base_url: str, *, timeout_seconds: float = 5.0) -> tuple[bool, str]:
+    """Verify the configured public dashboard *route*, not merely its origin.
+
+    The configuration is trusted deployment metadata, but it can become stale
+    when a reverse proxy or dashboard service changes.  Link generation calls
+    this probe before issuing a user-facing signed URL.  The marker header is
+    emitted only by the current XiaoYou dashboard sidecar, so a generic H5
+    fallback page cannot be mistaken for the institution dashboard.
+    """
+
+    raw_base = str(base_url or "").strip()
+    parsed = urlsplit(raw_base)
+    if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+        return False, "dashboard_base_url_invalid"
+    route = urlunsplit(
+        (
+            parsed.scheme,
+            parsed.netloc,
+            f"{parsed.path.rstrip('/')}/tuoguan/dashboard",
+            "",
+            "",
+        )
+    )
+    request = Request(route, headers={"User-Agent": "XiaoYou-dashboard-route-probe/1"})
+    try:
+        with urlopen(request, timeout=max(0.1, float(timeout_seconds))) as response:
+            status = int(getattr(response, "status", response.getcode()))
+            marker = str(response.headers.get(_DASHBOARD_SERVICE_HEADER) or "")
+            if 200 <= status < 300 and marker == _DASHBOARD_SERVICE_VALUE:
+                return True, ""
+            if not 200 <= status < 300:
+                return False, f"dashboard_route_http_{status}"
+            return False, "dashboard_route_identity_mismatch"
+    except HTTPError as exc:
+        return False, f"dashboard_route_http_{int(exc.code)}"
+    except (URLError, OSError, ValueError):
+        return False, "dashboard_route_unreachable"
 
 
 def dashboard_enabled() -> bool:
@@ -137,7 +183,8 @@ class TuoguanDashboardHttp:
             return _json_error(401, exc.code, exc.message)
         if principal.role != "teacher":
             return _json_error(403, "forbidden", "Only teacher dashboard tokens can access this API")
-        cache = load_dashboard_cache(self.store, max_age_seconds=CACHE_FRESHNESS_SECONDS)
+        refresh_dashboard_cache(self.store)
+        cache = load_dashboard_cache(self.store)
         data = (cache.get("teacher_dashboards") or {}).get(principal.user_id)
         if not isinstance(data, dict):
             data = {
@@ -161,7 +208,8 @@ class TuoguanDashboardHttp:
             return _json_error(401, exc.code, exc.message)
         if principal.role not in {"manager", "boss"}:
             return _json_error(403, "forbidden", "Only manager or boss dashboard tokens can access this API")
-        cache = load_dashboard_cache(self.store, max_age_seconds=CACHE_FRESHNESS_SECONDS)
+        refresh_dashboard_cache(self.store)
+        cache = load_dashboard_cache(self.store)
         if principal.role == "manager":
             data = (cache.get("manager_dashboards") or {}).get(principal.user_id)
         else:
@@ -726,7 +774,7 @@ _PARENT_REPORT_HTML = """<!doctype html>
 <body>
   <main class="app">
     <div class="cover">
-      <div class="brand">优益托管 · 阶段成长反馈</div>
+      <div class="brand">示例机构托管 · 阶段成长反馈</div>
       <div class="seal">老师整理</div>
       <h1 id="title">孩子成长反馈</h1>
       <div class="meta" id="meta">正在读取老师审核后的报告</div>

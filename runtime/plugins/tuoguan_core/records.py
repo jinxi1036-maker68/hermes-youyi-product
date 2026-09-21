@@ -75,13 +75,24 @@ def recognize_student(text: str, store: TuoguanStore) -> str:
     return matches[0]
 
 
-def analyze_teacher_record(text: str, store: TuoguanStore) -> dict[str, Any]:
+def analyze_teacher_record(
+    text: str,
+    store: TuoguanStore,
+    *,
+    resolved_student_name: str = "",
+    resolved_student_id: str = "",
+    resolved_student_profile: dict[str, Any] | None = None,
+) -> dict[str, Any]:
     raw = str(text or "").strip()
-    student_name = recognize_student(raw, store)
-    students = store.read_json("students.json", {})
-    student_profile = (
-        students.get(student_name, {}) if isinstance(students, dict) else {}
-    )
+    student_name = str(resolved_student_name or "").strip()
+    if student_name:
+        student_profile = deepcopy(resolved_student_profile or {})
+    else:
+        student_name = recognize_student(raw, store)
+        students = store.read_json("students.json", {})
+        student_profile = (
+            students.get(student_name, {}) if isinstance(students, dict) else {}
+        )
     campus_id = (
         str(student_profile.get("campus_id") or "")
         if isinstance(student_profile, dict)
@@ -317,6 +328,7 @@ def analyze_teacher_record(text: str, store: TuoguanStore) -> dict[str, Any]:
 
     return {
         "student_name": student_name,
+        "student_id": str(resolved_student_id or student_profile.get("student_id") or "").strip(),
         "campus_id": campus_id,
         "content": raw,
         "source_text": raw,
@@ -390,6 +402,7 @@ def build_task_draft(
         "level": level,
         "status": "pending",
         "student_name": analysis["student_name"],
+        "student_id": str(analysis.get("student_id") or ""),
         "campus_id": analysis.get("campus_id") or "",
         "program_id": analysis.get("program_id") or "regular_tuoguan",
         "assignee_userid": assignee_userid,
@@ -474,8 +487,17 @@ def save_analysis(
             (
                 task for task in tasks
                 if task_is_open(task)
-                and task.get("student_name") == draft["student_name"]
                 and task.get("type") == draft["type"]
+                and (
+                    (
+                        str(draft.get("student_id") or "")
+                        and str(task.get("student_id") or "") == str(draft.get("student_id") or "")
+                    )
+                    or (
+                        not str(draft.get("student_id") or "")
+                        and task.get("student_name") == draft["student_name"]
+                    )
+                )
             ),
             None,
         )

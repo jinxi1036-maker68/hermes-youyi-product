@@ -16,23 +16,23 @@ def test_migration_is_dry_run_first_and_never_resends_history(tmp_path: Path):
     )
 
     _json(tmp_path, "write_guard_config.json", {"enabled": True})
-    _json(tmp_path, "wecom_whitelist.json", {"super_users": ["JinWenJie"], "user_roles": {"JinWenJie": "boss"}})
-    _json(tmp_path, "teacher_wecom_map.json", {"金总": "JinWenJie"})
+    _json(tmp_path, "wecom_whitelist.json", {"super_users": ["owner_test"], "user_roles": {"owner_test": "boss"}})
+    _json(tmp_path, "teacher_wecom_map.json", {"机构负责人": "owner_test"})
     _json(tmp_path, "students.json", {})
     _json(tmp_path, "records.json", [])
     _json(tmp_path, "tasks.json", [
-        {"id": WRONG_INTERNAL_TASK_ID, "title": "起草制度", "status": "pending", "assignee_userid": "JinWenJie"},
-        {"id": OLD_MONTHLY_TASK_ID, "title": "月度巡查", "status": "pending", "assignee_userid": "JinWenJie"},
+        {"id": WRONG_INTERNAL_TASK_ID, "title": "起草制度", "status": "pending", "assignee_userid": "owner_test"},
+        {"id": OLD_MONTHLY_TASK_ID, "title": "月度巡查", "status": "pending", "assignee_userid": "owner_test"},
     ])
     _json(tmp_path, "notification_outbox.json", [
         {"id": "old-pending", "task_id": OLD_MONTHLY_TASK_ID, "status": "pending"},
         {"id": "old-sent", "task_id": WRONG_INTERNAL_TASK_ID, "status": "sent", "sent_at": "2026-08-24T10:00:00+08:00"},
     ])
-    _json(tmp_path, "active_task_context.json", {"JinWenJie": {"task_id": WRONG_INTERNAL_TASK_ID}})
-    _json(tmp_path, "pending_next_task_context.json", {"JinWenJie": {"task_id": OLD_MONTHLY_TASK_ID}})
+    _json(tmp_path, "active_task_context.json", {"owner_test": {"task_id": WRONG_INTERNAL_TASK_ID}})
+    _json(tmp_path, "pending_next_task_context.json", {"owner_test": {"task_id": OLD_MONTHLY_TASK_ID}})
     _json(tmp_path, "model_focus.json", {})
     (tmp_path / "person_workstyle_events.jsonl").write_text(
-        json.dumps({"record_type": "person_workstyle_preference", "preference_id": "workstyle_pref_e1554ace1a1f", "target_user_id": "JinWenJie", "dimension_key": "length", "preference_text": "自主决定找谁", "status": "active"}, ensure_ascii=False) + "\n",
+        json.dumps({"record_type": "person_workstyle_preference", "preference_id": "workstyle_pref_e1554ace1a1f", "target_user_id": "owner_test", "dimension_key": "length", "preference_text": "自主决定找谁", "status": "active"}, ensure_ascii=False) + "\n",
         encoding="utf-8",
     )
 
@@ -51,5 +51,5 @@ def test_migration_is_dry_run_first_and_never_resends_history(tmp_path: Path):
     assert outbox["old-sent"]["status"] == "sent"
     assert json.loads((tmp_path / "active_task_context.json").read_text(encoding="utf-8")) == {}
     events = (tmp_path / "hermes_work_items.jsonl").read_text(encoding="utf-8")
-    assert "优益托管安全管理制度 V0.1" in events
+    assert "示例机构托管安全管理制度 V0.1" in events
     assert "awaiting_content_approval" in events

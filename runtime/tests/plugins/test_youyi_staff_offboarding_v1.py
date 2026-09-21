@@ -12,14 +12,14 @@ def _write(path: Path, name: str, payload) -> None:
 
 def _seed(path: Path, *, duplicate_name: bool = False) -> None:
     staff = {
-        "boss1": {"user_id": "boss1", "name": "金总", "role": "boss", "status": "active"},
+        "boss1": {"user_id": "boss1", "name": "机构负责人", "role": "boss", "status": "active"},
         "teacher1": {"user_id": "teacher1", "name": "王老师", "role": "teacher", "status": "active"},
     }
     members = [
-        {"user_id": "boss1", "name": "金总", "status": 1},
+        {"user_id": "boss1", "name": "机构负责人", "status": 1},
         {"user_id": "teacher1", "name": "王老师", "status": 1},
     ]
-    mapping = {"金总": "boss1", "王老师": "teacher1"}
+    mapping = {"机构负责人": "boss1", "王老师": "teacher1"}
     allowed = ["teacher1"]
     roles = {"boss1": "boss", "teacher1": "teacher"}
     if duplicate_name:

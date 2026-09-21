@@ -6,9 +6,10 @@ import inspect
 import os
 from typing import Any, Callable
 
-from gateway.session_context import get_session_env
 from tools.registry import tool_result
 
+from .agenda_service_policy import enforce_agenda_service_tool_call
+from .runtime_contract import activate_trusted_turn, current_trusted_turn
 from .tool_service import TuoguanToolService
 
 
@@ -57,19 +58,42 @@ def _schema(description: str, props: dict[str, Any], required: list[str] | None 
     }
 
 
-def _service(args: dict[str, Any]) -> TuoguanToolService:
+def _service(_untrusted_args: Any = None) -> TuoguanToolService | None:
+    """Build a business service only from the Contract's server-bound turn."""
+
+    turn = current_trusted_turn()
+    if turn is None:
+        return None
     return TuoguanToolService(
-        platform=get_session_env("HERMES_SESSION_PLATFORM", "") or str(args.get("platform") or "wecom_callback"),
-        user_id=get_session_env("HERMES_SESSION_USER_ID", "") or str(args.get("user_id") or ""),
-        user_name=get_session_env("HERMES_SESSION_USER_NAME", "") or str(args.get("user_name") or ""),
-        chat_id=get_session_env("HERMES_SESSION_CHAT_ID", "") or str(args.get("chat_id") or ""),
-        session_key=get_session_env("HERMES_SESSION_KEY", "") or str(args.get("session_key") or ""),
+        platform=turn.platform,
+        user_id=turn.actor_user_id,
+        user_name=turn.identity.person_name,
+        chat_id=turn.chat_id,
+        # Workspace object continuity is XiaoYou's trusted channel semantic,
+        # not Hermes' opaque Agent-session implementation detail.
+        session_key=turn.continuity_key,
+        identity=turn.identity,
     )
 
 
 def _handler(method: str) -> Callable[[dict[str, Any]], str]:
-    def run(args: dict[str, Any], **_: Any) -> str:
+    def run(args: dict[str, Any], **runtime_kwargs: Any) -> str:
+        # Public Tool dispatch exposes these correlations separately from model
+        # arguments. A worker thread can reactivate only a previously
+        # server-bound trusted turn; it cannot invent identity from payload.
+        activate_trusted_turn(
+            session_id=runtime_kwargs.get("session_id"),
+            turn_id=runtime_kwargs.get("turn_id"),
+        )
+        # The argument is accepted only to keep the handler seam injectable
+        # in repository tests.  `_service` ignores it in all runtime paths.
         service = _service(args)
+        if service is None:
+            return tool_result({
+                "ok": False,
+                "error": "missing_trusted_turn_context",
+                "message": "当前 Tool 调用没有服务端可信身份上下文，本轮未执行。",
+            })
         # Model-led production: do not run the runtime contract router before tools.
         # Tool services still enforce trusted identity, role permissions and write guards.
         payload = {
@@ -77,8 +101,40 @@ def _handler(method: str) -> Callable[[dict[str, Any]], str]:
             for key, value in dict(args or {}).items()
             if key not in {"platform", "user_id", "user_name", "chat_id", "session_key"}
         }
+        # Some provider Tool clients echo a tenant envelope. Tenant is never
+        # model-controlled: discard it only when it exactly repeats the
+        # server-attested tenant. A differing value remains rejected input.
+        if "tenant_id" in payload:
+            trusted_turn = current_trusted_turn()
+            if trusted_turn is not None and str(payload.get("tenant_id") or "") == str(getattr(trusted_turn, "tenant_id", "") or ""):
+                payload.pop("tenant_id", None)
+        policy_denial = enforce_agenda_service_tool_call(service=service, method=method, args=payload)
+        if policy_denial is not None:
+            return tool_result(policy_denial)
         method_fn = getattr(service, method)
         signature = inspect.signature(method_fn)
+        # Some providers occasionally retain the facade's structural
+        # ``operation`` field when they have already selected a concrete
+        # ``tuoguan_*`` tool.  The tool name is the dispatch decision; this
+        # envelope field cannot change it.  Drop it only when the selected
+        # method has no ``operation`` parameter.  This is schema
+        # interoperability, not text classification, a router, or a
+        # business-defaulting rule.
+        if "operation" not in signature.parameters:
+            payload.pop("operation", None)
+        # Likewise, model tool calls sometimes echo the server-bound role as
+        # an identity envelope.  A concrete method that does not accept
+        # ``role`` cannot use it to make a business decision, so discard it
+        # only when it exactly matches the already-resolved trusted identity.
+        # A differing value remains an unsupported argument, and methods such
+        # as query_students that intentionally expose a semantic ``role``
+        # parameter keep their existing validation path.
+        if (
+            "role" not in signature.parameters
+            and str(payload.get("role") or "").strip()
+            and str(payload.get("role") or "").strip() == str(service.identity.role or "").strip()
+        ):
+            payload.pop("role", None)
         missing_business_arguments = sorted(
             name
             for name, parameter in signature.parameters.items()
@@ -98,8 +154,16 @@ def _handler(method: str) -> Callable[[dict[str, Any]], str]:
                     "supported_arguments": sorted(signature.parameters),
                 },
             })
-        if "operation_id" in signature.parameters and not str(payload.get("operation_id") or "").strip():
-            operation_id = str(get_session_env("HERMES_SESSION_MESSAGE_ID", "") or "").strip()
+        if "operation_id" in signature.parameters:
+            # A write idempotency key is a transport-security value, not a
+            # business choice.  The model may choose the concrete Tool and
+            # its business arguments, but may not mint or switch the key that
+            # anchors an externally authenticated turn.  This also prevents a
+            # replay after reply recovery from creating a second write under a
+            # model-provided id.  The value comes only from the public
+            # Runtime Contract's server-bound TrustedTurn.
+            trusted_turn = current_trusted_turn()
+            operation_id = str(getattr(trusted_turn, "message_id", "") or "").strip()
             if not operation_id:
                 return tool_result({
                     "ok": False,
@@ -111,6 +175,20 @@ def _handler(method: str) -> Callable[[dict[str, Any]], str]:
             parameter.kind == inspect.Parameter.VAR_KEYWORD
             for parameter in signature.parameters.values()
         )
+        unsupported = sorted(
+            key for key in payload
+            if key not in signature.parameters and not accepts_extra
+        )
+        # Some OpenAI-compatible clients retain an empty optional field from a
+        # previously described Tool when the model has already selected a
+        # different concrete Tool.  An empty value conveys no business fact,
+        # scope, identity, or requested action, so it can be discarded before
+        # strict schema validation.  Non-empty unknown fields remain rejected;
+        # this is transport/schema compatibility only, never field extraction
+        # or an intent-to-Tool router.
+        for key in unsupported:
+            if payload.get(key) is None or payload.get(key) == "":
+                payload.pop(key, None)
         unsupported = sorted(
             key for key in payload
             if key not in signature.parameters and not accepts_extra
@@ -156,20 +234,23 @@ TUOGUAN_CONTEXT_SCHEMA = _schema(
 )
 
 TUOGUAN_QUERY_STUDENTS_SCHEMA = _schema(
-    "按当前可信身份和权限范围查询学生、学生名单、年级范围和最近记录。可按学生姓名、老师姓名、暑假班范围或年级筛选；工具负责执行权限收口和数据返回。这个工具只返回学生事实，不负责审查机构目标、制定覆盖计划或判断目标是否合理；老板提出经营目标、覆盖目标、每个孩子都要完成某项工作时，应优先考虑 tuoguan_goal_workspace。",
+    "按当前可信身份和权限范围查询学生、学生名单、年级范围和最近记录。可按 student_name、student_id、班级、老师姓名、暑假班范围或年级筛选；不要传通用 query 字段。遇到同名学生时，如用户已给出班级或年级，使用同一显示姓名加 class_name 或 grade 做一次精确查询；工具只在唯一、授权的结果中返回 object_ref，随后写入可同时带回该 object_ref 和 student_id。不能把候选名单直接当成写入对象。工具负责执行权限收口和数据返回。这个工具只返回学生事实，不负责审查机构目标、制定覆盖计划或判断目标是否合理；老板提出经营目标、覆盖目标、每个孩子都要完成某项工作时，应优先考虑 tuoguan_goal_workspace。",
     _identity_props({
         "student_name": {"type": "string", "description": "学生姓名；查询自己班/名下/负责范围学生名单或数量时留空。"},
+        "student_id": {"type": "string", "description": "同名消歧后由查询结果返回的学生唯一 ID；不得编造。"},
         "teacher_name": {"type": "string", "description": "老板/店长代查某位老师负责范围时填写老师姓名；老师查自己范围时留空。"},
         "name": {"type": "string", "description": "student_name 的兼容别名；优先填写 student_name。"},
         "query_scope": {"type": "string", "enum": ["visible", "regular", "summer"], "description": "默认 visible；正式托管班（不含暑假班口径）填 regular；用户明确查暑假班孩子时才填 summer。"},
         "grade": {"type": "string", "description": "按年级筛选时填写，如一年级、二年级；不筛选年级时留空。"},
-        "limit": {"type": "integer", "default": 30, "description": "最多返回多少名学生，范围 1-100。"},
+        "class_name": {"type": "string", "description": "班级精确确认，如三年级1班；同名学生消歧时优先填写，不能编造。"},
+        "limit": {"type": "integer", "default": 30, "description": "本页最多返回多少名学生，范围 1-100；完整名单在 100 名以内可直接传 100。"},
+        "offset": {"type": "integer", "default": 0, "description": "分页起点，默认 0；仅当 has_more=true 时使用工具返回的 next_offset 继续读取。"},
     }),
     ["user_id"],
 )
 
 TUOGUAN_QUERY_TASKS_SCHEMA = _schema(
-    "按当前可信身份和权限范围查询任务、任务状态、来源、触发原因、缺口和闭环证据。可按任务、学生、老师、状态、等级和查询范围筛选；工具负责权限收口。",
+    "按当前可信身份和权限范围查询任务、任务状态、来源、触发原因、缺口和闭环证据。可按任务、学生、老师、状态、等级和查询范围筛选；工具负责权限收口。老师询问本人还有什么未完成工作时，调用本工具并传 scope=mine；只看未完成时再传 status=open。该接口不接受通用 query 或 result_scope 参数，查询意图由本次对话和这些结构化筛选字段共同表达。",
     _identity_props(
         {
             "task_id": {"type": "string", "description": "任务 id，可为空。"},
@@ -184,6 +265,7 @@ TUOGUAN_QUERY_TASKS_SCHEMA = _schema(
                 "description": "查询范围。我的任务必须传 mine；老师请求 all 时系统仍收口为 mine。",
             },
             "limit": {"type": "integer", "default": 20, "description": "最多返回多少条任务，范围 1-100。"},
+            "offset": {"type": "integer", "default": 0, "description": "分页起点，默认 0；仅当 has_more=true 时使用 next_offset 继续读取。"},
         }
     ),
     ["user_id"],
@@ -202,10 +284,14 @@ TUOGUAN_CURRENT_TASK_GUIDANCE_SCHEMA = _schema(
 )
 
 TUOGUAN_RECORD_STUDENT_SCHEMA = _schema(
-    "记录学生情况并触发混合分析。写操作必须提供 operation_id，重复 operation_id 不会重复写入。",
+    "记录学生情况并触发混合分析。写操作必须提供 operation_id，重复 operation_id 不会重复写入。学生名未在本轮原话中时，模型只能延续本会话由可信用户指认、可信任务上下文或既有受保护写入所确认的对象，并必须传回该 Tool 结果中的 student_id 或 object_ref；工具会验证它仍绑定当前租户、当前身份和当前 Hermes 会话，并重新校验权限与仓库。模型在本轮自行搜索或从宽泛名单推测出的学生，即使查询恰好唯一命中，也不能自动成为写入对象；应自然澄清。若只有同名候选，先根据用户给出的班级/年级调用 tuoguan_query_students 做唯一解析，不能直接写入。不得从宽泛名单猜选或编造另一名学生。",
     _identity_props(
         {
-            "student_name": {"type": "string", "description": "学生姓名。"},
+            "student_name": {"type": "string", "description": "学生在老师原话中的显示姓名；不得填 student_id。若本轮只是在继续此前已确认对象，可由已验证的 student_id/object_ref 还原同一显示姓名。遇到同名候选时先自然追问班级或年级。"},
+            "student_id": {"type": "string", "description": "同名消歧后的唯一 ID，只能来自当前 Hermes 会话的已授权学生查询结果；不得编造。"},
+            "object_ref": {"type": "string", "description": "学生查询 Tool 对本会话唯一确认对象返回的短期引用；可用于后续自然延续，不能跨租户、跨身份或跨会话使用。"},
+            "class_name": {"type": "string", "description": "用户明确给出的班级确认，如三年级1班。写入时只用于核验已确认学生，不能据此猜选学生。"},
+            "grade": {"type": "string", "description": "用户明确给出的年级确认。写入时只用于核验已确认学生，不能据此猜选学生。"},
             "content": {"type": "string", "description": "老师自然语言记录内容。"},
             "operation_id": {"type": "string", "description": "幂等写入 id，来自当前消息 id 或稳定哈希。"},
         }
@@ -429,7 +515,7 @@ TUOGUAN_QUERY_GOAL_PROGRESS_SCHEMA = _schema(
 
 
 TUOGUAN_RESOLVE_STUDENT_RESPONSIBILITY_SCHEMA = _schema(
-    "只读查询优益正式托管学生的责任归属：午托、晚托、全托、主责老师以及缺失字段。用于模型需要判断该问哪位老师、是否应先问店长/老板补责任时；不得用于自动分组或凭空安排。",
+    "只读查询示例机构正式托管学生的责任归属：午托、晚托、全托、主责老师以及缺失字段。用于模型需要判断该问哪位老师、是否应先问店长/老板补责任时；不得用于自动分组或凭空安排。",
     _identity_props({
         "student_name": {"type": "string", "description": "学生姓名。"},
         "purpose": {"type": "string", "enum": ["parent_communication", "meal_nap_pickup_safety", "homework_learning_evening"], "default": "parent_communication"},
@@ -468,7 +554,7 @@ TUOGUAN_QUERY_STAFF_DIRECTORY_SCHEMA = _schema(
 )
 
 TUOGUAN_OFFBOARD_STAFF_SCHEMA = _schema(
-    "老板专属人员离职管理。金总明确要求删除、移除或停用一位已离职老师/店长时使用：撤销托管业务访问、停止未发送提醒并保留历史任务和服务记录。该操作不删除企业微信组织通讯录成员；只有 ok=true 且 writeback_verified=true 才能说已经完成。",
+    "老板专属人员离职管理。机构负责人明确要求删除、移除或停用一位已离职老师/店长时使用：撤销托管业务访问、停止未发送提醒并保留历史任务和服务记录。该操作不删除企业微信组织通讯录成员；只有 ok=true 且 writeback_verified=true 才能说已经完成。",
     _identity_props({
         "target_name": {"type": "string", "description": "离职人员姓名或常用称呼；与 target_user_id 至少提供一个。"},
         "target_user_id": {"type": "string", "description": "可选，企业微信 user_id；同名时必须提供。"},
@@ -498,6 +584,7 @@ TUOGUAN_SUBMIT_PERSON_WORKSTYLE_PREFERENCE_SCHEMA = _schema(
         "preference": {"type": "string", "description": "可选兼容字段；等同于 preference_text，仍只允许低风险工作方式偏好。"},
         "normalized_rule": {"type": "string", "description": "可选，将偏好整理成简短规则；不得加入用户没有表达的事实。"},
         "dimension_key": {"type": "string", "enum": ["", "length", "layout", "structure", "tone", "timing", "detail", "avoidance", "followup_method", "interaction_pacing", "other"], "default": "", "description": "可选，偏好影响的工作方式维度；留空由系统按文本推断。"},
+        "presentation_contract": {"type": "object", "description": "可选的低风险回复呈现契约。仅 format 偏好可填；它只约束最终回复的段落标题顺序和是否以问句收尾，不改变事实、权限、工具或业务动作。sections 为最多 4 个 {kind,label}，kind 只能是 conclusion、next_step、summary、details、risks、action；terminal_question 为 allow 或 forbid。", "properties": {"sections": {"type": "array", "maxItems": 4, "items": {"type": "object", "properties": {"kind": {"type": "string", "enum": ["conclusion", "next_step", "summary", "details", "risks", "action"]}, "label": {"type": "string"}}, "required": ["kind", "label"]}}, "terminal_question": {"type": "string", "enum": ["allow", "forbid"]}}, "additionalProperties": False},
         "confidence": {"type": "number", "default": 1.0, "description": "模型对这条低风险工作方式偏好的置信度，0-1。"},
         "source_turn_id": {"type": "string", "description": "可选，当前会话轮次 id。"},
         "target_user_id": {"type": "string", "description": "可选，默认保存到当前会话人员。"},
@@ -820,7 +907,7 @@ TUOGUAN_SUBMIT_GRAY_ROLLOUT_DECISION_SCHEMA = _schema(
             "enum": ["continue_small_gray", "pause", "expand_candidate", "defer_item", "rollback_candidate", "note"],
         },
         "decision_text": {"type": "string", "description": "老板明确拍板内容。"},
-        "scope": {"type": "string", "description": "适用范围，如老板/店长/李老师、某场景或某校区。"},
+        "scope": {"type": "string", "description": "适用范围，如老板/店长/示例老师、某场景或某校区。"},
         "reason": {"type": "string", "description": "决策原因，可为空。"},
         "source_report_path": {"type": "string", "description": "关联复盘报告路径，可为空。"},
         "source_text": {"type": "string", "description": "老板原话或确认来源。"},
@@ -906,7 +993,7 @@ TUOGUAN_SUBMIT_DUE_WAKEUP_CANDIDATE_SCHEMA = _schema(
 TUOGUAN_GENERATE_AUTONOMOUS_ACCEPTANCE_PACK_SCHEMA = _schema(
     "生成 Hermes 自主工作真实渠道验收包，包含老板/老师测试话术、观察点、禁止自动发生事项和剩余阶段说明。只读参考，不限制模型、不路由、不写业务数据。",
     _identity_props({
-        "include_teacher": {"type": "boolean", "description": "是否包含李老师账号测试步骤。"},
+        "include_teacher": {"type": "boolean", "description": "是否包含示例老师账号测试步骤。"},
     }),
     ["user_id"],
 )
@@ -1325,9 +1412,9 @@ TUOGUAN_SUBMIT_GOAL_ACTION_SCHEMA = _schema(
 )
 
 TUOGUAN_QUERY_RELATIONSHIP_TOUCH_CANDIDATES_SCHEMA = _schema(
-    "只读查询小优主动找老板/店长/老师的关系触达候选和当前策略。老板问“现在能不能主动找李老师/准备问谁/为什么没问”时应先用本工具核对候选、白名单和策略状态，不能凭旧认知回答。",
+    "只读查询小优主动找老板/店长/老师的关系触达候选和当前策略。老板问“现在能不能主动找示例老师/准备问谁/为什么没问”时应先用本工具核对候选、白名单和策略状态，不能凭旧认知回答。",
     _identity_props({
-        "target_user_id": {"type": "string", "description": "可选，按目标企业微信 user_id 筛选，如 CeShi。"},
+        "target_user_id": {"type": "string", "description": "可选，按目标企业微信 user_id 筛选，如 teacher_test。"},
         "target_role": {"type": "string", "enum": ["", "boss", "manager", "teacher"], "default": ""},
         "include_closed": {"type": "boolean", "default": False},
         "limit": {"type": "integer", "default": 30},
@@ -1336,11 +1423,11 @@ TUOGUAN_QUERY_RELATIONSHIP_TOUCH_CANDIDATES_SCHEMA = _schema(
 )
 
 TUOGUAN_SUBMIT_RELATIONSHIP_TOUCH_CANDIDATE_SCHEMA = _schema(
-    "保存一个主动找老板/店长/老师的具体工作候选。测试期只允许金总和李老师测试号 CeShi 进入直接外发候选；其他老师/店长最多保存内部候选，家长禁止。消息必须是工作相关的一个具体问题或支持，不得绕过任务边界新增家长外发，不得批量骚扰。正式任务中追问缺失证据时使用 action_type=ask_task_fact 并填写 related_task_id；它与普通关系触达分开校验。",
+    "保存或执行一个主动找老板/店长/老师的具体工作联系。收件资格由当前机构级主动外发授权、在职状态、可信企业微信绑定、tenant 和角色范围实时共同裁决，不存在测试号专属白名单；家长禁止。模型可先用人员目录按姓名取得唯一可信收件人。消息必须是工作相关的一个具体问题或支持，不得批量骚扰。正式任务中追问缺失证据时使用 action_type=ask_task_fact 并填写 related_task_id；模型已经判断现在应发送时设置 execute_if_authorized=true。只有企业微信 delivery truth 才能表述已发出或已送达。",
     _identity_props({
         "target_role": {"type": "string", "enum": ["boss", "manager", "teacher"], "description": "目标角色。"},
-        "target_user_id": {"type": "string", "description": "目标企业微信 user_id；李老师测试号为 CeShi。"},
-        "target_name": {"type": "string", "description": "目标姓名，可空。"},
+        "target_user_id": {"type": "string", "description": "目标企业微信 user_id；已通过人员目录取得时填写，不得编造。"},
+        "target_name": {"type": "string", "description": "目标姓名；未填写 user_id 时，系统只会在当前可信人员目录唯一匹配后继续，歧义时失败关闭。"},
         "touch_type": {"type": "string", "description": "触达类型，如 owner_business、owner_progress、care、record_relief、material_support。"},
         "message": {"type": "string", "description": "准备问对方的一句话，必须具体、温和、工作相关。"},
         "reason": {"type": "string", "description": "为什么需要问这个人，说明事实缺口或任务上下文。"},
@@ -1510,7 +1597,7 @@ TUOGUAN_QUERY_EXTERNAL_LEARNING_BRIEF_SCHEMA = _schema(
 )
 
 TUOGUAN_QUERY_SOCIAL_MARKET_RESEARCH_SCHEMA = _schema(
-    "只读查询小优收集的抖音/小红书本地托管市场观察候选。结果只是外部平台观察，不是优益已确认事实；本工具不发布、不评论、不点赞、不关注、不改机构事实。",
+    "只读查询小优收集的抖音/小红书本地托管市场观察候选。结果只是外部平台观察，不是示例机构已确认事实；本工具不发布、不评论、不点赞、不关注、不改机构事实。",
     _identity_props({
         "platform": {"type": "string", "enum": ["", "xiaohongshu", "douyin"], "default": ""},
         "status": {"type": "string", "description": "可选：pending_review、source_failed、backend_unavailable。"},
@@ -1546,7 +1633,7 @@ TUOGUAN_REVIEW_PROJECT_OPPORTUNITY_SCHEMA = _schema(
 )
 
 TUOGUAN_SUBMIT_INDUSTRY_LEARNING_CANDIDATE_SCHEMA = _schema(
-    "提交带来源的行业学习候选。老板审核前不会进入正式手册、长期记忆或优益机构事实；写入必须提供 operation_id。",
+    "提交带来源的行业学习候选。老板审核前不会进入正式手册、长期记忆或示例机构机构事实；写入必须提供 operation_id。",
     _identity_props({
         "topic": {"type": "string", "description": "学习主题。"},
         "summary": {"type": "string", "description": "候选摘要，必须说明来源和不确定项。"},
@@ -1701,17 +1788,307 @@ TOOLS = (
 LEGACY_TOOLS = TOOLS
 
 
+# Step B Robot POC proves model-led use of the existing task and student
+# workflows.  It deliberately exposes their direct contracts, rather than the
+# compact domain facades whose generic ``operation`` envelope is incompatible
+# with Hermes v0.20's direct Tool-call dispatcher.  This is a fixed capability
+# allowlist for the isolated POC, not a user-text router: the model still
+# decides whether to use any Tool and the normal handlers retain all permission,
+# CommandBus, Repository, receipt and writeback checks.
+ROBOT_POC_DIRECT_TOOL_NAMES = frozenset({
+    "tuoguan_context",
+    "tuoguan_query_students",
+    "tuoguan_query_tasks",
+    "tuoguan_next_task",
+    "tuoguan_current_task_guidance",
+    "tuoguan_record_student",
+    # Existing low-risk workstyle capability used by the learning-closure
+    # acceptance.  Exposure is uniform for every Robot turn; no message text
+    # is inspected and the model remains solely responsible for selecting it.
+    "tuoguan_query_person_workstyle_profile",
+    "tuoguan_submit_person_workstyle_preference",
+})
+
+
 def model_tools(surface: str = ""):
     """Return the compact production surface plus explicit routine fast paths."""
 
     selected = str(surface or os.getenv("HERMES_TUOGUAN_TOOL_SURFACE", "facade")).strip().lower()
+    if selected == "governance_claims_candidate":
+        # Kept as an explicit isolated-certification surface.  The normal
+        # facade below exposes the same contracts uniformly to human turns;
+        # this branch exists only for reproducible, narrow certification.
+        from .governance_claims_tool_surface_v1 import build_governance_claim_tools
+        return build_governance_claim_tools(
+            service_provider=_service,
+            activate_turn=activate_trusted_turn,
+            current_turn=current_trusted_turn,
+            tool_result=tool_result,
+        )
     if selected == "legacy":
         return LEGACY_TOOLS
+    if selected == "robot_poc":
+        return tuple(tool for tool in LEGACY_TOOLS if tool[0] in ROBOT_POC_DIRECT_TOOL_NAMES)
+    if selected == "agenda_service":
+        # A source-authenticated capability surface, not an Agenda payload
+        # classifier: Hermes independently chooses whether to query, update,
+        # or perform no action.
+        agenda_service_names = frozenset({
+            "tuoguan_context",
+            "tuoguan_query_hermes_work_items",
+            "tuoguan_update_hermes_work_item",
+        })
+        return tuple(tool for tool in LEGACY_TOOLS if tool[0] in agenda_service_names)
     if selected != "facade":
-        raise ValueError("HERMES_TUOGUAN_TOOL_SURFACE must be facade or legacy")
+        raise ValueError("HERMES_TUOGUAN_TOOL_SURFACE must be facade, legacy, robot_poc, agenda_service or governance_claims_candidate")
     from .capability_facades import FAST_PATH_TOOL_NAMES, build_facade_tools
+    from .governance_claims_tool_surface_v1 import build_governance_claim_tools
 
     fast_path_names = set(FAST_PATH_TOOL_NAMES)
     fast_paths = tuple(tool for tool in LEGACY_TOOLS if tool[0] in fast_path_names)
     facades = build_facade_tools(LEGACY_TOOLS, tool_result=tool_result)
-    return (*fast_paths, *facades)
+    # Progressive claims are explicit, generic governance contracts.  They
+    # are uniformly present on the normal human surface; neither the Gateway
+    # nor this function examines message content or chooses an action.
+    claims = build_governance_claim_tools(
+        service_provider=_service,
+        activate_turn=activate_trusted_turn,
+        current_turn=current_trusted_turn,
+        tool_result=tool_result,
+    )
+    return (*fast_paths, *facades, *claims)
+
+
+def agenda_service_tools():
+    """Expose the small service capability surface through its own toolset.
+
+    These are aliases for existing public Tool contracts, not handlers with
+    new Agenda business logic. Hermes sees this surface only on the trusted
+    service-work platform and still decides whether any Tool is appropriate.
+    """
+
+    by_name = {name: (schema, handler) for name, schema, handler in LEGACY_TOOLS}
+    # The ordinary update schema intentionally exposes the entire employee
+    # state contract.  A service turn has a much narrower policy, so expose
+    # exactly that public contract to the model as well.  This prevents an
+    # otherwise valid model decision from repeatedly proposing fields that
+    # the independent least-privilege policy must reject.
+    query_schema = {
+        "description": (
+            "读取当前已委托给本可信 Agenda 服务身份的 Hermes 工作事项。"
+            "不传对象文本或工作项 id；服务端只返回当前身份可见的真实状态材料。"
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "status": {"type": "string", "description": "可选状态筛选。"},
+                "include_closed": {"type": "boolean", "description": "是否包含已关闭事项。"},
+                "limit": {"type": "integer", "description": "最多返回条数。"},
+            },
+            "additionalProperties": False,
+        },
+    }
+    update_schema = {
+        "description": (
+            "更新一个已经由本可信 Agenda 服务身份明确委托的 Hermes 工作事项。"
+            "是否更新、写入哪些真实状态和是否关闭，均由模型在读取证据后自行决定；"
+            "只有工具回执与写后验证能证明生效。写入幂等键由可信 Runtime 绑定，"
+            "不要提供或编造 operation_id。"
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "work_item_id": {"type": "string", "description": "从查询结果取得的工作事项 id。"},
+                "focus_key": {"type": "string", "description": "从查询结果取得的焦点键，可替代工作项 id。"},
+                "status": {"type": "string", "enum": ["waiting", "blocked", "closed", "superseded"]},
+                "focus_summary": {"type": "string"},
+                "current_phase": {"type": "object"},
+                "next_actions": {"type": "array", "items": {}},
+                "progress_evidence": {"type": "array", "items": {}},
+                "confirmed_facts": {"type": "array", "items": {}},
+                "completed_actions": {"type": "array", "items": {}},
+                "current_waiting": {"type": "object"},
+                "blocked_by": {"type": "array", "items": {}},
+                "next_attention_at": {"type": "string"},
+                "stop_reason": {"type": "string"},
+                "update_text": {"type": "string"},
+                "source_text": {"type": "string"},
+                "source_message_id": {"type": "string"},
+            },
+            "additionalProperties": False,
+        },
+    }
+    definitions = (
+        (
+            "agenda_read_current_work_facts",
+            {
+                "description": "读取当前这一次可信 Agenda 唤醒所携带的工作事实。没有参数；服务端不会接受模型指定的人、学生、任务或范围。",
+                "parameters": {"type": "object", "properties": {}, "additionalProperties": False},
+            },
+            "__agenda_read_current_work_facts__",
+        ),
+        ("agenda_query_current_work_items", query_schema, "tuoguan_query_hermes_work_items"),
+        ("agenda_update_current_work_item", update_schema, "tuoguan_update_hermes_work_item"),
+        ("agenda_read_runtime_context", by_name["tuoguan_context"][0], "tuoguan_context"),
+    )
+    result = []
+    for alias, schema, source in definitions:
+        if source == "__agenda_read_current_work_facts__":
+            result.append((alias, schema, _handler("read_agenda_work_facts")))
+        elif source in by_name:
+            result.append((alias, schema, by_name[source][1]))
+    return tuple(result)
+
+
+def agenda_task_tools():
+    """Minimal lifecycle tools for an attested Workspace task wake.
+
+    A task wake is not a ``hermes_work_item``.  It therefore must not expose
+    the work-item lifecycle writer merely because both facts arrive through
+    the same content-blind Agenda transport.  The platform adapter selects
+    this fixed source-kind surface from the server-issued ticket before the
+    model runs; no task text participates in that choice.
+    """
+
+    by_name = {name: (schema, handler) for name, schema, handler in LEGACY_TOOLS}
+    facts_schema = {
+        "description": "读取当前这一次可信 Agenda 唤醒所携带的工作事实。没有参数，不能指定任何人、任务或范围。",
+        "parameters": {"type": "object", "properties": {}, "additionalProperties": False},
+    }
+    recheck_schema = {
+        "description": (
+            "仅为本次可信 Agenda 工单中的当前未完成任务安排下一次状态复查。"
+            "只有模型判断该任务仍需后续关注、等待人回复或等待真实结果时才调用；"
+            "它不完成任务、不生成业务结果、不选择收件人，也不会替代任何人的决定。"
+            "task_id 必须来自本轮可信工作事实；next_attention_at 必须是未来有时区的 ISO-8601 时间。"
+            "写入通过真实回执和写后验证才生效。"
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "task_id": {"type": "string", "description": "从本轮可信工作事实获得的 task_id。"},
+                "next_attention_at": {"type": "string", "description": "下一次需要重新检查的带时区 ISO-8601 时间。"},
+            },
+            "required": ["task_id", "next_attention_at"],
+            "additionalProperties": False,
+        },
+    }
+    contact_schema = {
+        "description": (
+            "当读取本轮可信任务事实后，模型判断当前存在可实际推进的下一步时，"
+            "可联系该任务已由服务端绑定的当前责任人，询问一个明确的任务事实或结果。"
+            "不能指定或更换收件人、任务、tenant、渠道或 operation_id；若只能等待，"
+            "不要调用本工具，应自行决定是否安排后续复查。发送与送达仍以真实回执为准。"
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "message": {"type": "string", "description": "给当前责任人的自然工作消息。"},
+                "reason": {"type": "string", "description": "为什么当前应推进，而不是只等待复查。"},
+                "action_type": {
+                    "type": "string",
+                    "enum": ["ask_task_fact", "ask_task_result", "task_companion_followup"],
+                    "description": "本次联系需要的任务事实类型。",
+                },
+                "evidence_requirement": {"type": "string", "description": "希望责任人提供的可核验事实；可省略。"},
+            },
+            "required": ["message", "reason"],
+            "additionalProperties": False,
+        },
+    }
+
+    def schedule_recheck(args: dict[str, Any] | None = None, **runtime_kwargs: Any) -> str:
+        activate_trusted_turn(
+            session_id=runtime_kwargs.get("session_id"),
+            turn_id=runtime_kwargs.get("turn_id"),
+        )
+        turn = current_trusted_turn()
+        service = _service()
+        payload = dict(args or {})
+        if turn is None or service is None:
+            return tool_result({"ok": False, "error": "missing_trusted_turn_context", "message": "当前 Agenda 任务缺少可信上下文，本轮未安排复查。"})
+        try:
+            from hashlib import sha256
+            import json
+            from .agenda_task_lifecycle import AgendaTaskLifecycleError, schedule_current_task_recheck
+
+            message_id = str(getattr(turn, "message_id", "") or "").strip()
+            if not message_id:
+                raise AgendaTaskLifecycleError("agenda_task_message_id_missing")
+            digest = sha256(json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")).hexdigest()[:20]
+            operation_id = message_id + ":agenda_schedule_task_recheck:" + digest
+            result = service.execute_capability_write(
+                operation_id=operation_id,
+                operation="agenda_schedule_task_recheck",
+                execute=lambda: schedule_current_task_recheck(
+                    service=service,
+                    task_id=str(payload.get("task_id") or ""),
+                    next_attention_at=str(payload.get("next_attention_at") or ""),
+                    operation_id=operation_id,
+                ),
+            )
+            return tool_result(result)
+        except AgendaTaskLifecycleError as exc:
+            return tool_result({"ok": False, "error": str(exc), "message": "当前任务未安全安排后续复查。"})
+
+    def contact_current_task_party(args: dict[str, Any] | None = None, **runtime_kwargs: Any) -> str:
+        activate_trusted_turn(
+            session_id=runtime_kwargs.get("session_id"),
+            turn_id=runtime_kwargs.get("turn_id"),
+        )
+        turn = current_trusted_turn()
+        service = _service()
+        payload = dict(args or {})
+        if turn is None or service is None:
+            return tool_result({"ok": False, "error": "missing_trusted_turn_context", "message": "当前 Agenda 任务缺少可信上下文，本轮未联系责任人。"})
+        try:
+            from hashlib import sha256
+            import json
+
+            message_id = str(getattr(turn, "message_id", "") or "").strip()
+            if not message_id:
+                return tool_result({"ok": False, "error": "agenda_task_message_id_missing", "message": "当前 Agenda 任务没有可信消息编号，本轮未联系责任人。"})
+            digest = sha256(json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")).hexdigest()[:20]
+            operation_id = message_id + ":agenda_contact_current_task_party:" + digest
+            result = service.agenda_contact_current_task_party(
+                message=str(payload.get("message") or ""),
+                reason=str(payload.get("reason") or ""),
+                action_type=str(payload.get("action_type") or "ask_task_fact"),
+                evidence_requirement=str(payload.get("evidence_requirement") or ""),
+                operation_id=operation_id,
+            )
+            return tool_result(result)
+        except Exception:
+            return tool_result({"ok": False, "error": "agenda_task_contact_unavailable", "message": "当前任务联系能力暂时不可用，本轮没有创建外发。"})
+
+    # Tool names are distinct across source-scoped surfaces. Hermes' public
+    # registry intentionally forbids a plugin from shadowing a same-named
+    # Tool in another toolset; shared display names would otherwise leave a
+    # task turn with only the one non-overlapping Tool registered.
+    result = [("agenda_task_read_current_work_facts", facts_schema, _handler("read_agenda_work_facts"))]
+    result.append(("agenda_task_contact_current_task_party", contact_schema, contact_current_task_party))
+    result.append(("agenda_schedule_current_task_recheck", recheck_schema, schedule_recheck))
+    if "tuoguan_context" in by_name:
+        result.append(("agenda_task_read_runtime_context", by_name["tuoguan_context"][0], by_name["tuoguan_context"][1]))
+    return tuple(result)
+
+
+def agenda_governance_tools():
+    """Read-only service tools for attested personnel-governance facts.
+
+    Governance Agenda wakes carry a fact requiring a person or a later human
+    turn; they never carry delegated authority to change staff, services,
+    claims or attention state.  Reuse the same opaque fact/context reader as
+    a task wake while keeping a separately named source-scoped toolset for
+    public Hermes configuration and audit.
+    """
+
+    facts_schema = {
+        "description": "读取当前这一次可信 Agenda 唤醒所携带的工作事实。没有参数，不能指定任何人、任务或范围。",
+        "parameters": {"type": "object", "properties": {}, "additionalProperties": False},
+    }
+    by_name = {name: (schema, handler) for name, schema, handler in LEGACY_TOOLS}
+    result = [("agenda_governance_read_current_work_facts", facts_schema, _handler("read_agenda_work_facts"))]
+    if "tuoguan_context" in by_name:
+        result.append(("agenda_governance_read_runtime_context", by_name["tuoguan_context"][0], by_name["tuoguan_context"][1]))
+    return tuple(result)

@@ -22,8 +22,8 @@ def _seed_store(tmp_path: Path):
             "user_roles": {"boss1": "boss", "teacher1": "teacher"},
         },
     )
-    _write_json(tmp_path, "teacher_wecom_map.json", {"金总": "boss1", "李老师": "teacher1"})
-    _write_json(tmp_path, "staff.json", {"teacher1": {"name": "李老师", "role": "teacher"}})
+    _write_json(tmp_path, "teacher_wecom_map.json", {"机构负责人": "boss1", "示例老师": "teacher1"})
+    _write_json(tmp_path, "staff.json", {"teacher1": {"name": "示例老师", "role": "teacher"}})
     _write_json(
         tmp_path,
         "students.json",
@@ -67,7 +67,7 @@ def test_observed_model_query_arguments_are_supported_without_dispatch_errors(tm
         _seed_store(tmp_path),
         platform="wecom_callback",
         user_id="boss1",
-        user_name="金总",
+        user_name="机构负责人",
     )
 
     students = service.query_students(name="小明", limit=1)
@@ -87,7 +87,7 @@ def test_observed_model_query_arguments_are_supported_without_dispatch_errors(tm
     assert parent["ok"] is True
     assert parent["data"]["covered_count"] == 1
 
-    activity = service.query_staff_conversation_activity(teacher_name="李老师", limit=1)
+    activity = service.query_staff_conversation_activity(teacher_name="示例老师", limit=1)
     assert activity["ok"] is True
     assert activity["data"]["staff_contact_count"] == 1
     assert activity["data"]["conversations"][0]["user_id"] == "teacher1"
@@ -136,7 +136,7 @@ def test_regular_tutoring_scope_does_not_turn_into_summer_scope(tmp_path: Path, 
         {"service_relation_policy": "defer_until_new_term", "data_term": "previous_term"},
     )
     monkeypatch.setattr(runtime_foundation, "current_raw_text", lambda _user_id: "托管班，不是暑假班")
-    service = TuoguanToolService(store, platform="wecom_callback", user_id="boss1", user_name="金总")
+    service = TuoguanToolService(store, platform="wecom_callback", user_id="boss1", user_name="机构负责人")
 
     result = service.query_students()
 
@@ -179,7 +179,7 @@ def test_core_contract_requires_direct_visible_tool_calls():
     from plugins.tuoguan_core import _xiaoyou_core_skill_context
     from plugins.tuoguan_core.models import UserIdentity
 
-    identity = UserIdentity("wecom_callback", "boss1", "boss1", "金总", "boss", "approved")
+    identity = UserIdentity("wecom_callback", "boss1", "boss1", "机构负责人", "boss", "approved")
     context = _xiaoyou_core_skill_context(identity=identity)
 
     assert "必须直接调用该工具" in context

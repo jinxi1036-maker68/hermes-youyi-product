@@ -17,11 +17,11 @@ def _setup(root):
         root,
         "wecom_whitelist.json",
         {
-            "super_users": ["JinWenJie"],
-            "allowed_users": ["JinWenJie", "CeShi", "LiuLi", "CuiXiaoXia"],
+            "super_users": ["owner_test"],
+            "allowed_users": ["owner_test", "teacher_test", "LiuLi", "CuiXiaoXia"],
             "user_roles": {
-                "JinWenJie": "boss",
-                "CeShi": "teacher",
+                "owner_test": "boss",
+                "teacher_test": "teacher",
                 "LiuLi": "teacher",
                 "CuiXiaoXia": "manager",
             },
@@ -31,9 +31,9 @@ def _setup(root):
         root,
         "staff.json",
         {
-            "JinWenJie": {"name": "金总", "role": "boss", "status": "active"},
-            "CeShi": {"name": "李老师", "role": "teacher", "status": "active"},
-            "LiuLi": {"name": "刘老师", "role": "teacher", "status": "active"},
+            "owner_test": {"name": "机构负责人", "role": "boss", "status": "active"},
+            "teacher_test": {"name": "示例老师", "role": "teacher", "status": "active"},
+            "LiuLi": {"name": "另一位老师", "role": "teacher", "status": "active"},
             "CuiXiaoXia": {"name": "崔校长", "role": "manager", "status": "active"},
         },
     )
@@ -41,8 +41,8 @@ def _setup(root):
         root,
         "relationship_touch_policy.json",
         {
-            "boss": {"mode": "direct", "allowed_start": "08:00", "allowed_end": "19:00", "daily_limit": 2, "allowed_target_user_ids": ["JinWenJie"]},
-            "teacher": {"mode": "direct", "allowed_start": "08:00", "allowed_end": "19:00", "daily_limit": 2, "allowed_target_user_ids": ["CeShi"]},
+            "boss": {"mode": "direct", "allowed_start": "08:00", "allowed_end": "19:00", "daily_limit": 2, "allowed_target_user_ids": ["owner_test"]},
+            "teacher": {"mode": "direct", "allowed_start": "08:00", "allowed_end": "19:00", "daily_limit": 2, "allowed_target_user_ids": ["teacher_test"]},
             "manager": {"mode": "candidate", "allowed_target_user_ids": []},
             "parent": {"mode": "disabled"},
         },
@@ -56,7 +56,7 @@ def _setup(root):
 def _boss():
     from plugins.tuoguan_core.models import UserIdentity
 
-    return UserIdentity("wecom_callback", "JinWenJie", "JinWenJie", "金总", "boss", "approved")
+    return UserIdentity("wecom_callback", "owner_test", "owner_test", "机构负责人", "boss", "approved")
 
 
 def _system():
@@ -76,7 +76,7 @@ def _active_goal(root, goal_id="goal-renewal"):
                     "goal_type": "parent_communication_coverage",
                     "goal_text": "八月完成家校沟通并提高续费稳定性",
                     "status": "confirmed",
-                    "owner_user_id": "JinWenJie",
+                    "owner_user_id": "owner_test",
                     "created_at": "2026-08-13T08:00:00+08:00",
                     "updated_at": "2026-08-13T08:00:00+08:00",
                 }
@@ -96,18 +96,18 @@ def test_owner_authorization_is_structured_revocable_and_verified(tmp_path):
         identity=_boss(),
         operation_id="auth-1",
         subject_role="teacher",
-        subject_user_ids=["CeShi"],
+        subject_user_ids=["teacher_test"],
         action_types=["ask_work_fact", "assign_low_risk_goal_task"],
         daily_limit=2,
         rollout_stage="pilot",
-        source_text="你可以主动找李老师，也可以在确认目标内安排低风险任务。",
+        source_text="你可以主动找示例老师，也可以在确认目标内安排低风险任务。",
     )
     assert saved["ok"] is True
     assert saved["writeback_verified"] is True
     auth_id = saved["authorization"]["authorization_id"]
     queried = query_proactive_authorizations(store, identity=_boss())
     assert queried["authorization_count"] == 1
-    assert queried["authorizations"][0]["subject_user_ids"] == ["CeShi"]
+    assert queried["authorizations"][0]["subject_user_ids"] == ["teacher_test"]
 
     adjusted = submit_proactive_authorization(
         store,
@@ -115,7 +115,7 @@ def test_owner_authorization_is_structured_revocable_and_verified(tmp_path):
         operation_id="auth-adjust",
         authorization_id=auth_id,
         subject_role="teacher",
-        subject_user_ids=["CeShi"],
+        subject_user_ids=["teacher_test"],
         action_types=["ask_work_fact", "assign_low_risk_goal_task"],
         daily_limit=1,
         rollout_stage="pilot",
@@ -140,7 +140,7 @@ def test_owner_authorization_is_structured_revocable_and_verified(tmp_path):
     denied = effective_proactive_permission(
         store,
         target_role="teacher",
-        target_user_id="CeShi",
+        target_user_id="teacher_test",
         action_type="ask_work_fact",
         now=datetime(2026, 8, 13, 15, 0, tzinfo=CN_TZ),
     )
@@ -159,12 +159,12 @@ def test_formal_task_collaboration_can_continue_after_ordinary_contact_window(tm
         identity=_boss(),
         operation_id="auth-task-collaboration",
         subject_role="teacher",
-        subject_user_ids=["CeShi"],
+        subject_user_ids=["teacher_test"],
         action_types=["ask_work_fact"],
         daily_limit=2,
         effective_at="2026-08-13T08:00:00+08:00",
         rollout_stage="pilot",
-        source_text="测试期允许小优主动找李老师核实任务事实。",
+        source_text="测试期允许小优主动找示例老师核实任务事实。",
     )
     _write_json(
         tmp_path,
@@ -174,8 +174,8 @@ def test_formal_task_collaboration_can_continue_after_ordinary_contact_window(tm
                 "id": "task-liyichen-renewal",
                 "title": "联系李依晨家长沟通续费",
                 "status": "waiting_confirmation",
-                "assignee_userid": "CeShi",
-                "created_by": "JinWenJie",
+                "assignee_userid": "teacher_test",
+                "created_by": "owner_test",
                 "student_name": "李依晨",
             }
         ],
@@ -185,14 +185,14 @@ def test_formal_task_collaboration_can_continue_after_ordinary_contact_window(tm
     ordinary = effective_proactive_permission(
         store,
         target_role="teacher",
-        target_user_id="CeShi",
+        target_user_id="teacher_test",
         action_type="ask_work_fact",
         now=now,
     )
     task_followup = effective_proactive_permission(
         store,
         target_role="teacher",
-        target_user_id="CeShi",
+        target_user_id="teacher_test",
         action_type="ask_task_fact",
         related_task_id="task-liyichen-renewal",
         now=now,
@@ -200,7 +200,7 @@ def test_formal_task_collaboration_can_continue_after_ordinary_contact_window(tm
     wrong_task = effective_proactive_permission(
         store,
         target_role="teacher",
-        target_user_id="CeShi",
+        target_user_id="teacher_test",
         action_type="ask_task_fact",
         related_task_id="missing-task",
         now=now,
@@ -212,12 +212,12 @@ def test_formal_task_collaboration_can_continue_after_ordinary_contact_window(tm
     assert wrong_task["allowed"] is False
 
     tasks = json.loads((tmp_path / "tasks.json").read_text(encoding="utf-8"))
-    tasks[0]["created_by"] = "CeShi"
+    tasks[0]["created_by"] = "teacher_test"
     _write_json(tmp_path, "tasks.json", tasks)
     self_created = effective_proactive_permission(
         store,
         target_role="teacher",
-        target_user_id="CeShi",
+        target_user_id="teacher_test",
         action_type="ask_task_fact",
         related_task_id="task-liyichen-renewal",
         now=now,
@@ -239,21 +239,21 @@ def test_revoking_authorization_stops_queued_delivery_and_send_rechecks_employme
         identity=_boss(),
         operation_id="auth-for-delivery",
         subject_role="teacher",
-        subject_user_ids=["CeShi"],
+        subject_user_ids=["teacher_test"],
         action_types=["ask_work_fact"],
         daily_limit=2,
         effective_at="2026-08-13T08:00:00+08:00",
         rollout_stage="pilot",
-        source_text="允许测试期主动询问李老师工作事实。",
+        source_text="允许测试期主动询问示例老师工作事实。",
     )["authorization"]
     candidate = submit_relationship_touch_candidate(
         store,
         identity=_boss(),
         target_role="teacher",
-        target_user_id="CeShi",
-        target_name="李老师",
+        target_user_id="teacher_test",
+        target_name="示例老师",
         touch_type="record_relief",
-        message="李老师，请告诉我今天任务执行结果？",
+        message="示例老师，请告诉我今天任务执行结果？",
         reason="目标需要执行事实。",
         value="推进目标。",
         work_related=True,
@@ -294,10 +294,10 @@ def test_revoking_authorization_stops_queued_delivery_and_send_rechecks_employme
         second_store,
         identity=_boss(),
         target_role="teacher",
-        target_user_id="CeShi",
-        target_name="李老师",
+        target_user_id="teacher_test",
+        target_name="示例老师",
         touch_type="record_relief",
-        message="李老师，请确认今天的工作记录。",
+        message="示例老师，请确认今天的工作记录。",
         reason="补工作事实。",
         value="推进目标。",
         work_related=True,
@@ -311,7 +311,7 @@ def test_revoking_authorization_stops_queued_delivery_and_send_rechecks_employme
         now=datetime(2026, 8, 13, 15, 0, tzinfo=CN_TZ),
     )
     staff = json.loads((second / "staff.json").read_text(encoding="utf-8"))
-    staff["CeShi"]["status"] = "left"
+    staff["teacher_test"]["status"] = "left"
     _write_json(second, "staff.json", staff)
     claim = _claim_next_notification_outbox_item(
         second_store,
@@ -333,10 +333,10 @@ def test_existing_failed_outbox_is_not_reported_as_queued(tmp_path):
         store,
         identity=_boss(),
         target_role="teacher",
-        target_user_id="CeShi",
-        target_name="李老师",
+        target_user_id="teacher_test",
+        target_name="示例老师",
         touch_type="record_relief",
-        message="李老师，请确认一项工作事实。",
+        message="示例老师，请确认一项工作事实。",
         reason="目标推进。",
         value="补足证据。",
         work_related=True,
@@ -377,16 +377,16 @@ def test_staff_cannot_self_resolve_thread_and_goal_action_cannot_skip_verificati
         store,
         identity=_boss(),
         target_role="teacher",
-        target_user_id="CeShi",
-        target_name="李老师",
+        target_user_id="teacher_test",
+        target_name="示例老师",
         touch_type="record_relief",
-        message="李老师，请确认今天的任务结果。",
+        message="示例老师，请确认今天的任务结果。",
         reason="补目标证据。",
         value="推进目标。",
         work_related=True,
         operation_id="self-resolve-candidate",
     )["candidate"]
-    teacher = UserIdentity("wecom_callback", "CeShi", "CeShi", "李老师", "teacher", "approved")
+    teacher = UserIdentity("wecom_callback", "teacher_test", "teacher_test", "示例老师", "teacher", "approved")
     denied = update_relationship_touch(
         store,
         identity=teacher,
@@ -421,11 +421,11 @@ def test_existing_candidate_can_be_queued_once_with_real_state(tmp_path):
         store,
         identity=_boss(),
         target_role="teacher",
-        target_user_id="CeShi",
-        target_name="李老师",
+        target_user_id="teacher_test",
+        target_name="示例老师",
         touch_type="record_relief",
-        message="李老师，我在补机构事实，请告诉我你目前负责哪些孩子的晚托服务？",
-        reason="机构地图缺少李老师当前服务关系。",
+        message="示例老师，我在补机构事实，请告诉我你目前负责哪些孩子的晚托服务？",
+        reason="机构地图缺少示例老师当前服务关系。",
         value="补齐服务关系后才能正确推进目标。",
         work_related=True,
         requires_authorization=False,
@@ -470,7 +470,7 @@ def test_non_rollout_teacher_and_parent_instruction_are_blocked(tmp_path):
         target_role="teacher",
         target_user_id="LiuLi",
         touch_type="record_relief",
-        message="刘老师，请告诉我你今天的学生服务记录是否已经补齐？",
+        message="另一位老师，请告诉我你今天的学生服务记录是否已经补齐？",
         reason="补一项工作事实。",
         value="目标推进。",
         work_related=True,
@@ -490,9 +490,9 @@ def test_non_rollout_teacher_and_parent_instruction_are_blocked(tmp_path):
         store,
         identity=_boss(),
         target_role="teacher",
-        target_user_id="CeShi",
+        target_user_id="teacher_test",
         touch_type="record_relief",
-        message="李老师，请你现在联系家长，把这段话发给家长后告诉我结果。",
+        message="示例老师，请你现在联系家长，把这段话发给家长后告诉我结果。",
         reason="错误的代发请求。",
         value="不应执行。",
         work_related=True,
@@ -523,11 +523,11 @@ def test_goal_action_resumes_into_outreach_and_reply_updates_goal(tmp_path):
             "campus_id": "main",
             "program_id": "regular_tuoguan",
             "service_mode": "evening_only",
-            "teacher": "CeShi",
-            "evening_teacher_user_id": "CeShi",
+            "teacher": "teacher_test",
+            "evening_teacher_user_id": "teacher_test",
             "status": "active",
         },
-        "赵同学": {
+        "学生乙": {
             "campus_id": "main",
             "program_id": "regular_tuoguan",
             "service_mode": "evening_only",
@@ -542,10 +542,10 @@ def test_goal_action_resumes_into_outreach_and_reply_updates_goal(tmp_path):
         identity=_boss(),
         goal_id="goal-renewal",
         action_type="ask_staff_fact",
-        summary="请李老师确认王同学家长当前态度和下一步安排。",
+        summary="请示例老师确认王同学家长当前态度和下一步安排。",
         target_role="teacher",
-        target_user_id="CeShi",
-        target_name="李老师",
+        target_user_id="teacher_test",
+        target_name="示例老师",
         student_names=["王同学"],
         evidence_requirement="家长态度和下一步安排都要明确。",
         operation_id="goal-action-1",
@@ -556,7 +556,7 @@ def test_goal_action_resumes_into_outreach_and_reply_updates_goal(tmp_path):
         goal_action_id=action["goal_action_id"],
         decision="execute",
         operation_id="goal-action-execute",
-        message="李老师，请告诉我王同学家长目前是什么态度，下一步准备怎么跟进？",
+        message="示例老师，请告诉我王同学家长目前是什么态度，下一步准备怎么跟进？",
         decision_reason="这是目标当前缺失的关键事实。",
         now=datetime(2026, 8, 13, 15, 0, tzinfo=CN_TZ),
     )
@@ -609,13 +609,13 @@ def test_night_wakeup_never_executes_existing_touch_or_goal_action(tmp_path):
     candidate = submit_relationship_touch_candidate(
         store,
         identity=_boss(),
-        target_role="teacher", target_user_id="CeShi", target_name="李老师",
-        touch_type="record_relief", message="李老师，请确认一项任务结果。", reason="目标缺事实。",
+        target_role="teacher", target_user_id="teacher_test", target_name="示例老师",
+        touch_type="record_relief", message="示例老师，请确认一项任务结果。", reason="目标缺事实。",
         value="推进目标。", work_related=True, operation_id="night-candidate",
     )["candidate"]
     action = submit_goal_action(
         store, identity=_boss(), goal_id="goal-renewal", action_type="ask_staff_fact",
-        summary="夜间不得执行的事实请求。", target_role="teacher", target_user_id="CeShi",
+        summary="夜间不得执行的事实请求。", target_role="teacher", target_user_id="teacher_test",
         evidence_requirement="老师真实回复。", operation_id="night-action",
     )["goal_action"]
 
@@ -724,7 +724,7 @@ def test_daytime_model_can_persist_next_goal_action_without_executing_it(tmp_pat
 
     def decision_provider(_materials):
         return {
-            "employee_summary": "小优，优益托管机构数字员工。",
+            "employee_summary": "小优，示例机构托管机构数字员工。",
             "institution_understanding": "先核对目标事实，不把旧名单当成当前事实。",
             "goal_progress_view": "目标已确认，下一步只保存低风险事实核对行动。",
             "observations": [], "work_item_updates": [], "questions_to_humans": [],
@@ -771,7 +771,7 @@ def test_failed_goal_execution_marks_autonomous_cycle_degraded(tmp_path, monkeyp
 
     def decision_provider(_materials):
         return {
-            "employee_summary": "小优，优益托管机构数字员工。",
+            "employee_summary": "小优，示例机构托管机构数字员工。",
             "institution_understanding": "目标需要继续推进。",
             "goal_progress_view": "存在到期行动。",
             "observations": [], "work_item_updates": [], "questions_to_humans": [],
@@ -805,11 +805,11 @@ def test_confirmed_goal_can_create_only_bounded_low_risk_teacher_task(tmp_path):
             "campus_id": "main",
             "program_id": "regular_tuoguan",
             "service_mode": "evening_only",
-            "teacher": "CeShi",
-            "evening_teacher_user_id": "CeShi",
+            "teacher": "teacher_test",
+            "evening_teacher_user_id": "teacher_test",
             "status": "active",
         },
-        "赵同学": {
+        "学生乙": {
             "campus_id": "main",
             "program_id": "regular_tuoguan",
             "service_mode": "evening_only",
@@ -826,8 +826,8 @@ def test_confirmed_goal_can_create_only_bounded_low_risk_teacher_task(tmp_path):
         action_type="create_low_risk_task",
         summary="请完成王同学本周家校沟通并反馈真实结果。",
         target_role="teacher",
-        target_user_id="CeShi",
-        target_name="李老师",
+        target_user_id="teacher_test",
+        target_name="示例老师",
         student_names=["王同学"],
         evidence_requirement="家长态度、孩子当前情况和下一步安排。",
         operation_id="low-risk-action",
@@ -851,17 +851,17 @@ def test_confirmed_goal_can_create_only_bounded_low_risk_teacher_task(tmp_path):
     active_context = json.loads((tmp_path / "active_task_context.json").read_text(encoding="utf-8"))
     pending_context = json.loads((tmp_path / "pending_next_task_context.json").read_text(encoding="utf-8"))
     model_focus = json.loads((tmp_path / "model_focus.json").read_text(encoding="utf-8"))
-    assert active_context["CeShi"]["task_id"] == tasks[0]["id"]
-    assert pending_context["CeShi"]["goal_action_id"] == action["goal_action_id"]
-    assert model_focus["wecom_callback:CeShi"]["task_id"] == tasks[0]["id"]
+    assert active_context["teacher_test"]["task_id"] == tasks[0]["id"]
+    assert pending_context["teacher_test"]["goal_action_id"] == action["goal_action_id"]
+    assert model_focus["wecom_callback:teacher_test"]["task_id"] == tasks[0]["id"]
 
     teacher_service = TuoguanToolService(
         store=store,
         platform="wecom_callback",
-        user_id="CeShi",
-        user_name="李老师",
-        chat_id="CeShi",
-        session_key="wecom_callback:CeShi",
+        user_id="teacher_test",
+        user_name="示例老师",
+        chat_id="teacher_test",
+        session_key="wecom_callback:teacher_test",
     )
     completed = teacher_service.update_task(
         reply="我已经和王同学妈妈沟通过了，家长表示认可，后续我会继续每周跟进。",
@@ -879,11 +879,11 @@ def test_confirmed_goal_can_create_only_bounded_low_risk_teacher_task(tmp_path):
         identity=_boss(),
         goal_id="goal-renewal",
         action_type="create_low_risk_task",
-        summary="请完成赵同学本周家校沟通并反馈真实结果。",
+        summary="请完成学生乙本周家校沟通并反馈真实结果。",
         target_role="teacher",
-        target_user_id="CeShi",
-        target_name="李老师",
-        student_names=["赵同学"],
+        target_user_id="teacher_test",
+        target_name="示例老师",
+        student_names=["学生乙"],
         evidence_requirement="家长态度和下一步安排。",
         operation_id="wrong-teacher-action",
     )["goal_action"]
@@ -904,9 +904,9 @@ def test_confirmed_goal_can_create_only_bounded_low_risk_teacher_task(tmp_path):
         identity=_boss(),
         goal_id="goal-renewal",
         action_type="create_low_risk_task",
-        summary="根据结果调整李老师工资和绩效。",
+        summary="根据结果调整示例老师工资和绩效。",
         target_role="teacher",
-        target_user_id="CeShi",
+        target_user_id="teacher_test",
         operation_id="high-risk-action",
     )
     assert high_risk["ok"] is False
@@ -925,17 +925,17 @@ def test_two_low_frequency_followups_then_escalate_to_manager_plan(tmp_path):
         identity=_boss(),
         goal_id="goal-renewal",
         action_type="ask_staff_fact",
-        summary="请李老师确认王同学家长沟通结果。",
+        summary="请示例老师确认王同学家长沟通结果。",
         target_role="teacher",
-        target_user_id="CeShi",
-        target_name="李老师",
+        target_user_id="teacher_test",
+        target_name="示例老师",
         evidence_requirement="家长态度和下一步安排。",
         operation_id="retry-action",
     )["goal_action"]
     messages = [
-        "李老师，请告诉我王同学家长目前是什么态度和下一步安排？",
-        "李老师，我只补一个缺口：王同学家长目前是什么态度？",
-        "李老师，再确认最后一点：王同学下一步准备什么时候跟进？",
+        "示例老师，请告诉我王同学家长目前是什么态度和下一步安排？",
+        "示例老师，我只补一个缺口：王同学家长目前是什么态度？",
+        "示例老师，再确认最后一点：王同学下一步准备什么时候跟进？",
     ]
     for index, message in enumerate(messages):
         result = execute_goal_action_decision(
@@ -959,7 +959,7 @@ def test_two_low_frequency_followups_then_escalate_to_manager_plan(tmp_path):
         goal_action_id=action["goal_action_id"],
         decision="execute",
         operation_id="retry-escalate",
-        message="这条不应再发给李老师。",
+        message="这条不应再发给示例老师。",
         decision_reason="两次低频追问仍没有完整事实。",
         now=datetime(2026, 8, 16, 15, 0, tzinfo=CN_TZ),
     )
@@ -972,17 +972,17 @@ def test_two_low_frequency_followups_then_escalate_to_manager_plan(tmp_path):
 def test_outreach_honesty_guard_distinguishes_candidate_queue_and_sent():
     from plugins.tuoguan_core.runtime_foundation import _sanitize_external_reply, _tool_results_outreach_state
 
-    candidate = _sanitize_external_reply("我现在就去找李老师。", verified_state_change=True, used_trusted_tool=True, outreach_state="candidate")
+    candidate = _sanitize_external_reply("我现在就去找示例老师。", verified_state_change=True, used_trusted_tool=True, outreach_state="candidate")
     assert "尚未进入发送队列" in candidate
-    queued = _sanitize_external_reply("我已经通知李老师了。", verified_state_change=True, used_trusted_tool=True, outreach_state="queued")
+    queued = _sanitize_external_reply("我已经通知示例老师了。", verified_state_change=True, used_trusted_tool=True, outreach_state="queued")
     assert "只有入队回执" in queued
     for false_sent_claim in ("消息已发送。", "发送成功。", "对方已收到。"):
         guarded = _sanitize_external_reply(
             false_sent_claim, verified_state_change=True, used_trusted_tool=True, outreach_state="queued",
         )
         assert "只有入队回执" in guarded
-    sent = _sanitize_external_reply("我已经通知李老师了。", verified_state_change=True, used_trusted_tool=True, outreach_state="sent")
-    assert sent == "我已经通知李老师了。"
+    sent = _sanitize_external_reply("我已经通知示例老师了。", verified_state_change=True, used_trusted_tool=True, outreach_state="sent")
+    assert sent == "我已经通知示例老师了。"
     denied_state = _tool_results_outreach_state({"ok": False, "error": "permission_denied", "data": {}})
     assert denied_state == "denied"
     denied = _sanitize_external_reply("工具权限尚未开放。", used_trusted_tool=True, outreach_state=denied_state)
@@ -1017,17 +1017,17 @@ def test_public_tools_expose_authorization_execution_and_goal_actions(tmp_path, 
     service = TuoguanToolService(
         store=TuoguanStore(tmp_path),
         platform="wecom_callback",
-        user_id="JinWenJie",
-        user_name="金总",
-        chat_id="JinWenJie",
-        session_key="JinWenJie",
+        user_id="owner_test",
+        user_name="机构负责人",
+        chat_id="owner_test",
+        session_key="owner_test",
     )
     result = service.submit_relationship_touch_candidate(
         target_role="teacher",
-        target_user_id="CeShi",
-        target_name="李老师",
+        target_user_id="teacher_test",
+        target_name="示例老师",
         touch_type="record_relief",
-        message="李老师，请告诉我今天任务执行结果和还缺少的一个事实？",
+        message="示例老师，请告诉我今天任务执行结果和还缺少的一个事实？",
         reason="测试同一工具内候选到入队闭环。",
         value="避免只保存候选不执行。",
         work_related=True,

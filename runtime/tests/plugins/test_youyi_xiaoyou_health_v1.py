@@ -30,8 +30,8 @@ def _seed_store(tmp_path: Path):
             "user_roles": {"boss1": "boss", "manager1": "manager", "teacher1": "teacher"},
         },
     )
-    _write_json(tmp_path, "teacher_wecom_map.json", {"金总": "boss1", "店长": "manager1", "李老师": "teacher1"})
-    _write_json(tmp_path, "staff.json", {"manager1": {"name": "店长", "role": "manager"}, "teacher1": {"name": "李老师", "role": "teacher"}})
+    _write_json(tmp_path, "teacher_wecom_map.json", {"机构负责人": "boss1", "店长": "manager1", "示例老师": "teacher1"})
+    _write_json(tmp_path, "staff.json", {"manager1": {"name": "店长", "role": "manager"}, "teacher1": {"name": "示例老师", "role": "teacher"}})
     _write_json(
         tmp_path,
         "notification_outbox.json",
@@ -99,9 +99,9 @@ def _seed_store(tmp_path: Path):
         [
             {
                 "gap_event_id": "gap1",
-                "tenant_id": "youyi_tuoguan",
+                "tenant_id": "example_institution",
                 "gap_key": "teacher_record_habit",
-                "gap_text": "缺少李老师记录作业完成情况的习惯。",
+                "gap_text": "缺少示例老师记录作业完成情况的习惯。",
                 "ask_role": "teacher",
                 "urgency": "normal",
                 "created_at": "2026-08-09T09:30:00+08:00",
@@ -115,7 +115,7 @@ def _seed_store(tmp_path: Path):
             {
                 "record_type": "self_evolution_event",
                 "evolution_event_id": "evo1",
-                "tenant_id": "youyi_tuoguan",
+                "tenant_id": "example_institution",
                 "candidate_type": "self_correction",
                 "summary": "日报只说重点。",
                 "evidence": [{"source": "owner_feedback", "text": "老板要求日报只说重点。"}],
@@ -126,7 +126,7 @@ def _seed_store(tmp_path: Path):
             {
                 "record_type": "self_evolution_event",
                 "evolution_event_id": "evo2",
-                "tenant_id": "youyi_tuoguan",
+                "tenant_id": "example_institution",
                 "candidate_type": "tool_failure_or_bug",
                 "summary": "人员问题未先查目录。",
                 "risk_level": "medium",
@@ -136,7 +136,7 @@ def _seed_store(tmp_path: Path):
             {
                 "record_type": "self_evolution_event",
                 "evolution_event_id": "evo3",
-                "tenant_id": "youyi_tuoguan",
+                "tenant_id": "example_institution",
                 "candidate_type": "tool_failure_or_bug",
                 "summary": "取消任务工具授权旧失败已经修复。",
                 "risk_level": "medium",
@@ -195,7 +195,7 @@ def _seed_store(tmp_path: Path):
         "turn_traces.jsonl",
         [{
             "trace_id": "turn-health-1",
-            "tenant_id": "youyi_tuoguan",
+            "tenant_id": "example_institution",
             "context_build_ms": 120.0,
             "total_turn_ms": 15000.0,
             "tool_events": [
@@ -235,7 +235,7 @@ def _seed_store(tmp_path: Path):
         [{
             "record_type": "teacher_coaching_event",
             "event_id": "coaching-health-1",
-            "tenant_id": "youyi_tuoguan",
+            "tenant_id": "example_institution",
             "action": "completed",
             "support_level": "verified_completion",
             "created_at": "2026-08-09T10:28:00+08:00",
@@ -265,7 +265,7 @@ def _seed_store(tmp_path: Path):
             {
                 "record_type": "work_item",
                 "work_item_id": "work1",
-                "tenant_id": "youyi_tuoguan",
+                "tenant_id": "example_institution",
                 "focus_key": "goal:test",
                 "title": "目标推进",
                 "status": "waiting",
@@ -281,10 +281,10 @@ def _seed_store(tmp_path: Path):
             {
                 "record_type": "staff_voice_signal",
                 "signal_id": "staff_voice_health_1",
-                "tenant_id": "youyi_tuoguan",
+                "tenant_id": "example_institution",
                 "source_role": "teacher",
                 "source_user_id": "teacher1",
-                "source_name": "李老师",
+                "source_name": "示例老师",
                 "category": "morale_risk",
                 "risk_level": "high",
                 "status": "open",
@@ -305,7 +305,7 @@ def test_xiaoyou_health_summarizes_read_only_operating_signals(tmp_path):
 
     store = _seed_store(tmp_path)
     before_outbox = (tmp_path / "notification_outbox.json").read_text(encoding="utf-8")
-    identity = UserIdentity("wecom_callback", "boss1", "boss1", "金总", "boss", "approved")
+    identity = UserIdentity("wecom_callback", "boss1", "boss1", "机构负责人", "boss", "approved")
 
     result = query_xiaoyou_health(store, identity=identity, now_at="2026-08-09T11:00:00+08:00")
 
@@ -384,12 +384,12 @@ def test_xiaoyou_health_tool_is_registered_and_permission_scoped(tmp_path):
     assert "tuoguan_query_xiaoyou_health" in names
     assert "tuoguan_query_xiaoyou_health" in MODEL_SELECTED_READ_TOOLS
 
-    boss = TuoguanToolService(store, platform="wecom_callback", user_id="boss1", user_name="金总")
+    boss = TuoguanToolService(store, platform="wecom_callback", user_id="boss1", user_name="机构负责人")
     result = boss.query_xiaoyou_health(now_at="2026-08-09T11:00:00+08:00")
     assert result["ok"] is True
     assert result["data"]["report_type"] == "xiaoyou_health_v1"
 
-    teacher = TuoguanToolService(store, platform="wecom_callback", user_id="teacher1", user_name="李老师")
+    teacher = TuoguanToolService(store, platform="wecom_callback", user_id="teacher1", user_name="示例老师")
     denied = teacher.query_xiaoyou_health(now_at="2026-08-09T11:00:00+08:00")
     assert denied["ok"] is False
     assert denied["error"] == "permission_denied"
@@ -416,7 +416,7 @@ def test_xiaoyou_health_exposes_real_autonomous_loop_failure(tmp_path):
         ),
         encoding="utf-8",
     )
-    identity = UserIdentity("wecom_callback", "boss1", "boss1", "金总", "boss", "approved")
+    identity = UserIdentity("wecom_callback", "boss1", "boss1", "机构负责人", "boss", "approved")
 
     result = query_xiaoyou_health(store, identity=identity, now_at="2026-08-09T11:00:00+08:00")
 

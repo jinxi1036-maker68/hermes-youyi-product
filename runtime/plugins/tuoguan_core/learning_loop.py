@@ -485,7 +485,7 @@ def _review_candidate(store: TuoguanStore, index: int, decision: str, reviewer: 
                 lesson[key] = deepcopy(updated[key])
         lessons.append(lesson)
         _write_lessons(store, lessons)
-        return "已确认这条经验。它已进入优益经验库，但不会自动改代码、不会扩白名单。"
+        return "已确认这条经验。它已进入示例机构经验库，但不会自动改代码、不会扩白名单。"
     return "已拒绝这条经验，运行时规则不受影响。"
 
 
@@ -782,7 +782,7 @@ def handle_learning_message(store: TuoguanStore, *, user_id: str, role: str, raw
     if not any(pattern in compact for pattern in LEARNING_QUERY_PATTERNS):
         return None
     if role != "boss":
-        return "这类系统学习经验只能由金总查看或确认。"
+        return "这类系统学习经验只能由机构负责人查看或确认。"
     match = re.search(r"第(\d+)条", compact)
     index = int(match.group(1)) if match else 0
     lesson_match = re.search(r"(?:停用经验|恢复经验)(lesson_[A-Za-z0-9_]+)", compact)

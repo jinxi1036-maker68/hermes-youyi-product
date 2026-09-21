@@ -22,13 +22,13 @@ def _seed_store(tmp_path: Path):
             "user_roles": {"boss1": "boss", "teacher1": "teacher", "teacher2": "teacher"},
         },
     )
-    _write_json(tmp_path, "teacher_wecom_map.json", {"金总": "boss1", "李老师": "teacher1"})
+    _write_json(tmp_path, "teacher_wecom_map.json", {"机构负责人": "boss1", "示例老师": "teacher1"})
     _write_json(
         tmp_path,
         "staff.json",
         {
-            "boss1": {"user_id": "boss1", "name": "金总", "role": "super_admin"},
-            "teacher1": {"user_id": "teacher1", "name": "李老师", "role": "teacher"},
+            "boss1": {"user_id": "boss1", "name": "机构负责人", "role": "super_admin"},
+            "teacher1": {"user_id": "teacher1", "name": "示例老师", "role": "teacher"},
             "teacher2": {"user_id": "teacher2", "name": "王老师", "role": "teacher"},
         },
     )
@@ -53,7 +53,7 @@ def _service(store, user_id: str, name: str):
 
 def test_task_contract_contains_full_employee_execution_material(tmp_path):
     store = _seed_store(tmp_path)
-    result = _service(store, "boss1", "金总").create_task(
+    result = _service(store, "boss1", "机构负责人").create_task(
         title="联系李依晨家长，了解续费顾虑并约定下次跟进",
         assignee_user_id="teacher1",
         operation_id="op-full-task-contract",
@@ -102,7 +102,7 @@ def test_task_companion_rejects_cross_teacher_or_untrusted_focus(tmp_path):
         ],
     )
     _write_json(tmp_path, "active_task_context.json", {"teacher1": {"task_id": "task-other-teacher"}})
-    identity = UserIdentity("wecom", "teacher1", "teacher1", "李老师", "teacher", "approved")
+    identity = UserIdentity("wecom", "teacher1", "teacher1", "示例老师", "teacher", "approved")
 
     assert task_companion_context(store, identity=identity, raw_text="我不知道怎么说") == ""
 
@@ -111,7 +111,7 @@ def test_teacher_coaching_is_verified_and_never_performance_data(tmp_path, monke
     from plugins.tuoguan_core import runtime_foundation
 
     store = _seed_store(tmp_path)
-    boss = _service(store, "boss1", "金总")
+    boss = _service(store, "boss1", "机构负责人")
     created = boss.create_task(
         title="联系李依晨家长沟通近期学习情况",
         assignee_user_id="teacher1",
@@ -120,7 +120,7 @@ def test_teacher_coaching_is_verified_and_never_performance_data(tmp_path, monke
         student_name="李依晨",
     )
     assert created["ok"] is True
-    teacher = _service(store, "teacher1", "李老师")
+    teacher = _service(store, "teacher1", "示例老师")
     monkeypatch.setattr(runtime_foundation, "current_raw_text", lambda _user_id: "开始")
     started = teacher.update_task(
         task_id=created["task_id"],
@@ -166,7 +166,7 @@ def test_teacher_coaching_is_verified_and_never_performance_data(tmp_path, monke
 
 def test_inflight_task_delivery_becomes_result_unknown_when_task_closes(tmp_path):
     store = _seed_store(tmp_path)
-    service = _service(store, "boss1", "金总")
+    service = _service(store, "boss1", "机构负责人")
     _write_json(
         tmp_path,
         "notification_outbox.json",
@@ -201,7 +201,7 @@ def test_closing_task_retires_linked_proactive_thread_and_pending_delivery(tmp_p
         "notification_outbox.json",
         [{"id": "relationship_touch:touch-task-1", "status": "pending"}],
     )
-    service = _service(store, "boss1", "金总")
+    service = _service(store, "boss1", "机构负责人")
 
     result = service._retire_task_linked_work(
         {"id": "task-1", "status": "completed"},

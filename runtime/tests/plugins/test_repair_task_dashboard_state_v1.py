@@ -34,39 +34,39 @@ def test_verified_task_dashboard_repair_is_dry_run_first_and_append_only(tmp_pat
             "id": PRIMARY_RENEWAL_TASK_ID,
             "title": "联系李依晨家长沟通下学期续费事宜",
             "status": "waiting_confirmation",
-            "assignee_userid": "CeShi",
+            "assignee_userid": "teacher_test",
             "evidence_summary": "老师已联系家长。",
         },
         {
             "id": DUPLICATE_RENEWAL_TASK_ID,
             "title": "重复续费风险任务",
             "status": "superseded",
-            "assignee_userid": "CeShi",
+            "assignee_userid": "teacher_test",
         },
         {
             "id": OWNER_CONTACT_TASK_ID,
-            "title": "下午4点联系金总",
+            "title": "下午4点联系机构负责人",
             "status": "pending",
-            "assignee_userid": "CeShi",
+            "assignee_userid": "teacher_test",
         },
     ])
     _write_json(tmp_path, "active_task_context.json", {
-        "CeShi": {"task_id": PRIMARY_RENEWAL_TASK_ID},
+        "teacher_test": {"task_id": PRIMARY_RENEWAL_TASK_ID},
     })
     _write_json(tmp_path, "pending_next_task_context.json", {
-        "CeShi": {"task_id": OWNER_CONTACT_TASK_ID},
+        "teacher_test": {"task_id": OWNER_CONTACT_TASK_ID},
     })
     _write_json(tmp_path, "model_focus.json", {
-        "wecom_callback:CeShi": {"task_id": DUPLICATE_RENEWAL_TASK_ID},
+        "wecom_callback:teacher_test": {"task_id": DUPLICATE_RENEWAL_TASK_ID},
     })
     _write_jsonl(tmp_path, "relationship_touch_candidates.jsonl", [
         {
             "record_type": "relationship_touch_candidate",
             "candidate_id": STALE_TOUCH_IDS[0],
             "target_role": "teacher",
-            "target_user_id": "CeShi",
-            "target_name": "李老师",
-            "message": "李老师，请补充一条过期结果。",
+            "target_user_id": "teacher_test",
+            "target_name": "示例老师",
+            "message": "示例老师，请补充一条过期结果。",
             "status": "candidate",
             "created_at": "2026-08-13T15:09:00+08:00",
         },
@@ -74,8 +74,8 @@ def test_verified_task_dashboard_repair_is_dry_run_first_and_append_only(tmp_pat
             "record_type": "relationship_touch_candidate",
             "candidate_id": STALE_TOUCH_IDS[1],
             "target_role": "teacher",
-            "target_user_id": "CeShi",
-            "target_name": "李老师",
+            "target_user_id": "teacher_test",
+            "target_name": "示例老师",
             "message": "崔老师您好，请补充一条过期结果。",
             "status": "queued",
             "created_at": "2026-08-20T15:09:00+08:00",
@@ -126,9 +126,9 @@ def test_repair_accepts_an_already_superseded_touch_but_closes_a_sent_stale_thre
         {"id": OWNER_CONTACT_TASK_ID, "status": "pending"},
     ])
     _write_jsonl(tmp_path, "relationship_touch_candidates.jsonl", [
-        {"record_type": "relationship_touch_candidate", "candidate_id": STALE_TOUCH_IDS[0], "target_role": "teacher", "target_user_id": "CeShi", "message": "李老师，旧问题。", "status": "candidate", "created_at": "2026-08-13T15:09:00+08:00"},
+        {"record_type": "relationship_touch_candidate", "candidate_id": STALE_TOUCH_IDS[0], "target_role": "teacher", "target_user_id": "teacher_test", "message": "示例老师，旧问题。", "status": "candidate", "created_at": "2026-08-13T15:09:00+08:00"},
         {"record_type": "relationship_touch_update", "candidate_id": STALE_TOUCH_IDS[0], "status": "superseded", "created_at": "2026-08-20T15:00:00+08:00"},
-        {"record_type": "relationship_touch_candidate", "candidate_id": STALE_TOUCH_IDS[1], "target_role": "teacher", "target_user_id": "CeShi", "message": "崔老师您好，旧问题。", "status": "sent", "created_at": "2026-08-20T15:09:00+08:00"},
+        {"record_type": "relationship_touch_candidate", "candidate_id": STALE_TOUCH_IDS[1], "target_role": "teacher", "target_user_id": "teacher_test", "message": "崔老师您好，旧问题。", "status": "sent", "created_at": "2026-08-20T15:09:00+08:00"},
     ])
 
     result = repair(tmp_path, apply=False, now=datetime.fromisoformat("2026-08-24T18:00:00+08:00"))

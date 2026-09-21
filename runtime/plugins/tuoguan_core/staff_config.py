@@ -48,7 +48,7 @@ def is_staff_config_request(text: str) -> bool:
         for phrase in (
             "配置暑假班老师名单",
             "暑假班老师名单如下",
-            "设置申老师为暑假班店长",
+            "设置另一位老师为暑假班店长",
             "加入2026暑假班",
             "设为暑假班",
             "负责语文",
@@ -383,7 +383,7 @@ def staff_roster_reply(store: TuoguanStore) -> str:
     for proposal in pending[-5:]:
         for item in proposal.get("staff_candidates") or []:
             if isinstance(item, dict) and item.get("match_status") in {"unique", "selected"}:
-                pending_lines.append(f"- {item.get('name')}：已匹配，待金总确认配置")
+                pending_lines.append(f"- {item.get('name')}：已匹配，待机构负责人确认配置")
         for item in proposal.get("missing_staff") or []:
             pending_lines.append(f"- {item.get('name')}：未在企业微信通讯录中找到")
         for item in proposal.get("ambiguous_staff") or []:

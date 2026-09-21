@@ -133,7 +133,7 @@ def inject_model_context(
     user_id = item["user_id"]
     return {
         "context": (
-            "【优益灰度能力卡：老师本人任务查询】\n"
+            "【示例机构灰度能力卡：老师本人任务查询】\n"
             "本轮必须调用可信工具 tuoguan_query_tasks，不得凭聊天历史回答。\n"
             f"可信角色：{role}；可信 user_id：{user_id}；用户请求范围：{scope}。\n"
             "调用参数必须包含上述 user_id 和 scope。系统会校验权限并返回 effective_scope、result_count、"

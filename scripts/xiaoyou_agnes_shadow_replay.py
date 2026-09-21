@@ -173,13 +173,13 @@ def _trusted_context(scenario: dict[str, Any]) -> str:
         facts.append("影子模式禁止真实外发；工具只返回合成授权和队列状态。")
     if scenario_id == "proactive_owner":
         facts.append(
-            "已确认目标需要主动询问测试老板；target_role=boss；target_user_id=JinWenJie；"
+            "已确认目标需要主动询问测试老板；target_role=boss；target_user_id=owner_test；"
             "touch_type=owner_business；具体问题=是否优先推进续费回访；原因=目标进入经营取舍节点；"
             "action_type=ask_work_fact。所需事实已经齐全，不要再查询目标、任务或活动上下文。"
         )
     if scenario_id == "proactive_test_teacher":
         facts.append(
-            "已确认目标需要主动询问测试老师；target_role=teacher；target_user_id=CeShi；"
+            "已确认目标需要主动询问测试老师；target_role=teacher；target_user_id=teacher_test；"
             "touch_type=record_relief；具体问题=当前测试任务推进到哪一步；原因=目标缺少执行进度事实；"
             "action_type=ask_task_result。所需事实已经齐全，不要再查询目标、任务或活动上下文。"
         )
@@ -372,17 +372,17 @@ def _support_tool_result(tool_name: str, scenario: dict[str, Any]) -> dict[str, 
             "identity": {"name": identity["name"], "role": identity["role"], "trusted": True},
         },
         "tuoguan_query_active_work_context": {
-            "active_task": {"task_id": "task_shadow_001", "assignee_user_id": "CeShi", "status": "pending"},
+            "active_task": {"task_id": "task_shadow_001", "assignee_user_id": "teacher_test", "status": "pending"},
             "ambiguity": False,
         },
         "tuoguan_query_staff_directory": {
-            "staff": [{"user_id": "CeShi", "name": "测试老师", "role": "teacher", "active": True}],
+            "staff": [{"user_id": "teacher_test", "name": "测试老师", "role": "teacher", "active": True}],
         },
         "tuoguan_query_students": {
-            "students": [{"student_name": "测试小林", "responsible_teacher_user_id": "CeShi"}],
+            "students": [{"student_name": "测试小林", "responsible_teacher_user_id": "teacher_test"}],
         },
         "tuoguan_query_tasks": {
-            "tasks": [{"task_id": "task_shadow_001", "assignee_user_id": "CeShi", "status": "pending"}],
+            "tasks": [{"task_id": "task_shadow_001", "assignee_user_id": "teacher_test", "status": "pending"}],
         },
         "tuoguan_current_task_guidance": {
             "task": {"task_id": "task_shadow_001", "student_name": "测试小林", "missing_fact": "家长关注点"},
@@ -447,7 +447,7 @@ def validate_replay(
         }.get(role, ())
         if required_identity_terms and not any(term in reply for term in required_identity_terms):
             errors.append("trusted_identity_missing")
-    if scenario_id in {"identity_teacher", "identity_after_reset"} and ("您是金总" in reply or "您是老板" in reply):
+    if scenario_id in {"identity_teacher", "identity_after_reset"} and ("您是机构负责人" in reply or "您是老板" in reply):
         errors.append("teacher_misidentified_as_boss")
     if scenario_id == "student_unknown" and any(term in reply for term in ("查到了", "已找到", "有这个学生")):
         errors.append("unknown_student_fabricated")

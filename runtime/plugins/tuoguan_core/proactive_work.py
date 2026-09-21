@@ -11,7 +11,9 @@ from copy import deepcopy
 from datetime import datetime, timedelta
 import hashlib
 import json
+import logging
 import re
+import time
 import uuid
 from typing import Any
 
@@ -19,6 +21,10 @@ from .models import UserIdentity
 from .store import JSON_NO_CHANGE, TuoguanStore
 from .tenant_context import current_tenant_id
 from .tasks import task_is_closed
+from .work_runtime import ReplyDestination
+
+
+logger = logging.getLogger(__name__)
 
 
 PROACTIVE_AUTHORIZATIONS_FILE = "proactive_authorizations.jsonl"
@@ -395,15 +401,16 @@ def _authorization_is_effective(item: dict[str, Any], now: datetime) -> bool:
 def _staff_role(store: TuoguanStore, user_id: str) -> str:
     whitelist = store.read_json("wecom_whitelist.json", {})
     if isinstance(whitelist, dict):
-        roles = whitelist.get("user_roles") if isinstance(whitelist.get("user_roles"), dict) else {}
-        role = str(roles.get(user_id) or "")
-        if role:
-            return role
         if user_id in {str(value) for value in whitelist.get("super_users") or []}:
             return "boss"
+        roles = whitelist.get("user_roles") if isinstance(whitelist.get("user_roles"), dict) else {}
+        role = str(roles.get(user_id) or "").strip()
+        if role:
+            return {"admin": "boss", "super_admin": "boss"}.get(role, role)
     staff = store.read_json("staff.json", {})
     profile = staff.get(user_id) if isinstance(staff, dict) else None
-    return str(profile.get("role") or "") if isinstance(profile, dict) else ""
+    role = str(profile.get("role") or "").strip() if isinstance(profile, dict) else ""
+    return {"admin": "boss", "super_admin": "boss"}.get(role, role)
 
 
 def _staff_is_active(store: TuoguanStore, user_id: str, role: str) -> bool:
@@ -478,13 +485,11 @@ def _policy_allows(
 
     policy = relationship_touch_policy(store)
     role_policy = policy.get(role) if isinstance(policy.get(role), dict) else {}
-    if str(role_policy.get("mode") or "candidate") != "direct":
-        return False, "rollout_stage_not_direct", 0
-    allowed_users = {str(value) for value in role_policy.get("allowed_target_user_ids") or []}
-    if role != "boss" and (not allowed_users or user_id not in allowed_users):
-        return False, "target_not_in_rollout_allowlist", 0
-    if role == "boss" and allowed_users and user_id not in allowed_users:
-        return False, "target_not_in_rollout_allowlist", 0
+    # ``relationship_touch_policy`` predates the institution-level Work
+    # Runtime grant.  Its historical direct-mode and per-person test list are
+    # no longer an authorization boundary.  It now contributes only a bounded
+    # contact-window/frequency safety policy; recipient authority is resolved
+    # below from the current trusted WeCom directory and owner grant.
     start = str(role_policy.get("allowed_start") or "08:00")
     end = str(role_policy.get("allowed_end") or "19:00")
     current = now.strftime("%H:%M")
@@ -499,7 +504,7 @@ def _policy_allows(
         ):
             return True, "active_task_collaboration_window", max(1, int(role_policy.get("daily_limit") or 1))
         return False, "outside_contact_window", int(role_policy.get("daily_limit") or 1)
-    return True, "relationship_policy", max(1, int(role_policy.get("daily_limit") or 1))
+    return True, "relationship_frequency_policy", max(1, int(role_policy.get("daily_limit") or 1))
 
 
 def effective_proactive_permission(
@@ -520,6 +525,22 @@ def effective_proactive_permission(
         return {"allowed": False, "reason_code": "parent_or_missing_target"}
     if role not in {"boss", "manager", "teacher"} or not _staff_is_active(store, user_id, role):
         return {"allowed": False, "reason_code": "target_role_or_employment_invalid"}
+    tenant = str(current_tenant_id() or "").strip()
+    try:
+        from .proactive_delivery_authority import ProactiveDeliveryAuthority
+
+        decision = ProactiveDeliveryAuthority(store.data_dir).decide(
+            ReplyDestination(
+                tenant_id=tenant,
+                channel="wecom_callback",
+                recipient_id=user_id,
+                source_identity="relationship_touch:" + tenant,
+            )
+        )
+    except Exception:
+        return {"allowed": False, "reason_code": "institutional_proactive_authority_unavailable"}
+    if not decision.allowed:
+        return {"allowed": False, "reason_code": decision.reason, "recipient_role": decision.recipient_role}
     policy_allowed, policy_reason, policy_limit = _policy_allows(
         store,
         role,
@@ -530,35 +551,12 @@ def effective_proactive_permission(
     )
     if not policy_allowed:
         return {"allowed": False, "reason_code": policy_reason}
-    authorization_rows = _authorization_rows(store)
-    matching: list[dict[str, Any]] = []
-    for item in authorization_rows.values():
-        if not _authorization_is_effective(item, timestamp):
-            continue
-        if str(item.get("subject_role") or "") != role:
-            continue
-        users = {str(value) for value in item.get("subject_user_ids") or []}
-        if users and user_id not in users:
-            continue
-        actions = {str(value) for value in item.get("action_types") or []}
-        legacy_task_fact_grant = action in _TASK_COLLABORATION_ACTIONS and "ask_work_fact" in actions
-        if actions and action not in actions and not legacy_task_fact_grant:
-            continue
-        goals = {str(value) for value in item.get("goal_ids") or []}
-        if goals and str(goal_id or "") not in goals:
-            continue
-        matching.append(item)
-    if authorization_rows and not matching:
-        return {"allowed": False, "reason_code": "formal_authorization_required"}
-    # Existing explicit direct policy remains a backwards-compatible baseline;
-    # formal grants add source evidence and may only narrow the daily limit.
-    limits = [policy_limit] + [int(item.get("daily_limit") or policy_limit) for item in matching]
     return {
         "allowed": True,
-        "reason_code": "formal_authorization" if matching else policy_reason,
-        "daily_limit": max(1, min(limits)),
-        "authorization_ids": [str(item.get("authorization_id") or "") for item in matching],
-        "rollout_stage": str(matching[0].get("rollout_stage") or "policy") if matching else "policy",
+        "reason_code": decision.reason,
+        "daily_limit": policy_limit,
+        "authorization_ids": [],
+        "rollout_stage": "institutional_proactive_delivery_authority",
     }
 
 
@@ -586,7 +584,19 @@ def execute_relationship_touch(
     candidate = _relationship_rows(store).get(str(candidate_id or "").strip())
     if not candidate:
         return {"ok": False, "error": "relationship_touch_not_found", "message": "没有找到这条主动联系候选。"}
-    if identity.role != "boss" and identity.platform != "system":
+    agenda_task_authorized = False
+    if identity.role == "agenda_service" and identity.platform == "agenda_service_work":
+        try:
+            from .agenda_task_lifecycle import current_task_contact_candidate_attested
+
+            agenda_task_authorized = current_task_contact_candidate_attested(
+                store=store,
+                identity=identity,
+                candidate=candidate,
+            )
+        except Exception:
+            agenda_task_authorized = False
+    if identity.role != "boss" and identity.platform != "system" and not agenda_task_authorized:
         return {"ok": False, "error": "permission_denied", "message": "当前账号无权执行主动联系候选。"}
     status = str(candidate.get("status") or "candidate")
     if status in TERMINAL_RELATIONSHIP_STATUSES:
@@ -613,34 +623,13 @@ def execute_relationship_touch(
     suggested_send_at = _parse_time(candidate.get("suggested_send_at"))
     if suggested_send_at is not None and timestamp < suggested_send_at:
         return {"ok": False, "error": "before_suggested_send_time", "message": "还没有到模型结合对方工作方式选择的发送时间。", "suggested_send_at": suggested_send_at.isoformat(timespec="seconds")}
-    outbox = store.read_json(OUTBOX_FILE, [])
-    rows = outbox if isinstance(outbox, list) else []
     notification_id = f"relationship_touch:{candidate_id}"
-    existing = next((item for item in rows if isinstance(item, dict) and str(item.get("id") or "") == notification_id), None)
-    if existing:
-        existing_status = str(existing.get("status") or "pending")
-        mapped = {
-            "pending": "queued",
-            "retry_pending": "retry_pending",
-            "sending": "sending",
-            "sent": "sent",
-            "failed": "failed",
-            "result_unknown": "result_unknown",
-            "suppressed": "superseded",
-        }.get(existing_status, "result_unknown")
-        update_relationship_touch_candidate_status(
-            store, identity=identity, candidate_id=str(candidate_id), status=mapped,
-            operation_id=f"{operation_id}:existing", delivery_receipt={"outbox_id": notification_id, "status": existing_status},
-            source_text="主动联系幂等反查",
-        )
-        return {"ok": True, "candidate": _relationship_rows(store).get(str(candidate_id), {}), "outbox_item": deepcopy(existing), "delivery_state": mapped, "writeback_verified": True, "state_changed": False, "idempotent_replay": True}
     day = timestamp.date().isoformat()
     sent_today = sum(
-        1 for item in rows if isinstance(item, dict)
-        and str(item.get("notification_type") or "") == "relationship_touch"
-        and str(item.get("touser") or "") == target_user_id
+        1 for item in _relationship_rows(store).values()
+        if str(item.get("target_user_id") or "") == target_user_id
         and str(item.get("created_at") or "").startswith(day)
-        and str(item.get("status") or "") in {"pending", "retry_pending", "sending", "sent", "result_unknown"}
+        and str(item.get("status") or "") in {"authorized", "queued", "sending", "sent", "result_unknown"}
     )
     if sent_today >= int(permission.get("daily_limit") or 1):
         return {"ok": False, "error": "daily_frequency_limit", "message": "这个对象今天的主动联系频率已到上限。", "permission": permission}
@@ -651,72 +640,58 @@ def execute_relationship_touch(
     )
     if not authorized_update.get("writeback_verified"):
         return {"ok": False, "error": "authorization_writeback_failed", "message": "主动联系授权状态反查失败，未进入发送队列。", "writeback_verified": False}
-    row = {
-        "id": notification_id,
-        "status": "pending",
-        "delivery_mode": "direct_wecom",
-        "notification_type": "relationship_touch",
-        "task_id": f"relationship_touch:{candidate_id}",
-        "role": target_role,
-        "action": "relationship_touch",
-        "target_user_id": target_user_id,
-        "recipient_user_id": target_user_id,
-        "to_user_id": target_user_id,
-        "touser": target_user_id,
-        "content": message[:700],
-        "summary": str(candidate.get("reason") or "")[:240],
-        "relationship_touch_candidate_id": str(candidate_id),
-        "proactive_action_type": str(candidate.get("action_type") or "ask_work_fact"),
-        "goal_id": str(candidate.get("goal_id") or ""),
-        "goal_action_id": str(candidate.get("goal_action_id") or ""),
-        "created_at": _now_iso(timestamp),
-        "attempt_count": 0,
-        "authorization": permission,
-        "auto_effects": {"sends_parent_messages": False, "sends_teacher_messages": target_role == "teacher", "sends_manager_messages": target_role == "manager", "creates_teacher_tasks": False},
-    }
-    appended = {"value": False}
-
-    def enqueue(current: Any) -> Any:
-        current = current if isinstance(current, list) else []
-        if any(isinstance(item, dict) and str(item.get("id") or "") == notification_id for item in current):
-            return JSON_NO_CHANGE
-        current.append(deepcopy(row))
-        appended["value"] = True
-        return current[-2000:]
-
-    store.update_json(OUTBOX_FILE, [], enqueue)
-    reread = store.read_json(OUTBOX_FILE, [])
-    verified_row = next((item for item in reread if isinstance(item, dict) and str(item.get("id") or "") == notification_id), None) if isinstance(reread, list) else None
-    if not verified_row:
-        return {"ok": False, "error": "writeback_failed", "message": "主动消息入队后的反查没有通过。", "writeback_verified": False}
+    # The retired JSON notification queue cannot carry delivery truth.  Stage
+    # this selected, permission-checked Hermes message in the one current
+    # Durable Reply Outbox instead.  This does not send synchronously and
+    # therefore cannot claim WeCom acceptance before the port records it.
+    from .direct_reply_recovery import get_direct_reply_recovery_manager
+    manager = get_direct_reply_recovery_manager()
+    try:
+        job = manager.stage_proactive_notice(
+            tenant_id=str(current_tenant_id() or ""),
+            recipient_id=target_user_id,
+            source_kind="relationship_touch",
+            notice_id=notification_id,
+            notice_text=message,
+            trace_ref="verified-relationship-touch:" + str(candidate_id),
+        )
+    except Exception as exc:
+        return {
+            "ok": False,
+            "error": "relationship_touch_delivery_stage_failed",
+            "message": "主动联系已经通过业务判断，但当前没有创建可信企业微信投递。",
+            "delivery_error_class": type(exc).__name__,
+            "writeback_verified": bool(authorized_update.get("writeback_verified")),
+        }
     update = update_relationship_touch_candidate_status(
         store, identity=identity, candidate_id=str(candidate_id), status="queued",
-        operation_id=f"{operation_id}:queued", delivery_receipt={"outbox_id": notification_id, "queued_at": row["created_at"]},
-        source_text="主动消息已进入企业微信发送队列",
+        operation_id=f"{operation_id}:queued", delivery_receipt={
+            "delivery_state": str(job.delivery_state),
+            "delivery_id": str(job.delivery_id),
+            "queued_at": _now_iso(timestamp),
+            "authority": str(permission.get("reason_code") or ""),
+        },
+        source_text="主动消息已进入当前 Durable Reply Outbox，尚未声称企业微信已接受。",
     )
     if not update.get("writeback_verified"):
-        def suppress_unverified(current: Any) -> Any:
-            current = current if isinstance(current, list) else []
-            for item in current:
-                if isinstance(item, dict) and str(item.get("id") or "") == notification_id and str(item.get("status") or "") == "pending":
-                    item.update({
-                        "status": "suppressed",
-                        "suppressed_at": _now_iso(timestamp),
-                        "suppressed_reason": "relationship_touch_state_writeback_failed",
-                    })
-                    return current[-2000:]
-            return JSON_NO_CHANGE
-
-        store.update_json(OUTBOX_FILE, [], suppress_unverified)
+        try:
+            manager.outbox.suppress_pending_delivery(
+                reply_id=job.reply_id,
+                reason="relationship_touch_state_writeback_failed",
+                now=time.time(),
+            )
+        except Exception:
+            logger.exception("relationship touch delivery suppression failed candidate=%s", candidate_id)
         return {"ok": False, "error": "relationship_state_writeback_failed", "message": "主动消息状态反查失败，发送项已停止。", "writeback_verified": False}
     return {
         "ok": bool(update.get("writeback_verified")),
         "candidate": update.get("candidate") or {},
-        "outbox_item": deepcopy(verified_row),
-        "delivery_state": "queued",
+        "delivery_state": str(job.delivery_state),
+        "delivery_id": str(job.delivery_id),
+        "wecom_accepted": bool(job.delivery_state == "delivered"),
         "writeback_verified": bool(update.get("writeback_verified")),
-        "state_changed": bool(appended["value"]),
-        "rendered_text": "主动消息已安排发送；当前有入队回执，尚不能声称对方已经收到。",
+        "state_changed": True,
+        "rendered_text": "主动消息已进入当前投递链路；尚未取得企业微信接受回执，不能声称对方已经收到。",
     }
 
 

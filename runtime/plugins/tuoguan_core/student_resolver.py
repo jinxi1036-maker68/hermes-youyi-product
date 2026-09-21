@@ -9,6 +9,7 @@ from .models import UserIdentity
 from .programs import SUMMER_PROGRAM_ID, canonical_program_id
 from .permissions import PermissionService
 from .store import TuoguanStore
+from .student_directory import find_student_candidates, safe_candidate_labels
 from .tenant_context import current_tenant_id
 
 
@@ -132,10 +133,42 @@ def resolve_student_for_record(
     store: TuoguanStore,
     identity: UserIdentity,
     requested_name: str,
+    *,
+    allow_student_id: bool = True,
 ) -> tuple[str | None, dict[str, Any]]:
     if identity.approval_state != "approved" or identity.role not in {"teacher", "manager", "boss"}:
         return None, {"reason_code": "permission_denied"}
     requested = str(requested_name or "").strip()
+    directory_candidates = find_student_candidates(
+        store, requested, allow_identifiers=allow_student_id,
+    )
+    if directory_candidates:
+        permissions = PermissionService(store)
+        authorised = [
+            entry for entry in directory_candidates
+            if permissions.can_write_student_record(identity, str(entry.get("student_id") or entry.get("profile_key") or ""))
+        ]
+        if len(directory_candidates) > 1:
+            # Do not reveal candidates that the current actor cannot access,
+            # and never choose by class/grade heuristics.
+            if not authorised:
+                return None, {"reason_code": "permission_denied"}
+            return None, {
+                "reason_code": "student_name_ambiguous",
+                "candidates": safe_candidate_labels(authorised),
+            }
+        entry = directory_candidates[0]
+        if not authorised:
+            return None, {"reason_code": "permission_denied"}
+        profile = deepcopy(entry.get("profile") or {})
+        profile.update({
+            "student_id": str(entry.get("student_id") or ""),
+            "student_name": str(entry.get("student_name") or ""),
+            "profile_key": str(entry.get("profile_key") or ""),
+            "program_id": canonical_program_id(profile.get("program_id")),
+            "tenant_id": current_tenant_id(),
+        })
+        return str(entry.get("student_name") or ""), profile
     summer = active_summer_students(store)
     if requested in summer:
         profile = summer[requested]
@@ -146,7 +179,7 @@ def resolve_student_for_record(
         return None, {"reason_code": "permission_denied"}
 
     students = store.read_json("students.json", {})
-    profile = students.get(requested) if isinstance(students, dict) else None
+    profile = students.get(requested) if isinstance(students, dict) and allow_student_id else None
     if not isinstance(profile, dict):
         return None, {"reason_code": "student_not_found"}
     if not _same_tenant(profile):

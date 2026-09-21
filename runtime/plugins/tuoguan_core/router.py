@@ -442,7 +442,7 @@ class TuoguanRouter:
             return "你的账号未通过审核，如需使用请联系管理员。"
         return (
             "当前企业微信账号还没有绑定到 Hermes，暂时不能使用托管业务功能。"
-            "我已登记这次访问，请联系金总添加身份后再使用。"
+            "我已登记这次访问，请联系机构负责人添加身份后再使用。"
         )
 
     @staticmethod
@@ -451,11 +451,11 @@ class TuoguanRouter:
         if not compact:
             return None
         claim_patterns = (
-            "我是金总",
+            "我是机构负责人",
             "我是老板",
             "我是店长",
             "我是老师",
-            "我是金总账号",
+            "我是机构负责人账号",
             "我是老板账号",
             "我是店长账号",
             "我是老师账号",
@@ -472,7 +472,7 @@ class TuoguanRouter:
             handled=True,
             reply=(
                 f"身份不能通过聊天内容切换。当前企业微信账号绑定身份是：{name}（{role_label}）。\n"
-                "如果身份配置不对，请让金总在身份权限里调整；调整前我只按当前企业微信 userid 的绑定权限处理。"
+                "如果身份配置不对，请让机构负责人在身份权限里调整；调整前我只按当前企业微信 userid 的绑定权限处理。"
             ),
         )
 
@@ -669,7 +669,7 @@ class TuoguanRouter:
     def _route_config_change(self, identity: UserIdentity, text: str) -> RouteResult | None:
         if is_config_confirmation(text):
             if identity.role != "boss":
-                return RouteResult(handled=True, reply="只有金总/老板账号可以确认执行身份、老师交接或项目配置变更。")
+                return RouteResult(handled=True, reply="只有机构负责人/老板账号可以确认执行身份、老师交接或项目配置变更。")
             item = confirm_config_change(store=self.store, identity=identity, text=text)
             if item is None:
                 return RouteResult(handled=True, reply="当前没有等待你确认的配置变更。")
@@ -677,7 +677,7 @@ class TuoguanRouter:
             return RouteResult(handled=True, reply=confirmation_reply(item))
         if is_config_cancel(text):
             if identity.role != "boss":
-                return RouteResult(handled=True, reply="只有金总/老板账号可以取消配置变更。")
+                return RouteResult(handled=True, reply="只有机构负责人/老板账号可以取消配置变更。")
             item = cancel_config_change(store=self.store, identity=identity, text=text)
             if item is None:
                 return RouteResult(handled=True, reply="当前没有等待取消的配置变更。")
@@ -686,7 +686,7 @@ class TuoguanRouter:
         if not is_config_change_request(text):
             return None
         if identity.role != "boss":
-            return RouteResult(handled=True, reply="这属于身份、交接或项目配置变更，必须由金总/老板账号发起并确认。")
+            return RouteResult(handled=True, reply="这属于身份、交接或项目配置变更，必须由机构负责人/老板账号发起并确认。")
         item = build_config_change_proposal(store=self.store, identity=identity, text=text)
         reply = proposal_reply(item)
         state_type = (
@@ -710,11 +710,11 @@ class TuoguanRouter:
         if is_staff_config_query(text):
             if identity.role == "boss" or self._is_summer_manager(identity.role, identity.canonical_user_id):
                 return RouteResult(handled=True, reply=staff_roster_reply(self.store))
-            return RouteResult(handled=True, reply="暑假班人员名单仅金总和2026暑假班店长可以查看。")
+            return RouteResult(handled=True, reply="暑假班人员名单仅机构负责人和2026暑假班店长可以查看。")
 
         if compact == "继续配置暑假班老师":
             if identity.role != "boss":
-                return RouteResult(handled=True, reply="只有金总/老板账号可以继续人员配置。")
+                return RouteResult(handled=True, reply="只有机构负责人/老板账号可以继续人员配置。")
             proposal = refresh_latest_staff_config_proposal(self.store, identity)
             if proposal is None:
                 return RouteResult(handled=True, reply="当前没有可继续匹配的暑假班人员方案，请重新发送老师名单。")
@@ -722,13 +722,13 @@ class TuoguanRouter:
             if identity.role != "boss":
                 return RouteResult(
                     handled=True,
-                    reply="人员与项目权限只能由金总/老板账号配置；暑假班店长可以查看名单，但不能配置全局权限。",
+                    reply="人员与项目权限只能由机构负责人/老板账号配置；暑假班店长可以查看名单，但不能配置全局权限。",
                 )
             proposal = build_staff_config_proposal(self.store, identity, text)
             if not proposal.get("staff_candidates"):
                 return RouteResult(
                     handled=True,
-                    reply="我识别到你要配置暑假班人员，但没有读到具体老师。请按“张老师，语文老师；李老师，数学老师”发送。",
+                    reply="我识别到你要配置暑假班人员，但没有读到具体老师。请按“张老师，语文老师；示例老师，数学老师”发送。",
                 )
         elif compact in {"确认配置", "取消配置"}:
             return RouteResult(handled=True, reply="当前没有等待确认的人员配置方案，请先发送暑假班老师名单。")
@@ -766,7 +766,7 @@ class TuoguanRouter:
         compact = compact_conversation_text(text)
         if state_type == "pending_staff_config_confirm":
             if identity.role != "boss":
-                return RouteResult(handled=True, reply="这条人员配置确认只对发起方案的金总/老板账号有效。")
+                return RouteResult(handled=True, reply="这条人员配置确认只对发起方案的机构负责人/老板账号有效。")
             payload = state.get("payload") if isinstance(state.get("payload"), dict) else {}
             proposal_id = str(payload.get("proposal_id") or "")
             if is_staff_config_cancel(text):
@@ -1746,7 +1746,7 @@ class TuoguanRouter:
 
         assignee_userid, assignee_name = self._resolve_assignee(text)
         if not assignee_userid:
-            return RouteResult(handled=True, reply="请写清楚安排给哪位老师，例如：安排刘老师今天跟进小金家长沟通。")
+            return RouteResult(handled=True, reply="请写清楚安排给哪位老师，例如：安排另一位老师今天跟进学生丙家长沟通。")
 
         try:
             student_name = recognize_student(text, self.store)
@@ -1943,7 +1943,7 @@ class TuoguanRouter:
             return RouteResult(
                 handled=True,
                 reply=(
-                    "我是优益托管正在使用的 Hermes 工作助手。"
+                    "我是示例机构托管正在使用的 Hermes 工作助手。"
                     "学生、任务、记录、日报和提醒都由本机原 Hermes 处理，"
                     "服务器只负责企业微信回调转发。\n"
                     f"你当前识别为：{user_name}（{role_name}权限）。"
@@ -2045,11 +2045,11 @@ class TuoguanRouter:
             return (
                 "【老师使用教程】\n"
                 "1. 记录孩子：直接说孩子姓名 + 具体表现 + 老师处理。\n"
-                "例：小金今天数学作业完成较慢，计算错4道，我让他订正后明天继续关注。\n"
+                "例：学生丙今天数学作业完成较慢，计算错4道，我让他订正后明天继续关注。\n"
                 "2. 生活/行为记录：午餐、午休、情绪、纪律也可以直接记录。\n"
-                "例：李四今天午休有点坐不住，我提醒后能安静下来。\n"
+                "例：学生乙今天午休有点坐不住，我提醒后能安静下来。\n"
                 "3. 安全情况：摔倒、磕碰、夹手、不舒服要马上说清状态和处理。\n"
-                "例：安全记录：李四手指被门缝夹了一下，目前无破皮出血，已提醒并继续观察。\n"
+                "例：安全记录：学生乙手指被门缝夹了一下，目前无破皮出血，已提醒并继续观察。\n"
                 "4. 处理任务：回复“我的任务”查看；回复“开始/处理1”；补充处理情况后回复“完成了”。\n"
                 "5. 看工资和看板：回复“看板”。\n"
                 "6. 撤销误记：回复“撤销上一条记录”。"
@@ -2059,7 +2059,7 @@ class TuoguanRouter:
                 "【店长使用教程】\n"
                 "1. 看当天重点：回复“看板”或“我的任务”。\n"
                 "2. 跟进老师：查看未完成任务、低质量记录、缺家长沟通和风险闭环。\n"
-                "3. 安排任务：可以说“安排刘老师明天前跟进小金午休状态，A级”。\n"
+                "3. 安排任务：可以说“安排另一位老师明天前跟进学生丙午休状态，A级”。\n"
                 "4. 处理安全/服务风险：收到 S/A 级提醒后督促老师补齐状态、处理、家长知情、后续观察。\n"
                 "5. 暑假班导入问题：电话待补、疑似重复、未入库孩子需要店长确认。\n"
                 "6. 不确定时：回复“帮助”随时看这份教程。"
@@ -2067,7 +2067,7 @@ class TuoguanRouter:
         return (
             "【老板使用教程】\n"
             "1. 看经营全局：回复“老板看板”。\n"
-            "2. 安排任务：例“安排李老师明天前跟进李四午休状态，A级”。\n"
+            "2. 安排任务：例“安排示例老师明天前跟进学生乙午休状态，A级”。\n"
             "3. 看任务进展：回复“任务”或“我的所有任务”。\n"
             "4. 身份/交接/配置：说清变更内容后，Hermes 会先生成方案；你回复“确认执行”才会进入执行。\n"
             "5. 暑假班名单：老板或店长批量导入，疑似重复/缺电话会进入待确认。\n"
@@ -2261,7 +2261,7 @@ class TuoguanRouter:
             handled=True,
             reply=(
                 "下面这段可以直接复制到微信发给家长：\n\n"
-                f"【优益托管｜{title}】\n"
+                f"【示例机构托管｜{title}】\n"
                 f"{summary}\n\n"
                 f"点击查看孩子本期成长反馈：\n{url}\n\n"
                 f"链接有效期至 {expiry}。"

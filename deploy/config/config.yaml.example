@@ -1,0 +1,37 @@
+# Merge these non-secret semantics into a Hermes 0.21 configuration. Do not
+# copy a live config into Git. Credentials and real endpoint values belong in a
+# protected secret source referenced by the deployment.
+agent:
+  gateway_timeout: 1800
+  gateway_notify_interval: 180
+  gateway_timeout_warning: 180
+  max_turns: 24
+compression:
+  enabled: true
+  threshold: 0.5
+  target_ratio: 0.5
+model:
+  name: agnes-3.0-flash
+  provider: custom
+  context_length: 524288
+  request_timeout_seconds: 300
+  stale_timeout_seconds: 900
+  api_key: ${AGNES_API_KEY}
+  base_url: ${AGNES_BASE_URL}
+platforms:
+  wecom_callback:
+    enabled: true
+  agenda_service_work:
+    enabled: true
+  reply_recovery:
+    enabled: true
+  robot_poc:
+    enabled: false
+platform_toolsets:
+  wecom_callback: [tuoguan]
+  agenda_service_work: [agenda_service, agenda_task, agenda_governance, no_mcp]
+  reply_recovery: [no_mcp]
+  robot_poc: [tuoguan, no_mcp]
+plugins:
+  enabled: [wecom-platform, agenda_service_work, reply_recovery, robot_poc, tuoguan_core]
+fallback_providers: []
