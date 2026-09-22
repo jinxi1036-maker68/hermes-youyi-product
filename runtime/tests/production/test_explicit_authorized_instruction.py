@@ -270,6 +270,76 @@ def test_pending_identity_activation_supersedes_only_matching_legacy_direct_clai
     assert still_pending["claim_id"] in fact_ids
 
 
+def test_verified_identity_success_survives_temporary_claim_cleanup_failure(tmp_path, monkeypatch) -> None:
+    store, claims = _service(tmp_path, monkeypatch)
+    boss = IdentityService(store).resolve("wecom_callback", "wx-owner", tenant_id=TENANT)
+    record_pending_runtime_identity(
+        store,
+        tenant_id=TENANT,
+        user_id="wx-pending-retry-cleanup",
+        platform="wecom_callback",
+        user_name="临时显示名",
+        chat_id="chat-pending-retry-cleanup",
+    )
+    old_claim = claims.submit_claim(
+        identity=boss,
+        tenant_id=TENANT,
+        claim_type="person_status",
+        reference_ids=[],
+        payload={"staff_user_id": "wx-pending-retry-cleanup", "campus_id": "campus-a", "state": "active"},
+        operation_id="legacy-status-before-retry:submit",
+        allow_authorized_statement_without_legacy=True,
+    )["claim"]
+
+    original_supersede = GovernanceClaimService._supersede_claims_replaced_by_pending_identity_activation
+
+    def temporarily_unavailable(*_args, **_kwargs):
+        raise GovernanceError("claim_follower_store_temporarily_unavailable")
+
+    monkeypatch.setattr(GovernanceClaimService, "_supersede_claims_replaced_by_pending_identity_activation", temporarily_unavailable)
+    activated = claims.activate_confirmed_pending_identity(
+        identity=boss,
+        tenant_id=TENANT,
+        staff_user_id="wx-pending-retry-cleanup",
+        person_name="李老师",
+        role="teacher",
+        campus_id="campus-a",
+        operation_id="authoritative-activation-with-follower-outage",
+    )
+
+    # Business Truth is the verified authority write, not the follower's
+    # temporary availability.  A user-facing Tool wrapper therefore receives
+    # a completed activation result rather than a false failure.
+    assert activated["recorded"] is True
+    assert activated["execution_receipt"]["status"] == "completed"
+    assert activated["execution_receipt"]["writeback_verified"] is True
+    assert activated["claim_supersession"]["state"] == "pending_retry"
+    resolved = IdentityService(store).resolve("wecom_callback", "wx-pending-retry-cleanup", tenant_id=TENANT)
+    assert (resolved.person_name, resolved.role, resolved.approval_state) == ("李老师", "teacher", "approved")
+    before_retry = store.read_json(CLAIMS_FILE, {})["claims"][old_claim["claim_id"]]
+    assert before_retry["state"] == "awaiting_confirmation"
+
+    # The durable follower task remains in the authority aggregate.  A later
+    # Agenda cycle retries exactly that technical cleanup; it cannot repeat
+    # person or employment creation and does not surface the stale Claim as
+    # a business ticket while it is pending.
+    agenda = CurrentWorkspaceAgenda(data_dir=store.data_dir, tenant_id=TENANT)
+    facts_during_outage = agenda._governance_agenda_facts(store)
+    assert old_claim["claim_id"] not in {str(fact.get("claim_id") or "") for fact in facts_during_outage}
+
+    monkeypatch.setattr(GovernanceClaimService, "_supersede_claims_replaced_by_pending_identity_activation", original_supersede)
+    facts = agenda._governance_agenda_facts(store)
+    after_retry = store.read_json(CLAIMS_FILE, {})["claims"][old_claim["claim_id"]]
+    assert after_retry["state"] == "superseded_by_authoritative_activation"
+    assert old_claim["claim_id"] not in {str(fact.get("claim_id") or "") for fact in facts}
+    authority = store.read_json("personnel_service_governance_v1.json", {})
+    assert [row["staff_user_id"] for row in authority["people"]].count("wx-pending-retry-cleanup") == 1
+    assert [row["staff_user_id"] for row in authority["employments"]].count("wx-pending-retry-cleanup") == 1
+    task = next(row for row in authority["identity_claim_reconciliations"] if row["staff_user_id"] == "wx-pending-retry-cleanup")
+    assert task["state"] == "completed"
+    assert task["attempt_count"] >= 2
+
+
 def test_direct_confirmed_failure_is_terminal_audit_not_an_agenda_confirmation(tmp_path, monkeypatch) -> None:
     store, claims = _service(tmp_path, monkeypatch)
     boss = IdentityService(store).resolve("wecom_callback", "wx-owner", tenant_id=TENANT)

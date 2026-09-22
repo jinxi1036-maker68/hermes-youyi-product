@@ -19,6 +19,7 @@ import uuid
 
 from .models import UserIdentity
 from .store import TuoguanStore, TuoguanStoreError
+from .write_guard import authorized_system_write
 
 try:
     from .personnel_service_governance_v1 import GovernanceError, PersonnelServiceGovernance, SERVICE_TYPES
@@ -629,16 +630,34 @@ class GovernanceClaimService:
         receipt = receipt_payload.get("execution_receipt") or {}
         if receipt.get("status") != "completed" or receipt.get("writeback_verified") is not True:
             raise ClaimError("pending_identity_authoritative_writeback_not_verified")
-        supersession = self._supersede_claims_replaced_by_pending_identity_activation(
-            identity=identity,
+        reconciliation = result.get("claim_reconciliation") or {}
+        reconciliation_id = str(reconciliation.get("reconciliation_id") or "")
+        # Claim cleanup is a follower of the verified identity write.  It is
+        # deliberately attempted immediately, but a transient follower-store
+        # failure must never turn a completed identity Receipt into a false
+        # "activation failed" user outcome.
+        outcomes = self.reconcile_pending_identity_claims(
             tenant_id=tenant_id,
-            staff_user_id=staff_user_id,
-            role=role,
-            campus_id=campus_id,
-            successor_operation_id=str(result.get("operation_id") or operation_id),
-            successor_receipt=receipt,
-            operation_id=operation_id + ":supersede_replaced_claims",
+            reconciliation_ids={reconciliation_id} if reconciliation_id else None,
         )
+        if outcomes:
+            supersession = outcomes[0]
+        else:
+            # The first call may already have completed the durable follower.
+            # An idempotent replay must surface that established result rather
+            # than report a fictitious pending cleanup.
+            task = self.governance.identity_claim_reconciliation(
+                tenant_id=tenant_id,
+                reconciliation_id=reconciliation_id,
+            ) or {}
+            claim_operation_id = str(task.get("last_claim_operation_id") or "")
+            claim_entry = _doc(self.store.read_json(CLAIMS_FILE, _empty())).get("operations", {}).get(claim_operation_id) or {}
+            stored = deepcopy(claim_entry.get("result") or {}) if isinstance(claim_entry, dict) else {}
+            supersession = {
+                "state": str(task.get("state") or "pending_retry"),
+                "reconciliation_id": reconciliation_id,
+                **stored,
+            }
         return {
             "result": result,
             "execution_receipt": deepcopy(receipt),
@@ -655,6 +674,7 @@ class GovernanceClaimService:
         staff_user_id: str,
         role: str,
         campus_id: str,
+        source_cutoff_at: str = "",
     ) -> bool:
         """Whether a previously active Claim asserts exactly the fact now verified.
 
@@ -666,6 +686,9 @@ class GovernanceClaimService:
         """
 
         if str(claim.get("tenant_id") or "") != tenant_id:
+            return False
+        created_at = str(claim.get("created_at") or "")
+        if source_cutoff_at and (not created_at or created_at > source_cutoff_at):
             return False
         if str(claim.get("state") or "") not in {
             "awaiting_confirmation",
@@ -697,6 +720,8 @@ class GovernanceClaimService:
         successor_operation_id: str,
         successor_receipt: dict[str, Any],
         operation_id: str,
+        source_cutoff_at: str = "",
+        authorised_by: str = "",
     ) -> dict[str, Any]:
         """Close only obsolete active Claims after their fact is verified.
 
@@ -720,6 +745,7 @@ class GovernanceClaimService:
                     staff_user_id=staff_user_id,
                     role=role,
                     campus_id=campus_id,
+                    source_cutoff_at=source_cutoff_at,
                 ):
                     continue
                 claim.update({
@@ -734,7 +760,7 @@ class GovernanceClaimService:
                         "campus_id": campus_id,
                         "successor_operation_id": successor_operation_id,
                         "successor_receipt_id": receipt_id,
-                        "authorised_by": identity.canonical_user_id,
+                        "authorised_by": str(authorised_by or identity.canonical_user_id),
                     },
                     "updated_at": _now(),
                 })
@@ -751,6 +777,103 @@ class GovernanceClaimService:
             action="governance_claims_superseded_by_pending_identity_activation",
             callback=apply,
         )
+
+    @staticmethod
+    def _reconciliation_identity(tenant_id: str) -> UserIdentity:
+        actor = "service:identity_claim_reconciliation:" + str(tenant_id)
+        return UserIdentity(
+            platform="identity_claim_reconciliation",
+            platform_user_id=actor,
+            canonical_user_id=actor,
+            person_name="身份 Claim 收尾服务",
+            role="boss",
+            approval_state="approved",
+        )
+
+    def reconcile_pending_identity_claims(
+        self,
+        *,
+        tenant_id: str,
+        reconciliation_ids: set[str] | None = None,
+    ) -> list[dict[str, Any]]:
+        """Finish durable Claim followers of already verified activations.
+
+        This is a narrow execution-integrity worker, never a model Tool or a
+        business decision path.  Every task was created in the same protected
+        mutation as a successful pending-to-approved identity transition.  A
+        retry can therefore only terminalise predecessor Claims described by
+        that immutable successor fact; it cannot create people, employments,
+        permissions or a new governance decision.
+        """
+
+        wanted = {str(value) for value in (reconciliation_ids or set()) if str(value)}
+        tasks = self.governance.pending_identity_claim_reconciliations(tenant_id=tenant_id)
+        outcomes: list[dict[str, Any]] = []
+        for task in tasks:
+            task_id = str(task.get("reconciliation_id") or "")
+            if wanted and task_id not in wanted:
+                continue
+            service_identity = self._reconciliation_identity(tenant_id)
+            operation_id = "system:identity_claim_reconciliation:" + task_id
+            try:
+                with authorized_system_write(
+                    self.store.data_dir,
+                    job_name="identity_claim_reconciliation",
+                    allowed_files={CLAIMS_FILE, "personnel_service_governance_v1.json"},
+                ):
+                    result = self._supersede_claims_replaced_by_pending_identity_activation(
+                        identity=service_identity,
+                        tenant_id=tenant_id,
+                        staff_user_id=str(task.get("staff_user_id") or ""),
+                        role=str(task.get("role") or ""),
+                        campus_id=str(task.get("campus_id") or ""),
+                        successor_operation_id=str(task.get("successor_operation_id") or ""),
+                        successor_receipt={"operation_id": str(task.get("successor_operation_id") or "")},
+                        operation_id=operation_id,
+                        source_cutoff_at=str(task.get("source_cutoff_at") or ""),
+                        authorised_by=str(task.get("authorised_by") or ""),
+                    )
+                    self.governance.record_identity_claim_reconciliation_outcome(
+                        tenant_id=tenant_id,
+                        reconciliation_id=task_id,
+                        succeeded=True,
+                        claim_operation_id=operation_id,
+                    )
+                outcomes.append({
+                    "state": "completed",
+                    "reconciliation_id": task_id,
+                    **result,
+                })
+            except (ClaimError, GovernanceError, TuoguanStoreError) as exc:
+                error = str(exc) or "identity_claim_reconciliation_failed"
+                # Preserve the verified identity success.  The task stays
+                # pending and will be retried by the Agenda lifecycle; its
+                # matching predecessor Claims are suppressed from Agenda in
+                # the meantime so no false owner-confirmation work appears.
+                try:
+                    with authorized_system_write(
+                        self.store.data_dir,
+                        job_name="identity_claim_reconciliation_failure_audit",
+                        allowed_files={"personnel_service_governance_v1.json"},
+                    ):
+                        self.governance.record_identity_claim_reconciliation_outcome(
+                            tenant_id=tenant_id,
+                            reconciliation_id=task_id,
+                            succeeded=False,
+                            claim_operation_id=operation_id + ":failed:" + str(int(task.get("attempt_count") or 0) + 1),
+                            error_code=error,
+                        )
+                except (GovernanceError, TuoguanStoreError):
+                    # The completed identity Receipt remains the source of
+                    # Business Truth even if only follower telemetry is down.
+                    pass
+                outcomes.append({
+                    "state": "pending_retry",
+                    "reconciliation_id": task_id,
+                    "error": error,
+                    "superseded_claim_ids": [],
+                })
+        return outcomes
 
     def resolve_claim_conflict(self, *, identity: UserIdentity, tenant_id: str, claim_id: str, resolution: str, operation_id: str) -> dict[str, Any]:
         """Record a human choice; it never merges legacy people or students."""

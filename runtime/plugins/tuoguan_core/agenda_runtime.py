@@ -470,8 +470,22 @@ class CurrentWorkspaceAgenda:
         facts: list[dict[str, object]] = []
         try:
             from .personnel_service_governance_v1 import PersonnelServiceGovernance
+            from .governance_claims_v1 import GovernanceClaimService
 
-            for raw in PersonnelServiceGovernance(store).agenda_facts(tenant_id=self.tenant_id):
+            governance = PersonnelServiceGovernance(store)
+            # This performs only durable follower cleanup born from an
+            # already verified identity activation.  It neither ranks work nor
+            # creates an Agenda fact; a temporary failure is intentionally
+            # contained below so stale predecessor Claims cannot become a
+            # false request for owner confirmation.
+            claim_service = GovernanceClaimService(
+                governance=governance,
+                legacy_data_dir=store.data_dir,
+            )
+            claim_service.reconcile_pending_identity_claims(tenant_id=self.tenant_id)
+            pending_reconciliations = governance.pending_identity_claim_reconciliations(tenant_id=self.tenant_id)
+
+            for raw in governance.agenda_facts(tenant_id=self.tenant_id):
                 if isinstance(raw, dict):
                     facts.append(dict(raw))
         except Exception:
@@ -485,6 +499,25 @@ class CurrentWorkspaceAgenda:
                     continue
                 state = str(claim.get("state") or "")
                 if state not in {"awaiting_confirmation", "awaiting_boss_identity_activation", "conflicted"}:
+                    continue
+                # A pending reconciliation task is itself proof that the
+                # authoritative identity transition has completed.  While its
+                # follower Claim write is retrying, never turn that already
+                # superseded predecessor into a new Agenda ticket.  The
+                # structural comparison is confined to userid/role/campus and
+                # predecessor time; it does not inspect payload prose or make
+                # a business decision.
+                if any(
+                    claim_service._is_replaced_by_pending_identity_activation(
+                        claim,
+                        tenant_id=self.tenant_id,
+                        staff_user_id=str(task.get("staff_user_id") or ""),
+                        role=str(task.get("role") or ""),
+                        campus_id=str(task.get("campus_id") or ""),
+                        source_cutoff_at=str(task.get("source_cutoff_at") or ""),
+                    )
+                    for task in pending_reconciliations
+                ):
                     continue
                 facts.append({
                     "kind": "governance_claim_" + state,

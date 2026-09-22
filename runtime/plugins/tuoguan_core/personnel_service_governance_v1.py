@@ -26,7 +26,10 @@ from .store import TuoguanStore, TuoguanStoreError
 
 CAPABILITY_ID = "xiaoyou.personnel_service_governance"
 CAPABILITY_VERSION = "0.3.0-candidate"
-SCHEMA_VERSION = 3
+# v4 adds a durable, non-business follower ledger for Claim cleanup after a
+# verified pending-identity activation.  Older v3 documents are upgraded
+# additively by ``_state``; no people, employments or history are rewritten.
+SCHEMA_VERSION = 4
 DATA_FILE = "personnel_service_governance_v1.json"
 
 # A person has a lifecycle state. An employment row is an assignment period,
@@ -78,6 +81,11 @@ def _blank_state() -> dict[str, Any]:
         "work_links": [],
         "handovers": [],
         "change_requests": [],
+        # A completed pending-identity activation may need to close old
+        # Claim projections in a separate ledger.  The task is written in the
+        # same authority mutation as the identity itself, so a follower write
+        # outage can never make the verified identity success disappear.
+        "identity_claim_reconciliations": [],
         "operations": {},
         "audit": [],
     }
@@ -416,8 +424,28 @@ class PersonnelServiceGovernance:
                 "created_by": identity.canonical_user_id,
                 "activated_by": identity.canonical_user_id,
             }
+            reconciliation = {
+                "reconciliation_id": _id("identity_claim_reconciliation"),
+                "tenant_id": tenant_id,
+                "staff_user_id": staff_user_id,
+                "role": role,
+                "campus_id": campus_id,
+                "state": "pending",
+                # Do not retrospectively close a Claim created after this
+                # formal activation.  Only predecessor Claims can be a
+                # mechanically derived projection of the just-verified fact.
+                "source_cutoff_at": now,
+                "successor_operation_id": operation_id,
+                "authorised_by": identity.canonical_user_id,
+                "created_at": now,
+                "updated_at": now,
+                "attempt_count": 0,
+                "last_error_code": "",
+                "completed_at": "",
+            }
             doc["people"].append(person)
             doc["employments"].append(employment)
+            doc["identity_claim_reconciliations"].append(reconciliation)
             # This transition is deliberately in the same persisted document
             # mutation as person/employment creation.  The post-mutation
             # identity-authority validator therefore sees only one coherent
@@ -436,6 +464,7 @@ class PersonnelServiceGovernance:
                     "to": "approved",
                     "pending_observed_at": str(pending_record.get("first_seen_at") or ""),
                 },
+                "claim_reconciliation": deepcopy(reconciliation),
             }
 
         return self._mutate(
@@ -443,6 +472,97 @@ class PersonnelServiceGovernance:
             identity=identity,
             tenant_id=tenant_id,
             action="pending_runtime_identity_confirmed_and_activated",
+            mutate=apply,
+        )
+
+    def pending_identity_claim_reconciliations(self, *, tenant_id: str) -> list[dict[str, Any]]:
+        """Return durable follower work created by already-verified activations.
+
+        This is not an Agenda business fact and is never model input.  It is
+        an execution-integrity ledger used only to finish a later Claim
+        projection without reconsidering the boss's already completed action.
+        """
+
+        return [
+            deepcopy(row)
+            for row in self.snapshot().get("identity_claim_reconciliations") or []
+            if isinstance(row, dict)
+            and str(row.get("tenant_id") or "") == tenant_id
+            and str(row.get("state") or "") == "pending"
+        ]
+
+    def identity_claim_reconciliation(self, *, tenant_id: str, reconciliation_id: str) -> dict[str, Any] | None:
+        """Read one follower task for an idempotent Tool replay."""
+
+        wanted = str(reconciliation_id or "").strip()
+        if not wanted:
+            return None
+        for row in self.snapshot().get("identity_claim_reconciliations") or []:
+            if (
+                isinstance(row, dict)
+                and str(row.get("tenant_id") or "") == tenant_id
+                and str(row.get("reconciliation_id") or "") == wanted
+            ):
+                return deepcopy(row)
+        return None
+
+    def record_identity_claim_reconciliation_outcome(
+        self,
+        *,
+        tenant_id: str,
+        reconciliation_id: str,
+        succeeded: bool,
+        claim_operation_id: str,
+        error_code: str = "",
+    ) -> dict[str, Any]:
+        """Record a system follower outcome without changing business truth.
+
+        The caller is an internal, fixed reconciliation worker, not a model
+        Tool.  It may only update an existing task born from a verified
+        pending-identity activation; it cannot create people, employments or
+        permissions and therefore cannot act as a second business decider.
+        """
+
+        task_id = str(reconciliation_id or "").strip()
+        if not task_id:
+            raise GovernanceError("identity_claim_reconciliation_id_required")
+        service_identity = UserIdentity(
+            platform="identity_claim_reconciliation",
+            platform_user_id="service:identity_claim_reconciliation:" + tenant_id,
+            canonical_user_id="service:identity_claim_reconciliation:" + tenant_id,
+            person_name="身份 Claim 收尾服务",
+            role="boss",
+            approval_state="approved",
+        )
+        attempt_key = str(claim_operation_id or "").strip() or "attempt"
+
+        def apply(doc: dict[str, Any]) -> dict[str, Any]:
+            row = next((
+                item for item in doc["identity_claim_reconciliations"]
+                if isinstance(item, dict) and str(item.get("reconciliation_id") or "") == task_id
+            ), None)
+            if not isinstance(row, dict) or str(row.get("tenant_id") or "") != tenant_id:
+                raise GovernanceError("identity_claim_reconciliation_not_found")
+            if str(row.get("state") or "") == "completed":
+                return {"reconciliation": deepcopy(row), "already_completed": True}
+            row.update({
+                "state": "completed" if succeeded else "pending",
+                "updated_at": _now(),
+                "last_claim_operation_id": attempt_key,
+                "last_error_code": "" if succeeded else str(error_code or "claim_reconciliation_failed"),
+                "attempt_count": int(row.get("attempt_count") or 0) + 1,
+                "completed_at": _now() if succeeded else "",
+            })
+            return {"reconciliation": deepcopy(row), "already_completed": False}
+
+        # This server-created actor is deliberately scoped to technical
+        # follower bookkeeping.  The normal trusted identity validator still
+        # protects the aggregate and the audit makes the service actor clear.
+        return self._mutate(
+            operation_id="system:identity_claim_reconciliation:" + task_id + ":" + attempt_key,
+            identity=service_identity,
+            tenant_id=tenant_id,
+            action="identity_claim_reconciliation_outcome_recorded",
             mutate=apply,
         )
 
