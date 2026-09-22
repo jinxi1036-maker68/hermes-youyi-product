@@ -2518,16 +2518,34 @@ def _on_pre_tool_call(**kwargs: Any) -> dict[str, str] | None:
     return None
 
 
+_FRAMEWORK_COMPACTION_REPLY_RE = re.compile(
+    r"^\[\s*system\s*:\s*compacted\s*\(\s*tokens\s*:\s*"
+    r"\d[\d,]*\s*(?:→|->)\s*\d[\d,]*\s*\)\s*\]$",
+    re.IGNORECASE,
+)
+
+
+def _is_framework_compaction_reply(value: str) -> bool:
+    """Recognize Hermes/provider compaction control text, never business prose."""
+
+    return bool(_FRAMEWORK_COMPACTION_REPLY_RE.fullmatch(str(value or "").strip()))
+
+
 def _is_framework_terminal_reply_unavailable(value: str) -> bool:
     """Recognize Hermes' own terminal diagnostic, never user/business text."""
 
-    lowered = str(value or "").strip().lower()
-    return not lowered or any(
-        marker in lowered
-        for marker in (
-            "model returned no content after all retries",
-            "the request failed:",
-            "processing completed but no response was generated",
+    raw = str(value or "").strip()
+    lowered = raw.lower()
+    return (
+        not lowered
+        or _is_framework_compaction_reply(raw)
+        or any(
+            marker in lowered
+            for marker in (
+                "model returned no content after all retries",
+                "the request failed:",
+                "processing completed but no response was generated",
+            )
         )
     )
 
@@ -2643,6 +2661,26 @@ def _on_transform_llm_output(**kwargs: Any) -> str | None:
         if _is_framework_terminal_reply_unavailable(response_text):
             return ""
         return None
+    if _is_framework_compaction_reply(response_text):
+        # Hermes 0.21 exposes transform_llm_output as the last pre-delivery
+        # text boundary. A provider/framework compaction status is control
+        # metadata, not an answer to the current user turn. It must never be
+        # sent to WeCom or persisted as successful business prose.
+        _record_trace_guard_event(
+            session_id,
+            guard="framework_control_reply",
+            result="compaction_status_blocked",
+        )
+        if platform in {"robot_poc", "wecom_callback"}:
+            _stage_direct_reply_terminal(
+                session_id=session_id,
+                turn_id=turn_id,
+                terminal_state="failed",
+                provider_succeeded=False,
+                final_reply_text="",
+                trace_ref="framework-compaction-control:" + session_id,
+            )
+        return "我刚才没有完成这次处理，请重新发一次刚才的指令。"
     # A Tool-owned artifact wins over the model's prose.  It is only present
     # after the model selected the Tool and that Tool returned a matching,
     # verified render for this exact server-attested direct turn.  Returning
@@ -3050,10 +3088,15 @@ def register(ctx) -> None:
     ):
         if hook_name in VALID_HOOKS:
             ctx.register_hook(hook_name, handler)
+    # Hermes 0.21 documents transform_llm_output as the final pre-delivery
+    # response boundary. Keep it registered even when post_gateway_response is
+    # available; the latter is an observer after delivery and cannot protect
+    # WeCom from framework/control text.
+    if "transform_llm_output" in VALID_HOOKS:
+        ctx.register_hook("transform_llm_output", _on_transform_llm_output)
     if "post_gateway_response" in VALID_HOOKS:
         ctx.register_hook("post_gateway_response", _on_post_gateway_response)
     else:
-        ctx.register_hook("transform_llm_output", _on_transform_llm_output)
         ctx.register_hook("post_llm_call", _on_post_llm_call_v020)
     for name, schema, handler in selected_tools:
         ctx.register_tool(
