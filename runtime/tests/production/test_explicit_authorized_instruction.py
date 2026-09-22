@@ -10,7 +10,7 @@ from tuoguan_core.agenda_runtime import CurrentWorkspaceAgenda
 from tuoguan_core.identity import IdentityService
 from tuoguan_core.personnel_identity_authority import ACCESS_KEY, AUTHORITY_KEY, record_pending_runtime_identity
 from tuoguan_core.personnel_service_governance_v1 import GovernanceError, PersonnelServiceGovernance
-from tuoguan_core.store import TuoguanStore
+from tuoguan_core.store import TuoguanStore, TuoguanStoreError
 from tuoguan_core.tool_service import TuoguanToolService
 
 
@@ -338,6 +338,105 @@ def test_verified_identity_success_survives_temporary_claim_cleanup_failure(tmp_
     task = next(row for row in authority["identity_claim_reconciliations"] if row["staff_user_id"] == "wx-pending-retry-cleanup")
     assert task["state"] == "completed"
     assert task["attempt_count"] >= 2
+
+
+def test_verified_identity_success_survives_follower_state_and_claim_ledger_read_outages(tmp_path, monkeypatch) -> None:
+    store, claims = _service(tmp_path, monkeypatch)
+    boss = IdentityService(store).resolve("wecom_callback", "wx-owner", tenant_id=TENANT)
+    record_pending_runtime_identity(
+        store,
+        tenant_id=TENANT,
+        user_id="wx-pending-follower-read",
+        platform="wecom_callback",
+        user_name="临时显示名",
+        chat_id="chat-pending-follower-read",
+    )
+    old_claim = claims.submit_claim(
+        identity=boss,
+        tenant_id=TENANT,
+        claim_type="person_status",
+        reference_ids=[],
+        payload={"staff_user_id": "wx-pending-follower-read", "campus_id": "campus-a", "state": "active"},
+        operation_id="legacy-status-before-follower-read-outage:submit",
+        allow_authorized_statement_without_legacy=True,
+    )["claim"]
+
+    original_pending = PersonnelServiceGovernance.pending_identity_claim_reconciliations
+
+    def follower_state_unavailable(self, *, tenant_id: str):
+        raise GovernanceError("identity_claim_reconciliation_state_temporarily_unavailable")
+
+    # The authority transition and Receipt finish before this follower read.
+    # Its temporary outage must not rewrite the completed business result.
+    monkeypatch.setattr(PersonnelServiceGovernance, "pending_identity_claim_reconciliations", follower_state_unavailable)
+    activated = claims.activate_confirmed_pending_identity(
+        identity=boss,
+        tenant_id=TENANT,
+        staff_user_id="wx-pending-follower-read",
+        person_name="李老师",
+        role="teacher",
+        campus_id="campus-a",
+        operation_id="authoritative-activation-with-follower-read-outage",
+    )
+    assert activated["recorded"] is True
+    assert activated["execution_receipt"]["status"] == "completed"
+    assert activated["execution_receipt"]["writeback_verified"] is True
+    assert activated["claim_supersession"]["state"] == "pending_retry"
+    assert activated["claim_supersession"]["technical_state"] == "follower_status_unavailable"
+    resolved = IdentityService(store).resolve("wecom_callback", "wx-pending-follower-read", tenant_id=TENANT)
+    assert (resolved.person_name, resolved.role, resolved.approval_state) == ("李老师", "teacher", "approved")
+
+    # When the follower authority ledger cannot be read, Agenda fails closed:
+    # it must not surface the predecessor Claim as a boss-confirmation ticket.
+    agenda = CurrentWorkspaceAgenda(data_dir=store.data_dir, tenant_id=TENANT)
+    facts_during_follower_read_outage = agenda._governance_agenda_facts(store)
+    assert old_claim["claim_id"] not in {str(fact.get("claim_id") or "") for fact in facts_during_follower_read_outage}
+
+    monkeypatch.setattr(PersonnelServiceGovernance, "pending_identity_claim_reconciliations", original_pending)
+    original_reconcile = GovernanceClaimService.reconcile_pending_identity_claims
+    original_read_json = store.read_json
+
+    def defer_reconciliation(*_args, **_kwargs):
+        return []
+
+    def claim_ledger_unavailable(name, fallback):
+        if name == CLAIMS_FILE:
+            raise TuoguanStoreError("claim ledger temporarily unavailable")
+        return original_read_json(name, fallback)
+
+    # An idempotent replay can also lose only its Claim-ledger status read.
+    # It remains a completed identity activation and leaves the durable task
+    # for a later normal Agenda retry.
+    monkeypatch.setattr(GovernanceClaimService, "reconcile_pending_identity_claims", defer_reconciliation)
+    monkeypatch.setattr(store, "read_json", claim_ledger_unavailable)
+    replay = claims.activate_confirmed_pending_identity(
+        identity=boss,
+        tenant_id=TENANT,
+        staff_user_id="wx-pending-follower-read",
+        person_name="李老师",
+        role="teacher",
+        campus_id="campus-a",
+        operation_id="authoritative-activation-with-follower-read-outage",
+    )
+    assert replay["recorded"] is True
+    assert replay["execution_receipt"]["status"] == "completed"
+    assert replay["execution_receipt"]["writeback_verified"] is True
+    assert replay["claim_supersession"]["state"] == "pending_retry"
+    assert replay["claim_supersession"]["technical_state"] == "follower_status_unavailable"
+    facts_during_claim_ledger_read_outage = agenda._governance_agenda_facts(store)
+    assert old_claim["claim_id"] not in {str(fact.get("claim_id") or "") for fact in facts_during_claim_ledger_read_outage}
+
+    monkeypatch.setattr(GovernanceClaimService, "reconcile_pending_identity_claims", original_reconcile)
+    monkeypatch.setattr(store, "read_json", original_read_json)
+    facts_after_recovery = agenda._governance_agenda_facts(store)
+    claim = store.read_json(CLAIMS_FILE, {})["claims"][old_claim["claim_id"]]
+    authority = store.read_json("personnel_service_governance_v1.json", {})
+    task = next(row for row in authority["identity_claim_reconciliations"] if row["staff_user_id"] == "wx-pending-follower-read")
+    assert claim["state"] == "superseded_by_authoritative_activation"
+    assert task["state"] == "completed"
+    assert old_claim["claim_id"] not in {str(fact.get("claim_id") or "") for fact in facts_after_recovery}
+    assert [row["staff_user_id"] for row in authority["people"]].count("wx-pending-follower-read") == 1
+    assert [row["staff_user_id"] for row in authority["employments"]].count("wx-pending-follower-read") == 1
 
 
 def test_direct_confirmed_failure_is_terminal_audit_not_an_agenda_confirmation(tmp_path, monkeypatch) -> None:

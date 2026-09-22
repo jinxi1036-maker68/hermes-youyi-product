@@ -636,27 +636,40 @@ class GovernanceClaimService:
         # deliberately attempted immediately, but a transient follower-store
         # failure must never turn a completed identity Receipt into a false
         # "activation failed" user outcome.
-        outcomes = self.reconcile_pending_identity_claims(
-            tenant_id=tenant_id,
-            reconciliation_ids={reconciliation_id} if reconciliation_id else None,
-        )
-        if outcomes:
-            supersession = outcomes[0]
-        else:
-            # The first call may already have completed the durable follower.
-            # An idempotent replay must surface that established result rather
-            # than report a fictitious pending cleanup.
-            task = self.governance.identity_claim_reconciliation(
+        try:
+            outcomes = self.reconcile_pending_identity_claims(
                 tenant_id=tenant_id,
-                reconciliation_id=reconciliation_id,
-            ) or {}
-            claim_operation_id = str(task.get("last_claim_operation_id") or "")
-            claim_entry = _doc(self.store.read_json(CLAIMS_FILE, _empty())).get("operations", {}).get(claim_operation_id) or {}
-            stored = deepcopy(claim_entry.get("result") or {}) if isinstance(claim_entry, dict) else {}
+                reconciliation_ids={reconciliation_id} if reconciliation_id else None,
+            )
+            if outcomes:
+                supersession = outcomes[0]
+            else:
+                # The first call may already have completed the durable follower.
+                # An idempotent replay must surface that established result rather
+                # than report a fictitious pending cleanup.
+                task = self.governance.identity_claim_reconciliation(
+                    tenant_id=tenant_id,
+                    reconciliation_id=reconciliation_id,
+                ) or {}
+                claim_operation_id = str(task.get("last_claim_operation_id") or "")
+                claim_entry = _doc(self.store.read_json(CLAIMS_FILE, _empty())).get("operations", {}).get(claim_operation_id) or {}
+                stored = deepcopy(claim_entry.get("result") or {}) if isinstance(claim_entry, dict) else {}
+                supersession = {
+                    "state": str(task.get("state") or "pending_retry"),
+                    "reconciliation_id": reconciliation_id,
+                    **stored,
+                }
+        except Exception:
+            # Everything below the verified Receipt is a technical follower.
+            # In particular, temporary reads of its own ledger or the Claim
+            # ledger must never make the user-facing identity activation look
+            # unsuccessful.  The reconciliation task was persisted atomically
+            # with the authority transition and Agenda will retry it later.
             supersession = {
-                "state": str(task.get("state") or "pending_retry"),
+                "state": "pending_retry",
                 "reconciliation_id": reconciliation_id,
-                **stored,
+                "technical_state": "follower_status_unavailable",
+                "superseded_claim_ids": [],
             }
         return {
             "result": result,
@@ -807,7 +820,22 @@ class GovernanceClaimService:
         """
 
         wanted = {str(value) for value in (reconciliation_ids or set()) if str(value)}
-        tasks = self.governance.pending_identity_claim_reconciliations(tenant_id=tenant_id)
+        try:
+            tasks = self.governance.pending_identity_claim_reconciliations(tenant_id=tenant_id)
+        except Exception:
+            # A caller that already knows the durable reconciliation id (the
+            # just-completed activation) still receives a success-preserving
+            # pending outcome.  Agenda calls without an id fail closed below:
+            # it emits no Claim fact until this authority ledger is readable.
+            return [
+                {
+                    "state": "pending_retry",
+                    "reconciliation_id": reconciliation_id,
+                    "technical_state": "follower_status_unavailable",
+                    "superseded_claim_ids": [],
+                }
+                for reconciliation_id in sorted(wanted)
+            ]
         outcomes: list[dict[str, Any]] = []
         for task in tasks:
             task_id = str(task.get("reconciliation_id") or "")
@@ -844,7 +872,7 @@ class GovernanceClaimService:
                     "reconciliation_id": task_id,
                     **result,
                 })
-            except (ClaimError, GovernanceError, TuoguanStoreError) as exc:
+            except Exception as exc:
                 error = str(exc) or "identity_claim_reconciliation_failed"
                 # Preserve the verified identity success.  The task stays
                 # pending and will be retried by the Agenda lifecycle; its
@@ -863,7 +891,7 @@ class GovernanceClaimService:
                             claim_operation_id=operation_id + ":failed:" + str(int(task.get("attempt_count") or 0) + 1),
                             error_code=error,
                         )
-                except (GovernanceError, TuoguanStoreError):
+                except Exception:
                     # The completed identity Receipt remains the source of
                     # Business Truth even if only follower telemetry is down.
                     pass

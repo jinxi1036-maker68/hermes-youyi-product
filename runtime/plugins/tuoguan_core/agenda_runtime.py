@@ -491,7 +491,15 @@ class CurrentWorkspaceAgenda:
         except Exception:
             self._audit("governance_fact_source_unavailable", detail={})
             return facts
-        claims = store.read_json("governance_claims_v1.json", {})
+        try:
+            claims = store.read_json("governance_claims_v1.json", {})
+        except Exception:
+            # Claim-ledger visibility is a prerequisite for emitting Claim
+            # work.  Do not turn a temporary read failure into speculative
+            # owner-confirmation work, especially where a durable successor
+            # reconciliation may already have replaced the predecessor.
+            self._audit("governance_claim_ledger_unavailable", detail={})
+            return facts
         rows = claims.get("claims") if isinstance(claims, dict) else {}
         if isinstance(rows, dict):
             for claim in rows.values():
