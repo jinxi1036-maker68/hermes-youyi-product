@@ -80,7 +80,7 @@ STUDENT_SERVICE_CLAIM_SCHEMA = _schema(
 )
 
 PERSON_STATUS_CLAIM_SCHEMA = _schema(
-    "记录老板或店长已经明确确认的当前人员状态。只用于在职、暂停或离职等事实；必须先从权威人员查询取得 staff_user_id。旧 staff 记录本身不能作为当前状态。若离职仍缺交接信息，应先追问，不能调用。",
+    "记录老板或店长已经明确确认的当前人员状态。只用于已经存在于权威人员中的在职、暂停或离职等事实；首次启用服务器记录为 pending 的企业微信账号必须使用 pending identity activation Tool，不能用本 Tool 组合恢复状态和任职。必须先从权威人员查询取得 staff_user_id。旧 staff 记录本身不能作为当前状态。若离职仍缺交接信息，应先追问，不能调用。",
     {
         "reference_ids": {"type": "array", "items": {"type": "string"}, "description": "可选旧参考；不得编造。"},
         "staff_user_id": {"type": "string", "description": "从权威人员查询返回的 staff_user_id。"},
@@ -101,6 +101,17 @@ PERSON_ASSIGNMENT_CLAIM_SCHEMA = _schema(
         "campus_id": {"type": "string"},
     },
     ["reference_ids", "staff_user_id", "role", "campus_id"],
+)
+
+PENDING_IDENTITY_ACTIVATION_SCHEMA = _schema(
+    "仅当当前已认证的老板明确要求把一个已由服务器记录为 pending 的企业微信账号正式确认为人员并启用角色时使用。这个单一受保护 Tool 会原子完成 pending 身份批准、正式展示姓名、当前任职关系和角色启用，并通过 Receipt/writeback 验证。staff_user_id 必须来自本轮可信人员目录/待确认身份结果；不得用姓名或旧 staff 资料猜 userid。不要把这件事拆成恢复状态、创建任职或多个 Claim。",
+    {
+        "staff_user_id": {"type": "string", "description": "本轮可信目录或 pending 身份结果返回的企业微信 userid。"},
+        "person_name": {"type": "string", "description": "老板明确确认的正式业务展示姓名；不用于身份匹配。"},
+        "role": {"type": "string", "enum": ["boss", "manager", "teacher"]},
+        "campus_id": {"type": "string", "description": "老板明确确认的当前任职校区。"},
+    },
+    ["staff_user_id", "person_name", "role", "campus_id"],
 )
 
 HANDOVER_OPEN_SCHEMA = _schema(
@@ -253,6 +264,16 @@ def build_governance_claim_tools(
                             payload=claim_payload,
                             operation_id=operation_id,
                         )
+                    if action == "activate_pending_identity":
+                        return claims.activate_confirmed_pending_identity(
+                            identity=service.identity,
+                            tenant_id=tenant_id,
+                            staff_user_id=str(payload.get("staff_user_id") or ""),
+                            person_name=str(payload.get("person_name") or ""),
+                            role=str(payload.get("role") or ""),
+                            campus_id=str(payload.get("campus_id") or ""),
+                            operation_id=operation_id,
+                        )
                     if action == "confirm":
                         return claims.confirm_claim(
                             identity=service.identity, tenant_id=tenant_id,
@@ -261,7 +282,7 @@ def build_governance_claim_tools(
                         )
                     raise ClaimError("unsupported_claim_write_action")
 
-                if action in {"query_reference", "submit", "record", "confirm"}:
+                if action in {"query_reference", "submit", "record", "confirm", "activate_pending_identity"}:
                     # A progressive claim is a real, audited Workspace change
                     # even when it only records an unconfirmed observation.
                     # Route it through the product's public Capability write
@@ -269,6 +290,18 @@ def build_governance_claim_tools(
                     # idempotency ledger and receipt/writeback truth apply.
                     def execute() -> dict[str, Any]:
                         candidate = invoke()
+                        if bool(candidate.get("execution_failed")):
+                            # The terminal Claim mutation only records an
+                            # audit/failure fact.  It is not the requested
+                            # governance write and must never satisfy the
+                            # Capability receipt's writeback proof.
+                            return {
+                                "ok": False,
+                                "error": str(candidate.get("error") or "governance_execution_failed"),
+                                "data": candidate,
+                                "writeback_verified": False,
+                                "message": "当前已确认的治理操作执行失败；失败已留审计，但没有形成待确认事项。",
+                            }
                         candidate_receipt = candidate.get("execution_receipt") if isinstance(candidate, dict) else None
                         verified = bool(
                             (candidate_receipt or {}).get("writeback_verified")
@@ -327,6 +360,7 @@ def build_governance_claim_tools(
         ("tuoguan_record_confirmed_student_service", STUDENT_SERVICE_CLAIM_SCHEMA, handler("record", "student_service")),
         ("tuoguan_record_confirmed_person_status", PERSON_STATUS_CLAIM_SCHEMA, handler("record", "person_status")),
         ("tuoguan_record_confirmed_person_assignment", PERSON_ASSIGNMENT_CLAIM_SCHEMA, handler("record", "person_assignment")),
+        ("tuoguan_activate_confirmed_pending_identity", PENDING_IDENTITY_ACTIVATION_SCHEMA, handler("activate_pending_identity")),
         ("tuoguan_record_confirmed_handover_open", HANDOVER_OPEN_SCHEMA, handler("record", "handover_open")),
         ("tuoguan_record_confirmed_handover_complete", HANDOVER_COMPLETE_SCHEMA, handler("record", "handover_complete")),
         ("tuoguan_record_confirmed_governance_decision", GOVERNANCE_DECISION_CLAIM_SCHEMA, handler("record")),

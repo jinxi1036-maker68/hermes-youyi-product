@@ -159,6 +159,7 @@ class DirectReplyRecoveryManager:
                     original_turn_id TEXT NOT NULL,
                     receipt_json TEXT NOT NULL DEFAULT '',
                     operation_id TEXT NOT NULL DEFAULT '',
+                    agenda_user_message_text TEXT NOT NULL DEFAULT '',
                     reply_id TEXT NOT NULL DEFAULT '',
                     recovery_session_id TEXT NOT NULL DEFAULT '',
                     recovery_state TEXT NOT NULL DEFAULT '',
@@ -181,6 +182,17 @@ class DirectReplyRecoveryManager:
                 );
                 """
             )
+            # Existing production evidence is retained.  The column gives an
+            # Agenda service turn one typed, model-authored user-message
+            # artifact; raw WorkEnvelope/claim/ticket material never doubles
+            # as a delivery body merely because Hermes completed the turn.
+            columns = {
+                str(row[1]) for row in connection.execute("PRAGMA table_info(direct_reply_turns)")
+            }
+            if "agenda_user_message_text" not in columns:
+                connection.execute(
+                    "ALTER TABLE direct_reply_turns ADD COLUMN agenda_user_message_text TEXT NOT NULL DEFAULT ''"
+                )
 
     @staticmethod
     def _identity_value(turn: Any, name: str) -> str:
@@ -567,6 +579,65 @@ class DirectReplyRecoveryManager:
                 )
         return job
 
+    def prepare_agenda_user_message(
+        self,
+        *,
+        agent_session_id: str,
+        agent_turn_id: str,
+        trusted_turn_id: str = "",
+        text: str,
+    ) -> dict[str, str]:
+        """Persist one model-selected user-facing expression for an Agenda turn.
+
+        This does *not* decide that anyone should be notified, rewrite the
+        text, select a recipient or create a delivery.  Hermes selected this
+        public Tool and supplied the expression.  The recipient remains the
+        ticket's server-attested destination, and release happens only after
+        the complete Agent terminal callback.  The separate typed artifact is
+        the boundary that prevents an Agent's raw working notes, Claim rows or
+        runtime context from becoming WeCom text.
+        """
+
+        session = str(agent_session_id or "").strip()
+        turn = str(agent_turn_id or "").strip()
+        trusted_turn = str(trusted_turn_id or "").strip()
+        message = str(text or "").strip()
+        if not session or not (turn or trusted_turn):
+            raise WorkRuntimeRejected("agenda_user_message_turn_missing")
+        if not message:
+            raise WorkRuntimeRejected("agenda_user_message_empty")
+        row = self._row_for_turn_aliases(
+            agent_session_id=session,
+            agent_turn_id=turn,
+            trusted_turn_id=trusted_turn,
+        )
+        if row is None or str(row["channel"] or "") != "agenda_service_work":
+            raise WorkRuntimeRejected("agenda_user_message_untrusted_turn")
+        existing = str(row["agenda_user_message_text"] or "").strip()
+        if existing and existing != message:
+            # One ticket may create at most one terminal human-facing
+            # expression.  Multiple separate recipients require separate
+            # trusted tickets/partitions rather than a model-created fanout.
+            raise WorkRuntimeRejected("agenda_user_message_already_prepared")
+        if not existing:
+            with closing(self._connect()) as connection:
+                changed = connection.execute(
+                    """UPDATE direct_reply_turns SET agenda_user_message_text=?, updated_at=?
+                       WHERE direct_turn_id=? AND agenda_user_message_text=''""",
+                    (message, time.time(), str(row["direct_turn_id"])),
+                ).rowcount
+            if changed != 1:
+                # Re-read for a deterministic result under a duplicate Tool
+                # callback.  A different concurrent message is never chosen.
+                current = self._row_for_turn_aliases(
+                    agent_session_id=session,
+                    agent_turn_id=turn,
+                    trusted_turn_id=trusted_turn,
+                )
+                if current is None or str(current["agenda_user_message_text"] or "").strip() != message:
+                    raise WorkRuntimeRejected("agenda_user_message_write_conflict")
+        return {"state": "prepared", "text": message}
+
     def stage_proactive_notice(
         self,
         *,
@@ -661,9 +732,10 @@ class DirectReplyRecoveryManager:
         """Stage a completed Agenda service turn into the shared outbox.
 
         A verified Tool receipt becomes normal Business Truth and may use the
-        established same-Hermes, zero-Tool recovery path. A reply without a
-        receipt is only an Agent notice: it is deliverable if Hermes produced
-        it, but it cannot claim business success and cannot be regenerated.
+        established same-Hermes, zero-Tool recovery path. Without a receipt,
+        only an explicitly prepared, model-authored Agenda user-message may
+        become an Agent notice. The raw terminal callback is never a delivery
+        body: it is working-channel evidence and may contain service context.
         """
 
         ticket = str(ticket_id or "").strip()
@@ -682,6 +754,15 @@ class DirectReplyRecoveryManager:
         destination = ReplyDestination(**json.loads(str(row["destination_json"])))
         trace_ref = str(raw_trace_ref or "agenda-terminal:" + str(row["direct_turn_id"]))
         fact = self._fact(row)
+        # The raw Agent response is a working-channel terminal signal, not a
+        # delivery artifact.  It can include Tool reasoning or the structured
+        # Workspace material that the ticket deliberately supplied.  Only a
+        # separately model-selected, server-bound Agenda user-message artifact
+        # may be delivered without Business Truth.  A verified receipt still
+        # preserves same-Hermes reply-only recovery when no such artifact was
+        # prepared; it never exposes the raw terminal response.
+        prepared_message = str(row["agenda_user_message_text"] or "").strip()
+        delivery_text = prepared_message
         if fact is not None:
             job = self.outbox.observe_agent_terminal(
                 partition=partition,
@@ -691,7 +772,7 @@ class DirectReplyRecoveryManager:
                 provider_succeeded=provider_succeeded,
                 raw_trace_ref=trace_ref,
                 business=fact,
-                final_reply_text=str(final_reply_text or ""),
+                final_reply_text=delivery_text,
                 delivery_hold=True,
             )
             if job is None:
@@ -711,7 +792,7 @@ class DirectReplyRecoveryManager:
                     destination=job.destination,
                     now=time.time(),
                 )
-        else:
+        elif delivery_text:
             job = self.outbox.observe_agent_notice(
                 notice_id="agenda-notice:" + ticket,
                 partition=partition,
@@ -720,8 +801,14 @@ class DirectReplyRecoveryManager:
                 terminal_state=str(terminal_state),
                 provider_succeeded=provider_succeeded,
                 raw_trace_ref=trace_ref,
-                final_reply_text=str(final_reply_text or ""),
+                final_reply_text=delivery_text,
             )
+        else:
+            # A no-Receipt service turn that did not explicitly prepare a
+            # user message completed internal work only.  It is correctly
+            # acknowledged by Agenda, but cannot create a user-visible
+            # notification from raw service context.
+            return None
         if job is not None:
             with closing(self._connect()) as connection:
                 connection.execute(

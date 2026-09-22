@@ -20,7 +20,7 @@ import uuid
 # keep the governance package runtime-neutral while still working in isolated
 # certification where it is imported as ``tuoguan_core``.
 from .models import UserIdentity
-from .personnel_identity_authority import IdentityAuthorityError, validate_runtime_identity_document
+from .personnel_identity_authority import ACCESS_KEY, IdentityAuthorityError, validate_runtime_identity_document
 from .store import TuoguanStore, TuoguanStoreError
 
 
@@ -326,6 +326,125 @@ class PersonnelServiceGovernance:
             person.update({"state": "active", "activated_at": _now(), "activated_by": identity.canonical_user_id})
             return {"person": deepcopy(person), "employment": deepcopy(row), "identity_activation_requires_runtime_bridge": True}
         return self._mutate(operation_id=operation_id, identity=identity, tenant_id=tenant_id, action="employment_activated", mutate=apply)
+
+    def activate_confirmed_pending_identity(
+        self,
+        *,
+        identity: UserIdentity,
+        tenant_id: str,
+        staff_user_id: str,
+        person_name: str,
+        role: str,
+        campus_id: str,
+        operation_id: str,
+    ) -> dict[str, Any]:
+        """Atomically promote one server-recorded pending channel identity.
+
+        This is intentionally *not* composed from ``create_pending_employment``
+        and ``activate_employment``.  In an enforced authority aggregate a
+        verified channel userid cannot temporarily exist in both
+        ``identity_access.pending`` and ``people``.  Creating the person in one
+        operation and removing pending access in another would violate that
+        invariant and, more importantly, would leave a half-enabled identity
+        after a failure.  The caller is a boss whose current Turn was already
+        attested by the Runtime Contract; this method never consults a name or
+        legacy directory to select the userid.
+        """
+
+        staff_user_id = str(staff_user_id or "").strip()
+        person_name = str(person_name or "").strip()
+        campus_id = str(campus_id or "").strip()
+        role = str(role or "").strip().lower()
+        if not staff_user_id:
+            raise GovernanceError("pending_identity_userid_required")
+        if not person_name:
+            raise GovernanceError("pending_identity_display_name_required")
+        if not campus_id:
+            raise GovernanceError("pending_identity_campus_required")
+        if role not in {"boss", "manager", "teacher"}:
+            raise GovernanceError("pending_identity_role_invalid")
+
+        def apply(doc: dict[str, Any]) -> dict[str, Any]:
+            self._require_boss(identity)
+            access = doc.setdefault(ACCESS_KEY, {"pending": {}, "rejected": {}})
+            pending = access.setdefault("pending", {})
+            rejected = access.setdefault("rejected", {})
+            if staff_user_id in rejected:
+                raise GovernanceError("pending_identity_rejected")
+            pending_record = pending.get(staff_user_id)
+            if not isinstance(pending_record, dict):
+                raise GovernanceError("pending_identity_not_found")
+            if self._person(doc, tenant_id=tenant_id, user_id=staff_user_id) is not None:
+                # Never guess how a pre-existing partial record should be
+                # reconciled.  The mutation is all-or-nothing, so this leaves
+                # the authority aggregate untouched for a separately audited
+                # correction.
+                raise GovernanceError("pending_identity_person_conflict")
+            if any(
+                isinstance(row, dict)
+                and str(row.get("tenant_id") or "") == tenant_id
+                and str(row.get("staff_user_id") or "") == staff_user_id
+                and not str(row.get("effective_until") or "")
+                for row in doc["employments"]
+            ):
+                raise GovernanceError("pending_identity_employment_conflict")
+
+            now = _now()
+            person = {
+                "person_id": _id("person"),
+                "tenant_id": tenant_id,
+                "staff_user_id": staff_user_id,
+                "display_name": person_name,
+                "state": "active",
+                "created_at": now,
+                "created_by": identity.canonical_user_id,
+                "activated_at": now,
+                "activated_by": identity.canonical_user_id,
+                "authority_origin": "confirmed_pending_runtime_identity",
+            }
+            employment = {
+                "employment_id": _id("employment"),
+                "tenant_id": tenant_id,
+                "staff_user_id": staff_user_id,
+                "role": role,
+                "campus_id": campus_id,
+                "managed_campus_ids": [campus_id] if role == "manager" else [],
+                "state": "active",
+                "effective_from": now,
+                "effective_until": "",
+                "created_at": now,
+                "created_by": identity.canonical_user_id,
+                "activated_by": identity.canonical_user_id,
+            }
+            doc["people"].append(person)
+            doc["employments"].append(employment)
+            # This transition is deliberately in the same persisted document
+            # mutation as person/employment creation.  The post-mutation
+            # identity-authority validator therefore sees only one coherent
+            # truth: approved active person, active employment, no pending
+            # access entry.
+            del pending[staff_user_id]
+            access["pending"] = pending
+            access["rejected"] = rejected
+            doc[ACCESS_KEY] = access
+            return {
+                "person": deepcopy(person),
+                "employment": deepcopy(employment),
+                "identity_transition": {
+                    "staff_user_id": staff_user_id,
+                    "from": "pending",
+                    "to": "approved",
+                    "pending_observed_at": str(pending_record.get("first_seen_at") or ""),
+                },
+            }
+
+        return self._mutate(
+            operation_id=operation_id,
+            identity=identity,
+            tenant_id=tenant_id,
+            action="pending_runtime_identity_confirmed_and_activated",
+            mutate=apply,
+        )
 
     def transfer_employment(self, *, identity: UserIdentity, tenant_id: str, employment_id: str, target_campus_id: str, operation_id: str) -> dict[str, Any]:
         """Close one active employment period and open another without role escalation.

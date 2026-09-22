@@ -737,7 +737,7 @@ class CurrentWorkspaceAgenda:
         if source_kinds == {"workspace_task"}:
             capability_text = (
                 "本任务服务回合提供 agenda_task_read_current_work_facts、agenda_task_read_runtime_context、"
-                "agenda_task_contact_current_task_party 和 agenda_schedule_current_task_recheck。先读取事实。"
+                "agenda_task_contact_current_task_party、agenda_schedule_current_task_recheck 和 agenda_task_publish_user_message。先读取事实。"
                 "若当前任务未终态，先判断是否存在现在可实际推进的下一步；例如当前责任人可信、允许联系，"
                 "且现有投递或人回复事实显示仍需要核实，你可以自行决定是否调用联系 Tool。"
                 "只有当前确实只能等待外部事实时，才调用复查 Tool 写入一个未来关注时间。"
@@ -748,13 +748,13 @@ class CurrentWorkspaceAgenda:
             )
         elif source_kinds == {"personnel_service_governance"}:
             capability_text = (
-                "本治理服务回合只提供 agenda_governance_read_current_work_facts 和 agenda_governance_read_runtime_context；"
+                "本治理服务回合只提供 agenda_governance_read_current_work_facts、agenda_governance_read_runtime_context 和 agenda_governance_publish_user_message；"
                 "它们是模型可直接调用的可信 Tool，不是 tool_call 的参数；不要调用 tool_call 或 tuoguan_* 工具。"
             )
         else:
             capability_text = (
                 "本受限服务回合只提供 agenda_read_current_work_facts、agenda_query_current_work_items、"
-                "agenda_update_current_work_item 和 agenda_read_runtime_context；它们是模型可直接调用的可信 Tool，"
+                "agenda_update_current_work_item、agenda_read_runtime_context 和 agenda_service_publish_user_message；它们是模型可直接调用的可信 Tool，"
                 "不是 tool_call 的参数；不要调用 tool_call 或 tuoguan_* 工具。"
             )
         return (
@@ -765,6 +765,8 @@ class CurrentWorkspaceAgenda:
             + "它们是既有可信 Tool 的最小能力面，不预设你必须执行任何动作。"
             + "工作事实本身不是业务完成依据。没有成功读取到可信 Tool 结果时，不得声称事项已完成，也不得更新具体事项。"
             + "若选择写入，只能以本轮 Tool 的真实回执和写后验证为准；不要把这条唤醒本身当作完成依据。\n"
+            + "如果你已判断需要向本工单的可信接收人表达业务信息，必须调用本轮对应的 publish_user_message Tool 写入一段自然业务语言；"
+            + "普通最终文本不会被投递。不要复制或转述 claim、ticket、service、runtime、工作事实原文或其它内部材料。"
             + _json({"facts": payloads})
         )
 

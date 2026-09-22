@@ -139,6 +139,7 @@ class GovernanceClaimService:
         """Model-visible Tool descriptions; no text classifier or router."""
         return [
             {"name": "query_legacy_governance_reference", "purpose": "Read a legacy staff, student or work reference as unconfirmed evidence and reveal gaps/conflicts."},
+            {"name": "activate_confirmed_pending_identity", "purpose": "Atomically approve one server-recorded pending WeCom userid into a boss-confirmed active person and current employment; never compose it from status restoration steps."},
             {"name": "submit_governance_claim", "purpose": "Record an explicitly stated real-world governance fact for authorised human confirmation; does not itself make it true."},
             {"name": "confirm_governance_claim", "purpose": "Apply one authorised human-confirmed governance claim through Permission, Receipt and writeback verification."},
             {"name": "query_pending_governance_claims", "purpose": "Show outstanding confirmations or conflicts in the caller's permitted campus scope."},
@@ -484,22 +485,155 @@ class GovernanceClaimService:
             operation_id=operation_id + ":submit",
             allow_authorized_statement_without_legacy=True,
         )
+        # ``submit_claim`` is idempotent and intentionally returns its
+        # original operation result on a replay.  The Claim itself may have
+        # reached a later terminal state in the meantime, so direct-command
+        # retries must re-read that authoritative state rather than mistake a
+        # cached ``awaiting_confirmation`` snapshot for a new human decision.
         claim = submitted.get("claim") or {}
+        claim_id = str(claim.get("claim_id") or "")
+        if claim_id:
+            current = _doc(self.store.read_json(CLAIMS_FILE, _empty())).get("claims", {}).get(claim_id)
+            if isinstance(current, dict):
+                claim = deepcopy(current)
+                submitted = {**submitted, "claim": deepcopy(claim)}
+        if str(claim.get("state") or "") == "execution_failed":
+            # A duplicate callback must observe the same terminal failure,
+            # never reinterpret it as a fresh request for human confirmation.
+            return {
+                **submitted,
+                "recorded": False,
+                "execution_failed": True,
+                "error": str(claim.get("execution_error_code") or "governance_execution_failed"),
+            }
+        if str(claim.get("state") or "") == "confirmed":
+            # This is the other legitimate direct-command replay: report the
+            # original verified write, without calling the authority again.
+            receipt = deepcopy(claim.get("execution_receipt") or {})
+            return {
+                **submitted,
+                "execution_receipt": receipt,
+                "recorded": receipt.get("writeback_verified") is True,
+            }
         if str(claim.get("state") or "") != "awaiting_confirmation":
             return {
                 **submitted,
                 "recorded": False,
                 "requires_explicit_resolution": True,
             }
-        confirmed = self.confirm_claim(
-            identity=identity,
-            tenant_id=tenant_id,
-            claim_id=str(claim.get("claim_id") or ""),
-            operation_id=operation_id + ":confirm",
-        )
+        try:
+            confirmed = self.confirm_claim(
+                identity=identity,
+                tenant_id=tenant_id,
+                claim_id=claim_id,
+                operation_id=operation_id + ":confirm",
+            )
+        except (ClaimError, GovernanceError) as exc:
+            # A direct-confirmed Tool invocation has already received the
+            # human decision.  Its execution failure is an auditable terminal
+            # outcome, not a new request for the same human confirmation.  In
+            # particular, Agenda only scans non-terminal governance claims;
+            # leaving this one ``awaiting_confirmation`` would manufacture a
+            # false follow-up and could re-surface raw internal claim material
+            # to the owner.
+            failed = self._mark_direct_execution_failed(
+                identity=identity,
+                tenant_id=tenant_id,
+                claim_id=claim_id,
+                error_code=str(exc),
+                operation_id=operation_id + ":execution_failed",
+            )
+            return {
+                **failed,
+                "recorded": False,
+                "execution_failed": True,
+                "error": str(exc),
+            }
         return {
             **confirmed,
             "recorded": bool((confirmed.get("execution_receipt") or {}).get("writeback_verified")),
+        }
+
+    def _mark_direct_execution_failed(
+        self,
+        *,
+        identity: UserIdentity,
+        tenant_id: str,
+        claim_id: str,
+        error_code: str,
+        operation_id: str,
+    ) -> dict[str, Any]:
+        """Close an explicit-command Claim without making it Agenda work."""
+
+        def apply(doc: dict[str, Any]) -> dict[str, Any]:
+            claim = doc["claims"].get(claim_id)
+            if not isinstance(claim, dict):
+                raise ClaimError("claim_not_found")
+            if str(claim.get("tenant_id") or "") != tenant_id:
+                raise ClaimError("claim_tenant_mismatch")
+            if str(claim.get("state") or "") == "confirmed":
+                raise ClaimError("claim_already_confirmed")
+            claim.update({
+                "state": "execution_failed",
+                "authority_state": "unconfirmed",
+                "execution_failed_at": _now(),
+                "execution_failed_by": identity.canonical_user_id,
+                "execution_error_code": str(error_code or "governance_execution_failed"),
+                "requires_human_confirmation": False,
+                "updated_at": _now(),
+            })
+            return {"claim": deepcopy(claim), "no_write_performed": True}
+
+        return self._mutate(
+            operation_id=operation_id,
+            identity=identity,
+            tenant_id=tenant_id,
+            action="governance_claim_direct_execution_failed",
+            callback=apply,
+        )
+
+    def activate_confirmed_pending_identity(
+        self,
+        *,
+        identity: UserIdentity,
+        tenant_id: str,
+        staff_user_id: str,
+        person_name: str,
+        role: str,
+        campus_id: str,
+        operation_id: str,
+    ) -> dict[str, Any]:
+        """Apply one boss-confirmed pending identity activation end-to-end.
+
+        This is intentionally a governance operation rather than a Claim
+        saga: a pending channel identity is already a server-recorded fact and
+        the boss's current direct instruction is the confirmation.  There is
+        therefore no intermediate ``awaiting_confirmation`` object to leak
+        into Agenda if the protected write fails.
+        """
+
+        result = self.governance.activate_confirmed_pending_identity(
+            identity=identity,
+            tenant_id=tenant_id,
+            staff_user_id=staff_user_id,
+            person_name=person_name,
+            role=role,
+            campus_id=campus_id,
+            operation_id=operation_id + ":authority_write",
+        )
+        receipt_payload = receipt_for_candidate_write(
+            operation="activate_confirmed_pending_identity",
+            operation_id=operation_id + ":receipt",
+            invoke=lambda: result,
+        )
+        receipt = receipt_payload.get("execution_receipt") or {}
+        if receipt.get("status") != "completed" or receipt.get("writeback_verified") is not True:
+            raise ClaimError("pending_identity_authoritative_writeback_not_verified")
+        return {
+            "result": result,
+            "execution_receipt": deepcopy(receipt),
+            "authoritative_writeback_verified": True,
+            "recorded": True,
         }
 
     def resolve_claim_conflict(self, *, identity: UserIdentity, tenant_id: str, claim_id: str, resolution: str, operation_id: str) -> dict[str, Any]:

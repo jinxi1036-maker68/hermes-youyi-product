@@ -1358,6 +1358,7 @@ class TuoguanToolService:
             "governance_claim_submit",
             "governance_claim_record",
             "governance_claim_confirm",
+            "governance_claim_activate_pending_identity",
         }
         if compact_raw in {
             "你再试一下",
@@ -1501,9 +1502,21 @@ class TuoguanToolService:
             ):
                 result = execute()
         except Exception as exc:
+            # Capability domain failures are a truthful, stable outcome.  Do
+            # not erase them behind ``system_error``: the Agent needs to know
+            # whether the protected write was rejected before execution (for
+            # example ``person_not_suspended``) rather than treating every
+            # failure as an unknown infrastructure result.  Unexpected
+            # exceptions remain result-unknown and keep their opaque internal
+            # diagnostic type for audit only.
+            domain_error = str(exc or "").strip()
+            is_stable_domain_error = (
+                type(exc).__name__ in {"GovernanceError", "ClaimError", "IdentityAuthorityError", "AgendaTaskLifecycleError"}
+                and bool(re.fullmatch(r"[a-z0-9_:-]+", domain_error))
+            )
             result = self._error(
-                "system_error",
-                "本轮操作在执行阶段失败，未确认成功；失败状态已经记录，可按同一操作编号安全复查。",
+                domain_error if is_stable_domain_error else "system_error",
+                "本轮操作未执行成功；系统已保留失败事实，不会把它当作已完成。",
             )
             result["diagnostic_type"] = type(exc).__name__
         result_data = result.get("data") if isinstance(result.get("data"), dict) else {}

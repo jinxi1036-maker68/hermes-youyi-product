@@ -1859,6 +1859,57 @@ def model_tools(surface: str = ""):
     return (*fast_paths, *facades, *claims)
 
 
+def _agenda_user_message_schema() -> dict[str, Any]:
+    return {
+        "description": (
+            "仅当你已根据本轮可信事实自主判断需要向该 Agenda 工单已绑定的可信接收人说明业务结果、"
+            "需要的信息或下一步时调用。message 只能是一段自然、面向人的业务表达；不能包含工作事实原文、"
+            "claim、ticket、service、runtime、工具参数或其它内部材料。该 Tool 不决定是否通知、不选择收件人、"
+            "不执行业务动作，也不代表已经送达；它只把你已决定的用户面表达绑定到本工单，待完整 Agent 回合正常结束后"
+            "才由 Durable Outbox 按真实投递状态处理。"
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {"message": {"type": "string", "description": "面向已绑定可信接收人的自然业务消息。"}},
+            "required": ["message"],
+            "additionalProperties": False,
+        },
+    }
+
+
+def _agenda_publish_user_message(args: dict[str, Any] | None = None, **runtime_kwargs: Any) -> str:
+    """Bind one model-authored user message to the current trusted Agenda turn.
+
+    The function has no access to WorkEnvelope payload classification, no
+    recipient argument and no delivery API.  It is a typed boundary between
+    model-authored business expression and internal service material.
+    """
+
+    activate_trusted_turn(
+        session_id=runtime_kwargs.get("session_id"),
+        turn_id=runtime_kwargs.get("turn_id"),
+    )
+    turn = current_trusted_turn()
+    if turn is None or str(getattr(turn, "platform", "") or "").lower() != "agenda_service_work":
+        return tool_result({"ok": False, "error": "agenda_user_message_trusted_turn_missing", "message": "当前 Agenda 回合缺少可信投递上下文，本轮未准备外发消息。"})
+    try:
+        from .direct_reply_recovery import get_direct_reply_recovery_manager
+
+        prepared = get_direct_reply_recovery_manager().prepare_agenda_user_message(
+            agent_session_id=str(runtime_kwargs.get("session_id") or ""),
+            agent_turn_id=str(runtime_kwargs.get("turn_id") or ""),
+            trusted_turn_id=str(getattr(turn, "turn_id", "") or ""),
+            text=str(dict(args or {}).get("message") or ""),
+        )
+        return tool_result({
+            "ok": True,
+            "data": {"user_message_state": prepared["state"]},
+            "message": "已为本 Agenda 回合准备用户面业务表达；是否投递以本轮正常结束和真实送达状态为准。",
+        })
+    except Exception as exc:
+        return tool_result({"ok": False, "error": str(exc) or "agenda_user_message_unavailable", "message": "当前未能安全准备用户面消息，本轮不会把内部工作材料外发。"})
+
+
 def agenda_service_tools():
     """Expose the small service capability surface through its own toolset.
 
@@ -1930,11 +1981,14 @@ def agenda_service_tools():
         ("agenda_query_current_work_items", query_schema, "tuoguan_query_hermes_work_items"),
         ("agenda_update_current_work_item", update_schema, "tuoguan_update_hermes_work_item"),
         ("agenda_read_runtime_context", by_name["tuoguan_context"][0], "tuoguan_context"),
+        ("agenda_service_publish_user_message", _agenda_user_message_schema(), "__agenda_publish_user_message__"),
     )
     result = []
     for alias, schema, source in definitions:
         if source == "__agenda_read_current_work_facts__":
             result.append((alias, schema, _handler("read_agenda_work_facts")))
+        elif source == "__agenda_publish_user_message__":
+            result.append((alias, schema, _agenda_publish_user_message))
         elif source in by_name:
             result.append((alias, schema, by_name[source][1]))
     return tuple(result)
@@ -2068,6 +2122,7 @@ def agenda_task_tools():
     result = [("agenda_task_read_current_work_facts", facts_schema, _handler("read_agenda_work_facts"))]
     result.append(("agenda_task_contact_current_task_party", contact_schema, contact_current_task_party))
     result.append(("agenda_schedule_current_task_recheck", recheck_schema, schedule_recheck))
+    result.append(("agenda_task_publish_user_message", _agenda_user_message_schema(), _agenda_publish_user_message))
     if "tuoguan_context" in by_name:
         result.append(("agenda_task_read_runtime_context", by_name["tuoguan_context"][0], by_name["tuoguan_context"][1]))
     return tuple(result)
@@ -2089,6 +2144,7 @@ def agenda_governance_tools():
     }
     by_name = {name: (schema, handler) for name, schema, handler in LEGACY_TOOLS}
     result = [("agenda_governance_read_current_work_facts", facts_schema, _handler("read_agenda_work_facts"))]
+    result.append(("agenda_governance_publish_user_message", _agenda_user_message_schema(), _agenda_publish_user_message))
     if "tuoguan_context" in by_name:
         result.append(("agenda_governance_read_runtime_context", by_name["tuoguan_context"][0], by_name["tuoguan_context"][1]))
     return tuple(result)
