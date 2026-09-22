@@ -92,10 +92,11 @@ PERSON_STATUS_CLAIM_SCHEMA = _schema(
 )
 
 PERSON_ASSIGNMENT_CLAIM_SCHEMA = _schema(
-    "记录老板或有权限店长已经明确确认的一条人员任职关系。人员主状态与任职关系分开；调店或调班不把人员变成 transferred。不得用旧字段自动赋予角色。",
+    "记录老板或有权限店长已经明确确认的一条人员任职关系。当前已认证有权人本轮给出的明确、对象唯一且事实完整的指令本身就是确认：应直接调用本 Tool，在同一受保护写入中完成审计、确认和必要的身份启用；不得先创建候选再向同一人重复确认。对象不唯一、缺少必需事实、存在冲突、无权或属于额外确认的高风险操作时，才自然追问。人员主状态与任职关系分开；调店或调班不把人员变成 transferred。不得用旧字段自动赋予角色。",
     {
         "reference_ids": {"type": "array", "items": {"type": "string"}, "description": "可选旧参考；不得编造。"},
         "staff_user_id": {"type": "string"},
+        "person_name": {"type": "string", "description": "新增人员时必填：当前有权人员明确确认的正式业务展示姓名；只用于展示，不作为身份匹配依据。已存在的当前权威人员可留空。"},
         "role": {"type": "string", "enum": ["boss", "manager", "teacher"]},
         "campus_id": {"type": "string"},
     },

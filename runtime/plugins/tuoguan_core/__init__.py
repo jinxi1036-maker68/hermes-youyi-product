@@ -551,6 +551,12 @@ def _xiaoyou_core_skill_context(*, identity: Any) -> str:
         "只有结果明确暴露出必要缺口时再补查；同一参数不得重复查询，不要为了展示能力遍历工具。"
         "凡是本轮工具列表中已经可见的 tuoguan_ 工具，必须直接调用该工具，禁止再套用 tool_call；"
         "调用前按工具说明补齐必填参数，写工具的 operation_id 使用当前消息 id。"
+        "【明确授权指令的执行原则】当前可信用户发出对象明确、动作明确、权限允许的常规业务或治理指令时，"
+        "只要执行所需事实已在当前原话或可信工具结果中唯一确定、没有真实冲突，也不属于需要额外授权的高风险或不可逆操作，"
+        "当前指令本身就是所需确认：应在本回合直接调用相应受保护 Tool 执行。不得为同一事实重复向用户确认，"
+        "也不得索要已可从可信上下文取得的信息。只有对象不唯一、缺少不可取得的必要事实、无权、真实冲突，"
+        "或操作依法/制度上需要额外授权时才自然追问。执行成功后只用自然业务语言简洁说明做了什么、是否成功和真正影响结果的后续事项；"
+        "不要主动展开旧目录、白名单、账号绑定、收据、内部流程或与当前指令无关的外发事项。"
         "专项问题按需参考 youyi-digital-employee、youyi-tuoguan-business、active-information-acquisition、goal-management、"
         "memory-evidence-learning、institution-onboarding、student-service-relations；它们不是固定 Router。"
     )
