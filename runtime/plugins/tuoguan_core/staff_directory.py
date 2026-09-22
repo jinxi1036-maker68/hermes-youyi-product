@@ -70,7 +70,12 @@ def query_staff_directory(
             item = deepcopy(entry)
             item["match_score"] = 0
             filtered.append(item)
-    filtered.sort(key=lambda item: (-int(item.get("match_score") or 0), str(item.get("role") or ""), str(item.get("business_name") or "")))
+    filtered.sort(key=lambda item: (
+        -int(item.get("match_score") or 0),
+        -int(item.get("identity_authority_rank") or 0),
+        str(item.get("role") or ""),
+        str(item.get("business_name") or ""),
+    ))
     safe_limit = max(1, min(int(limit or 30), 100))
     rows = filtered[:safe_limit]
     repair_candidates = [entry["repair_candidate"] for entry in rows if isinstance(entry.get("repair_candidate"), dict)]
@@ -198,6 +203,7 @@ def _build_entries(store: TuoguanStore, *, include_pending_verified: bool = Fals
             "outbound_eligibility_reason": outbound_reason,
             "membership_status": status,
             "employment_status": employment_status,
+            "identity_authority_rank": 3 if runtime_identity is not None else 2 if pending_identity else 1,
             "identity_approval_state": employment_status if pending_identity or runtime_identity is not None else "",
             "server_verified_pending_identity": bool(pending_identity),
             "pending_display_hint": str(pending_identity.get("display_hint") or ""),
