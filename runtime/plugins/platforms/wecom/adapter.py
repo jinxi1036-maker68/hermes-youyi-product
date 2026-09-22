@@ -72,7 +72,7 @@ from utils import env_float
 
 from agent.secret_scope import UnscopedSecretError as _UnscopedSecretError
 from agent.secret_scope import get_secret as _scoped_get_secret
-from plugins.platforms.http_policy import create_safe_async_client, is_safe_platform_url, platform_httpx_limits
+from plugins.platforms.wecom.http_policy import create_safe_async_client, is_safe_platform_url, platform_httpx_limits
 
 
 def _get_scoped_secret(name, default=None):
