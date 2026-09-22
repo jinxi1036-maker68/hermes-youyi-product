@@ -117,6 +117,46 @@ def test_incomplete_or_non_boss_person_assignment_cannot_be_silently_activated(t
     assert all(row.get("staff_user_id") != "wx-ambiguous" for row in document["people"])
 
 
+def test_boss_staff_lookup_prefers_server_verified_pending_wecom_identity(tmp_path, monkeypatch) -> None:
+    store, _claims = _service(tmp_path, monkeypatch)
+    boss = IdentityService(store).resolve("wecom_callback", "wx-owner", tenant_id=TENANT)
+
+    # Mirror the production failure: an old staff row says CeShi/李老师 while
+    # the real inbound WeCom account has already been server-recorded as a
+    # pending userid.  The boss lookup must surface that trusted pending userid
+    # ahead of the legacy row so Hermes can invoke the dedicated activation Tool.
+    store.write_json("staff.json", {
+        "CeShi": {"name": "李老师", "role": "teacher", "status": "active"},
+    })
+    record_pending_runtime_identity(
+        store,
+        tenant_id=TENANT,
+        user_id="wx-real-ceshi",
+        platform="wecom_callback",
+        user_name="CeShi",
+        chat_id="chat-real-ceshi",
+    )
+
+    service = TuoguanToolService(
+        store=store,
+        platform="wecom_callback",
+        user_id="wx-owner",
+        user_name="机构负责人",
+        chat_id="chat-owner",
+        identity=boss,
+    )
+    result = service.query_staff_directory(query="CeShi", include_inactive=True)
+
+    assert result["ok"] is True
+    rows = result["data"]["staff"]
+    assert rows
+    assert rows[0]["user_id"] == "wx-real-ceshi"
+    assert rows[0]["server_verified_pending_identity"] is True
+    assert rows[0]["identity_approval_state"] == "pending"
+    assert rows[0]["membership_status"] == "企业微信账号已验证，待老板正式确认"
+    assert any(row["user_id"] == "CeShi" for row in rows[1:])
+
+
 def test_boss_can_atomically_activate_one_server_recorded_pending_wecom_identity(tmp_path, monkeypatch) -> None:
     store, claims = _service(tmp_path, monkeypatch)
     boss = IdentityService(store).resolve("wecom_callback", "wx-owner", tenant_id=TENANT)
