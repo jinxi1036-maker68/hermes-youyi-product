@@ -629,12 +629,128 @@ class GovernanceClaimService:
         receipt = receipt_payload.get("execution_receipt") or {}
         if receipt.get("status") != "completed" or receipt.get("writeback_verified") is not True:
             raise ClaimError("pending_identity_authoritative_writeback_not_verified")
+        supersession = self._supersede_claims_replaced_by_pending_identity_activation(
+            identity=identity,
+            tenant_id=tenant_id,
+            staff_user_id=staff_user_id,
+            role=role,
+            campus_id=campus_id,
+            successor_operation_id=str(result.get("operation_id") or operation_id),
+            successor_receipt=receipt,
+            operation_id=operation_id + ":supersede_replaced_claims",
+        )
         return {
             "result": result,
             "execution_receipt": deepcopy(receipt),
             "authoritative_writeback_verified": True,
+            "claim_supersession": supersession,
             "recorded": True,
         }
+
+    @staticmethod
+    def _is_replaced_by_pending_identity_activation(
+        claim: dict[str, Any],
+        *,
+        tenant_id: str,
+        staff_user_id: str,
+        role: str,
+        campus_id: str,
+    ) -> bool:
+        """Whether a previously active Claim asserts exactly the fact now verified.
+
+        This is a structural lifecycle comparison over already-declared Tool
+        arguments.  It neither interprets message text nor tries to decide
+        whether a different unconfirmed personnel fact is important.  In
+        particular, a different campus, role, suspension/exit state or any
+        conflicted Claim remains open for its normal human resolution.
+        """
+
+        if str(claim.get("tenant_id") or "") != tenant_id:
+            return False
+        if str(claim.get("state") or "") not in {
+            "awaiting_confirmation",
+            "awaiting_boss_identity_activation",
+        }:
+            return False
+        payload = claim.get("payload") or {}
+        if not isinstance(payload, dict):
+            return False
+        if str(payload.get("staff_user_id") or "") != staff_user_id:
+            return False
+        if str(payload.get("campus_id") or claim.get("campus_id") or "") != campus_id:
+            return False
+        kind = str(claim.get("claim_type") or "")
+        if kind == "person_status":
+            return str(payload.get("state") or "") == "active"
+        if kind == "person_assignment":
+            return str(payload.get("role") or "") == role
+        return False
+
+    def _supersede_claims_replaced_by_pending_identity_activation(
+        self,
+        *,
+        identity: UserIdentity,
+        tenant_id: str,
+        staff_user_id: str,
+        role: str,
+        campus_id: str,
+        successor_operation_id: str,
+        successor_receipt: dict[str, Any],
+        operation_id: str,
+    ) -> dict[str, Any]:
+        """Close only obsolete active Claims after their fact is verified.
+
+        Old direct-command failures from before the terminal-failure lifecycle
+        existed can have only an ``awaiting_confirmation`` row.  The later,
+        boss-authorised pending-identity activation is authoritative proof of
+        the same identity's active employment.  Preserve those rows and their
+        original evidence, but move only exact same-user/same-role/same-campus
+        predecessor Claims to an explicit terminal state so Agenda cannot
+        invent a new owner-confirmation task from obsolete work.
+        """
+
+        receipt_id = str(successor_receipt.get("receipt_id") or successor_receipt.get("operation_id") or "")
+
+        def apply(doc: dict[str, Any]) -> dict[str, Any]:
+            superseded: list[dict[str, Any]] = []
+            for claim in doc["claims"].values():
+                if not isinstance(claim, dict) or not self._is_replaced_by_pending_identity_activation(
+                    claim,
+                    tenant_id=tenant_id,
+                    staff_user_id=staff_user_id,
+                    role=role,
+                    campus_id=campus_id,
+                ):
+                    continue
+                claim.update({
+                    "state": "superseded_by_authoritative_activation",
+                    "authority_state": "superseded",
+                    "requires_human_confirmation": False,
+                    "superseded_at": _now(),
+                    "superseded_by": {
+                        "kind": "pending_identity_activation",
+                        "staff_user_id": staff_user_id,
+                        "role": role,
+                        "campus_id": campus_id,
+                        "successor_operation_id": successor_operation_id,
+                        "successor_receipt_id": receipt_id,
+                        "authorised_by": identity.canonical_user_id,
+                    },
+                    "updated_at": _now(),
+                })
+                superseded.append(deepcopy(claim))
+            return {
+                "superseded_claim_ids": [str(row.get("claim_id") or "") for row in superseded],
+                "superseded_claims": superseded,
+            }
+
+        return self._mutate(
+            operation_id=operation_id,
+            identity=identity,
+            tenant_id=tenant_id,
+            action="governance_claims_superseded_by_pending_identity_activation",
+            callback=apply,
+        )
 
     def resolve_claim_conflict(self, *, identity: UserIdentity, tenant_id: str, claim_id: str, resolution: str, operation_id: str) -> dict[str, Any]:
         """Record a human choice; it never merges legacy people or students."""

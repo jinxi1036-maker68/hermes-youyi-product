@@ -6,6 +6,7 @@ import json
 
 from tuoguan_core.governance_claims_v1 import CLAIMS_FILE, GovernanceClaimService
 from tuoguan_core.governance_claims_tool_surface_v1 import build_governance_claim_tools
+from tuoguan_core.agenda_runtime import CurrentWorkspaceAgenda
 from tuoguan_core.identity import IdentityService
 from tuoguan_core.personnel_identity_authority import ACCESS_KEY, AUTHORITY_KEY, record_pending_runtime_identity
 from tuoguan_core.personnel_service_governance_v1 import GovernanceError, PersonnelServiceGovernance
@@ -162,6 +163,111 @@ def test_boss_can_atomically_activate_one_server_recorded_pending_wecom_identity
     assert repeated["recorded"] is True
     replayed = store.read_json("personnel_service_governance_v1.json", {})
     assert [row["staff_user_id"] for row in replayed["people"]].count("wx-pending-teacher") == 1
+
+
+def test_pending_identity_activation_supersedes_only_matching_legacy_direct_claims(tmp_path, monkeypatch) -> None:
+    store, claims = _service(tmp_path, monkeypatch)
+    boss = IdentityService(store).resolve("wecom_callback", "wx-owner", tenant_id=TENANT)
+    record_pending_runtime_identity(
+        store,
+        tenant_id=TENANT,
+        user_id="wx-pending-legacy-chain",
+        platform="wecom_callback",
+        user_name="旧测试显示名",
+        chat_id="chat-pending-legacy-chain",
+    )
+
+    # These emulate the two pre-fix direct-command rows: the old path had
+    # begun a Claim before its attempted status/assignment execution failed,
+    # so its data retained no terminal failure marker of its own.
+    old_status = claims.submit_claim(
+        identity=boss,
+        tenant_id=TENANT,
+        claim_type="person_status",
+        reference_ids=[],
+        payload={"staff_user_id": "wx-pending-legacy-chain", "campus_id": "campus-a", "state": "active"},
+        operation_id="legacy-direct-status:submit",
+        allow_authorized_statement_without_legacy=True,
+    )["claim"]
+    old_assignment = claims.submit_claim(
+        identity=boss,
+        tenant_id=TENANT,
+        claim_type="person_assignment",
+        reference_ids=[],
+        payload={
+            "staff_user_id": "wx-pending-legacy-chain",
+            "person_name": "旧测试显示名",
+            "role": "teacher",
+            "campus_id": "campus-a",
+        },
+        operation_id="legacy-direct-assignment:submit",
+        allow_authorized_statement_without_legacy=True,
+    )["claim"]
+    # This is a real, still-pending but different governance fact.  The new
+    # formal activation must not silently close it.
+    still_pending = claims.submit_claim(
+        identity=boss,
+        tenant_id=TENANT,
+        claim_type="person_assignment",
+        reference_ids=[],
+        payload={
+            "staff_user_id": "wx-pending-legacy-chain",
+            "person_name": "旧测试显示名",
+            "role": "manager",
+            "campus_id": "campus-a",
+        },
+        operation_id="independent-pending-manager-assignment:submit",
+        allow_authorized_statement_without_legacy=True,
+    )["claim"]
+
+    activated = claims.activate_confirmed_pending_identity(
+        identity=boss,
+        tenant_id=TENANT,
+        staff_user_id="wx-pending-legacy-chain",
+        person_name="李老师",
+        role="teacher",
+        campus_id="campus-a",
+        operation_id="new-authoritative-pending-identity-activation",
+    )
+
+    assert activated["recorded"] is True
+    assert set(activated["claim_supersession"]["superseded_claim_ids"]) == {
+        old_status["claim_id"], old_assignment["claim_id"],
+    }
+    resolved = IdentityService(store).resolve("wecom_callback", "wx-pending-legacy-chain", tenant_id=TENANT)
+    assert (resolved.person_name, resolved.role, resolved.approval_state) == ("李老师", "teacher", "approved")
+
+    claim_document = store.read_json(CLAIMS_FILE, {})
+    for claim_id in (old_status["claim_id"], old_assignment["claim_id"]):
+        row = claim_document["claims"][claim_id]
+        assert row["state"] == "superseded_by_authoritative_activation"
+        assert row["authority_state"] == "superseded"
+        assert row["superseded_by"]["staff_user_id"] == "wx-pending-legacy-chain"
+        assert row["superseded_by"]["successor_operation_id"]
+    assert claim_document["claims"][still_pending["claim_id"]]["state"] == "awaiting_confirmation"
+
+    replay = claims.activate_confirmed_pending_identity(
+        identity=boss,
+        tenant_id=TENANT,
+        staff_user_id="wx-pending-legacy-chain",
+        person_name="李老师",
+        role="teacher",
+        campus_id="campus-a",
+        operation_id="new-authoritative-pending-identity-activation",
+    )
+    assert set(replay["claim_supersession"]["superseded_claim_ids"]) == {
+        old_status["claim_id"], old_assignment["claim_id"],
+    }
+
+    # Agenda sees only current work facts.  The two retained historical rows
+    # no longer generate tickets; the unrelated pending manager assignment
+    # remains visible for normal human confirmation.
+    agenda = CurrentWorkspaceAgenda(data_dir=store.data_dir, tenant_id=TENANT)
+    facts = agenda._governance_agenda_facts(store)
+    fact_ids = {str(fact.get("claim_id") or "") for fact in facts}
+    assert old_status["claim_id"] not in fact_ids
+    assert old_assignment["claim_id"] not in fact_ids
+    assert still_pending["claim_id"] in fact_ids
 
 
 def test_direct_confirmed_failure_is_terminal_audit_not_an_agenda_confirmation(tmp_path, monkeypatch) -> None:
