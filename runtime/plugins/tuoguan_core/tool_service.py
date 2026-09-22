@@ -4298,6 +4298,7 @@ class TuoguanToolService:
             query=query,
             role=role,
             include_inactive=include_inactive,
+            include_pending_verified=self.identity.role == "boss",
             limit=limit,
         )
         return self._ok("query_staff_directory", data=result, message=result.get("rendered_text", ""))
