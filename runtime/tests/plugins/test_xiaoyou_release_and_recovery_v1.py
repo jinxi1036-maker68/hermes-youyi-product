@@ -25,6 +25,7 @@ def test_release_package_is_versioned_and_tamper_evident(tmp_path):
     assert verification["ok"] is True
     assert verification["manifest"]["contains_business_data"] is False
     assert verification["manifest"]["contains_credentials"] is False
+    assert (release_root / "payload/runtime/plugins/platforms/wecom/http_policy.py").is_file()
     cache = release_root / "payload/scripts/__pycache__/generated.cpython-311.pyc"
     cache.parent.mkdir(parents=True, exist_ok=True)
     cache.write_bytes(b"runtime cache")
