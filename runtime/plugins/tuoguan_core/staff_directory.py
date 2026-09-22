@@ -8,7 +8,15 @@ import re
 import unicodedata
 
 from .store import TuoguanStore
-from .personnel_identity_authority import active_identity_snapshot
+from .personnel_identity_authority import (
+    ACCESS_KEY,
+    AUTHORITY_KEY,
+    DATA_FILE as PERSONNEL_AUTHORITY_DATA_FILE,
+    IdentityAuthorityError,
+    active_identity_snapshot,
+    authority_is_enforced,
+    validate_runtime_identity_document,
+)
 from .tenant_context import current_tenant_id, institution_display_names
 
 
@@ -25,6 +33,7 @@ def query_staff_directory(
     query: str = "",
     role: str = "",
     include_inactive: bool = False,
+    include_pending_verified: bool = False,
     limit: int = 30,
 ) -> dict[str, Any]:
     """Return a read-only staff roster with aliases and repair candidates.
@@ -34,7 +43,7 @@ def query_staff_directory(
     dedicated staff configuration flow.
     """
 
-    entries = _build_entries(store)
+    entries = _build_entries(store, include_pending_verified=include_pending_verified)
     raw_query = str(query or "")
     query_keys = _name_keys(raw_query, institution_prefixes=institution_display_names(store))
     requested_role = str(role or "").strip().lower() or _infer_role(raw_query)
@@ -43,7 +52,8 @@ def query_staff_directory(
         if requested_role and str(entry.get("role") or "") != requested_role:
             continue
         if not include_inactive and not entry.get("is_active_staff"):
-            continue
+            if not (include_pending_verified and query_keys and entry.get("server_verified_pending_identity")):
+                continue
         score = _match_score(entry, query_keys)
         if query_keys and score <= 0:
             continue
@@ -79,7 +89,7 @@ def query_staff_directory(
     }
 
 
-def _build_entries(store: TuoguanStore) -> list[dict[str, Any]]:
+def _build_entries(store: TuoguanStore, *, include_pending_verified: bool = False) -> list[dict[str, Any]]:
     staff = _dict(store.read_json("staff.json", {}))
     mapping = _dict(store.read_json("teacher_wecom_map.json", {}))
     whitelist = _dict(store.read_json("wecom_whitelist.json", {}))
@@ -87,6 +97,7 @@ def _build_entries(store: TuoguanStore) -> list[dict[str, Any]]:
     recipient_bindings = _dict(whitelist.get("wecom_contacts"))
     operational_facts = _staff_facts(store)
     runtime_identities = active_identity_snapshot(store, tenant_id=current_tenant_id())
+    pending_identities = _pending_runtime_identities(store) if include_pending_verified else {}
     institution_prefixes = institution_display_names(store)
     directory_members = {
         str(item.get("user_id") or item.get("userid") or ""): item
@@ -100,6 +111,7 @@ def _build_entries(store: TuoguanStore) -> list[dict[str, Any]]:
     user_ids.update(str(value) for value in mapping.values() if str(value))
     if runtime_identities is not None:
         user_ids.update(runtime_identities)
+    user_ids.update(pending_identities)
 
     entries: list[dict[str, Any]] = []
     aliases_by_user: dict[str, list[str]] = {}
@@ -111,9 +123,12 @@ def _build_entries(store: TuoguanStore) -> list[dict[str, Any]]:
         member = _dict(directory_members.get(user_id))
         fact = _dict(operational_facts.get(user_id))
         runtime_identity = runtime_identities.get(user_id) if isinstance(runtime_identities, dict) else None
+        pending_identity = _dict(pending_identities.get(user_id))
         role = (
             str(runtime_identity.role or "unknown")
             if runtime_identity is not None
+            else "unknown"
+            if pending_identity
             else _role_for(user_id, profile, member, roles, supers)
         )
         raw_aliases = _unique(
@@ -121,6 +136,7 @@ def _build_entries(store: TuoguanStore) -> list[dict[str, Any]]:
                 user_id,
                 str(profile.get("name") or ""),
                 str(member.get("name") or ""),
+                str(pending_identity.get("display_hint") or ""),
                 *aliases_by_user.get(user_id, []),
                 *[str(item) for item in fact.get("aliases") or [] if str(item)],
                 str(fact.get("business_name") or fact.get("confirmed_name") or ""),
@@ -135,6 +151,7 @@ def _build_entries(store: TuoguanStore) -> list[dict[str, Any]]:
         staff_name = str(profile.get("name") or "")
         business_name = (
             str(getattr(runtime_identity, "display_name", "") or "").strip()
+            or str(pending_identity.get("display_hint") or "").strip()
             or str(fact.get("business_name") or fact.get("confirmed_name") or "").strip()
             or staff_name
             or _clean_business_name(directory_name, institution_prefixes=institution_prefixes)
@@ -146,11 +163,15 @@ def _build_entries(store: TuoguanStore) -> list[dict[str, Any]]:
         employment_status = (
             str(runtime_identity.approval_state or "unknown").strip().lower()
             if runtime_identity is not None
+            else "pending"
+            if pending_identity
             else str(profile.get("status") or "active").strip().lower()
         )
         is_active_staff = (
             employment_status == "approved"
             if runtime_identity is not None
+            else False
+            if pending_identity
             else employment_status not in {"inactive", "left", "offboarded", "terminated", "离职", "停用"} and bool(in_directory or is_whitelisted or has_recipient_binding)
         )
         outbound_eligible, outbound_reason = _current_outbound_eligibility(store, user_id)
@@ -177,11 +198,14 @@ def _build_entries(store: TuoguanStore) -> list[dict[str, Any]]:
             "outbound_eligibility_reason": outbound_reason,
             "membership_status": status,
             "employment_status": employment_status,
+            "identity_approval_state": employment_status if pending_identity or runtime_identity is not None else "",
+            "server_verified_pending_identity": bool(pending_identity),
+            "pending_display_hint": str(pending_identity.get("display_hint") or ""),
             "is_active_staff": is_active_staff,
             "department_names": list(member.get("department_names") or []),
             "source_evidence": _evidence(
                 user_id, profile, member, aliases_by_user.get(user_id, []), fact,
-                is_whitelisted, has_recipient_binding,
+                is_whitelisted, has_recipient_binding, pending_identity,
             ),
         }
         repair = _repair_candidate(entry, institution_prefixes=institution_prefixes)
@@ -189,6 +213,28 @@ def _build_entries(store: TuoguanStore) -> list[dict[str, Any]]:
             entry["repair_candidate"] = repair
         entries.append(entry)
     return entries
+
+
+def _pending_runtime_identities(store: TuoguanStore) -> dict[str, dict[str, Any]]:
+    """Expose only server-recorded pending WeCom identities to boss directory reads."""
+
+    doc = _dict(store.read_json(PERSONNEL_AUTHORITY_DATA_FILE, {}))
+    if not authority_is_enforced(doc):
+        return {}
+    try:
+        validate_runtime_identity_document(doc)
+    except IdentityAuthorityError:
+        return {}
+    authority = _dict(doc.get(AUTHORITY_KEY))
+    if str(authority.get("tenant_id") or "").strip() != str(current_tenant_id() or "").strip():
+        return {}
+    access = _dict(doc.get(ACCESS_KEY))
+    pending = _dict(access.get("pending"))
+    return {
+        str(user_id): _dict(row)
+        for user_id, row in pending.items()
+        if str(user_id).strip() and isinstance(row, dict)
+    }
 
 
 def _staff_facts(store: TuoguanStore) -> dict[str, dict[str, Any]]:
@@ -225,6 +271,8 @@ def _match_score(entry: dict[str, Any], query_keys: set[str]) -> int:
 
 
 def _repair_candidate(entry: dict[str, Any], *, institution_prefixes: tuple[str, ...] = ()) -> dict[str, Any] | None:
+    if entry.get("server_verified_pending_identity"):
+        return None
     directory_name = str(entry.get("directory_name") or "")
     business_name = str(entry.get("business_name") or "")
     user_id = str(entry.get("user_id") or "")
@@ -307,6 +355,7 @@ def _evidence(
     fact: dict[str, Any],
     is_whitelisted: bool,
     has_recipient_binding: bool,
+    pending_identity: dict[str, Any] | None = None,
 ) -> list[dict[str, Any]]:
     rows: list[dict[str, Any]] = []
     if profile:
@@ -321,6 +370,15 @@ def _evidence(
         rows.append({"source": "wecom_recipient_binding", "user_id": user_id})
     if fact:
         rows.append({"source": "operational_facts.json", "user_id": user_id, "fact_id": fact.get("source_fact_id")})
+    if pending_identity:
+        rows.append({
+            "source": "runtime_identity_authority.pending",
+            "user_id": user_id,
+            "platform": pending_identity.get("platform"),
+            "display_hint": pending_identity.get("display_hint"),
+            "first_seen_at": pending_identity.get("first_seen_at"),
+            "last_seen_at": pending_identity.get("last_seen_at"),
+        })
     return rows
 
 
@@ -339,6 +397,8 @@ def _role_for(user_id: str, profile: dict[str, Any], member: dict[str, Any], rol
 
 
 def _membership_status(*, in_directory: bool, is_whitelisted: bool, has_recipient_binding: bool, member: dict[str, Any], employment_status: str = "active") -> str:
+    if str(employment_status or "").lower() == "pending":
+        return "企业微信账号已验证，待老板正式确认"
     if str(employment_status or "").lower() in {"inactive", "left", "offboarded", "terminated", "离职", "停用"}:
         return "已离职停用（保留历史）"
     if in_directory and is_whitelisted:
@@ -383,6 +443,7 @@ def _role_label(role: str) -> str:
         "manager": "店长",
         "teacher": "老师",
         "staff": "员工",
+        "unknown": "待确认",
     }.get(str(role or ""), str(role or "未知"))
 
 
