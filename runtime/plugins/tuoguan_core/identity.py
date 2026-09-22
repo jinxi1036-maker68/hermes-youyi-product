@@ -6,7 +6,14 @@ from datetime import datetime
 from typing import Any
 
 from .models import UserIdentity
+from .personnel_identity_authority import (
+    DATA_FILE as PERSONNEL_GOVERNANCE_DATA_FILE,
+    authority_is_enforced,
+    record_pending_runtime_identity,
+    resolve_runtime_identity,
+)
 from .store import TuoguanStore
+from .tenant_context import current_tenant_id
 
 
 _ROLE_ALIASES = {
@@ -121,8 +128,62 @@ class IdentityService:
         user_name: str = "",
         chat_id: str = "",
         message_text: str = "",
+        tenant_id: str = "",
     ) -> UserIdentity:
         platform_key = self._platform_key(platform)
+        trusted_tenant = str(tenant_id or current_tenant_id()).strip()
+        authority_enabled = authority_is_enforced(
+            self.store.read_json(PERSONNEL_GOVERNANCE_DATA_FILE, {}),
+        )
+        # The formal authority deliberately binds a *WeCom* verified userid.
+        # A Feishu sender whose opaque ID happens to have the same characters
+        # must not inherit a WeCom employee's role.  Robot is normalized by
+        # the Runtime Contract to its already verified WeCom principal before
+        # reaching this service.  A future non-WeCom bridge must be an
+        # explicit, server-attested binding; it cannot revive the old
+        # display-name bridge after authority cutover.
+        if authority_enabled and platform_key != "wecom":
+            return UserIdentity(
+                platform=platform_key,
+                platform_user_id=sender_id,
+                canonical_user_id=sender_id,
+                person_name="",
+                role="unknown",
+                approval_state="unmapped_platform_identity",
+            )
+        # ``sender_id`` is the verified channel userid.  Once the explicit
+        # personnel migration has enabled the authority aggregate, it is the
+        # only identity lookup key.  Display names, legacy aliases and model
+        # text may decorate a response but cannot pick a person or role.
+        authority = resolve_runtime_identity(
+            self.store,
+            tenant_id=trusted_tenant,
+            user_id=sender_id,
+        )
+        if authority is not None:
+            if authority.approval_state == "pending" and authority.reason == "unrecognized_verified_userid":
+                record_pending_runtime_identity(
+                    self.store,
+                    tenant_id=trusted_tenant,
+                    user_id=sender_id,
+                    platform=platform_key,
+                    user_name=user_name,
+                    chat_id=chat_id,
+                )
+                authority = resolve_runtime_identity(
+                    self.store,
+                    tenant_id=trusted_tenant,
+                    user_id=sender_id,
+                ) or authority
+            return UserIdentity(
+                platform=platform_key,
+                platform_user_id=sender_id,
+                canonical_user_id=sender_id,
+                person_name=authority.display_name or self._person_name(platform_key, sender_id),
+                role=authority.role,
+                approval_state=authority.approval_state,
+            )
+
         whitelist_name = f"{platform_key}_whitelist.json"
         data = self.store.read_json(whitelist_name, {})
         if not isinstance(data, dict):

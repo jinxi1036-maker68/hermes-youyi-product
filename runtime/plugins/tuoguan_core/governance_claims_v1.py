@@ -214,8 +214,8 @@ class GovernanceClaimService:
             permitted_ordinary = {"school", "grade", "class_name", "ordinary_contact", "ordinary_note"}
             if any(str(key) not in permitted_ordinary for key in ordinary_profile):
                 raise ClaimError("claim_ordinary_profile_contains_restricted_fields")
-        if claim_type == "person_assignment" and str(payload.get("role") or "") not in {"manager", "teacher"}:
-            raise ClaimError("claim_invalid_initial_role")
+        if claim_type == "person_assignment" and str(payload.get("role") or "") not in {"boss", "manager", "teacher"}:
+            raise ClaimError("claim_invalid_person_role")
         if claim_type == "person_status" and str(payload.get("state") or "") not in {"active", "suspended", "left"}:
             raise ClaimError("claim_invalid_person_state")
         if claim_type == "person_status" and str(payload.get("state") or "") == "left" and not str(payload.get("handover_id") or "").strip():
@@ -350,6 +350,56 @@ class GovernanceClaimService:
             result = self.governance.assign_service(identity=identity, tenant_id=tenant_id, student_id=str(payload.get("student_id") or ""), service_type=str(payload.get("service_type") or ""), class_or_course_id=str(payload.get("class_or_course_id") or ""), assignee_user_id=assignee_user_id, operation_id=claim_id + ":service_assign")
             return {"result": result, "operation": "assign_student_service"}
         if kind == "person_assignment":
+            staff_user_id = str(payload.get("staff_user_id") or "")
+            desired_role = str(payload.get("role") or "")
+            desired_campus = str(payload.get("campus_id") or claim.get("campus_id") or "")
+            snapshot = self.governance.snapshot()
+            existing_person = next(
+                (
+                    row for row in snapshot.get("people") or []
+                    if isinstance(row, dict)
+                    and str(row.get("tenant_id") or "") == tenant_id
+                    and str(row.get("staff_user_id") or "") == staff_user_id
+                    and str(row.get("state") or "") == "active"
+                ),
+                None,
+            )
+            current = next(
+                (
+                    row for row in snapshot.get("employments") or []
+                    if isinstance(row, dict)
+                    and str(row.get("tenant_id") or "") == tenant_id
+                    and str(row.get("staff_user_id") or "") == staff_user_id
+                    and str(row.get("state") or "") == "active"
+                    and not str(row.get("effective_until") or "")
+                ),
+                None,
+            )
+            # A confirmed assignment for an existing active person is a
+            # history-preserving role/campus transition, not a duplicate
+            # person.  No natural-language inference happens here: the claim
+            # payload already records the human-confirmed role and campus.
+            if isinstance(existing_person, dict) and isinstance(current, dict):
+                updated = current
+                if str(updated.get("role") or "") != desired_role:
+                    changed = self.governance.change_employment_role(
+                        identity=identity,
+                        tenant_id=tenant_id,
+                        employment_id=str(updated.get("employment_id") or ""),
+                        target_role=desired_role,
+                        operation_id=claim_id + ":employment_role_change",
+                    )
+                    updated = dict(changed.get("current_employment") or {})
+                if str(updated.get("campus_id") or "") != desired_campus:
+                    moved = self.governance.transfer_employment(
+                        identity=identity,
+                        tenant_id=tenant_id,
+                        employment_id=str(updated.get("employment_id") or ""),
+                        target_campus_id=desired_campus,
+                        operation_id=claim_id + ":employment_transfer",
+                    )
+                    updated = dict(moved.get("current_employment") or {})
+                return {"result": {"person": existing_person, "employment": updated, "writeback_verified": True}, "operation": "update_current_employment"}
             result = self.governance.create_pending_employment(identity=identity, tenant_id=tenant_id, staff_user_id=str(payload.get("staff_user_id") or ""), role=str(payload.get("role") or ""), campus_id=str(payload.get("campus_id") or claim.get("campus_id") or ""), operation_id=claim_id + ":employment_pending", person_name=str(payload.get("person_name") or ""))
             if identity.role != "boss":
                 return {"result": result, "operation": "create_pending_employment", "awaiting_boss_identity_activation": True}

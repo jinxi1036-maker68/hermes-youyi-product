@@ -8,8 +8,10 @@ from typing import Any
 import uuid
 
 from .models import UserIdentity
+from .personnel_identity_authority import authority_is_enforced, resolve_runtime_identity
 from .staff_directory import query_staff_directory
 from .store import TuoguanStore
+from .tenant_context import current_tenant_id
 
 
 STAFF_OFFBOARDING_EVENTS_FILE = "staff_offboarding_events.jsonl"
@@ -27,6 +29,19 @@ def offboard_staff(
     source_text: str = "",
 ) -> dict[str, Any]:
     """Revoke one employee's business access and preserve their history."""
+
+    # This legacy Tool mutates two historical files independently.  Once the
+    # reviewed personnel aggregate is active, allowing it to proceed would
+    # recreate the dual-authority problem this capability removes.  The
+    # confirmed governance handover/offboarding path remains the only route.
+    governance = store.read_json("personnel_service_governance_v1.json", {})
+    if authority_is_enforced(governance):
+        return {
+            "ok": False,
+            "error": "personnel_identity_authority_requires_governance_handover",
+            "message": "当前机构已启用正式人员身份权威；离职或停用必须通过人员交接与治理流程完成，本轮未改动历史目录或权限。",
+            "writeback_verified": False,
+        }
 
     if identity.role != "boss":
         return {
@@ -258,6 +273,9 @@ def staff_is_offboarded(store: TuoguanStore, user_id: str) -> bool:
     wanted = str(user_id or "").strip()
     if not wanted:
         return False
+    authoritative = resolve_runtime_identity(store, tenant_id=current_tenant_id(), user_id=wanted)
+    if authoritative is not None:
+        return authoritative.approval_state != "approved"
     whitelist = _dict(store.read_json("wecom_whitelist.json", {}))
     if wanted in {str(item) for item in whitelist.get("rejected_users") or []}:
         return True

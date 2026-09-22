@@ -8,7 +8,8 @@ import re
 import unicodedata
 
 from .store import TuoguanStore
-from .tenant_context import institution_display_names
+from .personnel_identity_authority import active_identity_snapshot
+from .tenant_context import current_tenant_id, institution_display_names
 
 
 STAFF_DIRECTORY_FACT_TYPES = {
@@ -85,6 +86,7 @@ def _build_entries(store: TuoguanStore) -> list[dict[str, Any]]:
     directory = _dict(store.read_json("wecom_directory_cache.json", {}))
     recipient_bindings = _dict(whitelist.get("wecom_contacts"))
     operational_facts = _staff_facts(store)
+    runtime_identities = active_identity_snapshot(store, tenant_id=current_tenant_id())
     institution_prefixes = institution_display_names(store)
     directory_members = {
         str(item.get("user_id") or item.get("userid") or ""): item
@@ -96,6 +98,8 @@ def _build_entries(store: TuoguanStore) -> list[dict[str, Any]]:
     roles = _dict(whitelist.get("user_roles"))
     user_ids = set(staff) | set(directory_members) | allowed | supers | set(roles) | set(recipient_bindings)
     user_ids.update(str(value) for value in mapping.values() if str(value))
+    if runtime_identities is not None:
+        user_ids.update(runtime_identities)
 
     entries: list[dict[str, Any]] = []
     aliases_by_user: dict[str, list[str]] = {}
@@ -106,7 +110,12 @@ def _build_entries(store: TuoguanStore) -> list[dict[str, Any]]:
         profile = _dict(staff.get(user_id))
         member = _dict(directory_members.get(user_id))
         fact = _dict(operational_facts.get(user_id))
-        role = _role_for(user_id, profile, member, roles, supers)
+        runtime_identity = runtime_identities.get(user_id) if isinstance(runtime_identities, dict) else None
+        role = (
+            str(runtime_identity.role or "unknown")
+            if runtime_identity is not None
+            else _role_for(user_id, profile, member, roles, supers)
+        )
         raw_aliases = _unique(
             [
                 user_id,
@@ -125,7 +134,8 @@ def _build_entries(store: TuoguanStore) -> list[dict[str, Any]]:
         directory_name = str(member.get("name") or "")
         staff_name = str(profile.get("name") or "")
         business_name = (
-            str(fact.get("business_name") or fact.get("confirmed_name") or "").strip()
+            str(getattr(runtime_identity, "display_name", "") or "").strip()
+            or str(fact.get("business_name") or fact.get("confirmed_name") or "").strip()
             or staff_name
             or _clean_business_name(directory_name, institution_prefixes=institution_prefixes)
             or user_id
@@ -133,8 +143,16 @@ def _build_entries(store: TuoguanStore) -> list[dict[str, Any]]:
         in_directory = bool(member)
         is_whitelisted = user_id in allowed or user_id in supers or user_id in roles
         has_recipient_binding = user_id in recipient_bindings
-        employment_status = str(profile.get("status") or "active").strip().lower()
-        is_active_staff = employment_status not in {"inactive", "left", "offboarded", "terminated", "离职", "停用"} and bool(in_directory or is_whitelisted or has_recipient_binding)
+        employment_status = (
+            str(runtime_identity.approval_state or "unknown").strip().lower()
+            if runtime_identity is not None
+            else str(profile.get("status") or "active").strip().lower()
+        )
+        is_active_staff = (
+            employment_status == "approved"
+            if runtime_identity is not None
+            else employment_status not in {"inactive", "left", "offboarded", "terminated", "离职", "停用"} and bool(in_directory or is_whitelisted or has_recipient_binding)
+        )
         outbound_eligible, outbound_reason = _current_outbound_eligibility(store, user_id)
         status = _membership_status(
             in_directory=in_directory,

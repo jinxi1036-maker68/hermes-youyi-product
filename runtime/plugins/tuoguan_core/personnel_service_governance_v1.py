@@ -20,12 +20,13 @@ import uuid
 # keep the governance package runtime-neutral while still working in isolated
 # certification where it is imported as ``tuoguan_core``.
 from .models import UserIdentity
+from .personnel_identity_authority import IdentityAuthorityError, validate_runtime_identity_document
 from .store import TuoguanStore, TuoguanStoreError
 
 
 CAPABILITY_ID = "xiaoyou.personnel_service_governance"
-CAPABILITY_VERSION = "0.2.0-candidate"
-SCHEMA_VERSION = 2
+CAPABILITY_VERSION = "0.3.0-candidate"
+SCHEMA_VERSION = 3
 DATA_FILE = "personnel_service_governance_v1.json"
 
 # A person has a lifecycle state. An employment row is an assignment period,
@@ -62,6 +63,12 @@ def _norm_phone(value: str) -> str:
 def _blank_state() -> dict[str, Any]:
     return {
         "schema_version": SCHEMA_VERSION,
+        # Once explicitly enabled by the reviewed migration, this aggregate
+        # is also the single runtime authority for a verified WeCom userid's
+        # role and lifecycle.  Until then the key is empty and legacy inbound
+        # identity remains untouched for a safe staged rollout.
+        "runtime_identity_authority": {},
+        "identity_access": {"pending": {}, "rejected": {}},
         "people": [],
         "employments": [],
         "students": [],
@@ -155,6 +162,10 @@ class PersonnelServiceGovernance:
             result = mutate(doc)
             if not isinstance(result, dict):
                 raise GovernanceError("invalid_mutation_result")
+            try:
+                validate_runtime_identity_document(doc)
+            except IdentityAuthorityError as exc:
+                raise GovernanceError(str(exc)) from exc
             result = deepcopy(result)
             result.update({"operation_id": operation_id, "writeback_verified": True, "already_applied": False})
             operations[operation_id] = {"action": action, "result": result, "created_at": _now()}
@@ -256,11 +267,13 @@ class PersonnelServiceGovernance:
 
     # --- personnel and student lifecycle --------------------------------
     def create_pending_employment(self, *, identity: UserIdentity, tenant_id: str, staff_user_id: str, role: str, campus_id: str, operation_id: str, person_name: str = "") -> dict[str, Any]:
-        if role not in {"manager", "teacher"}:
+        if role not in {"boss", "manager", "teacher"}:
             raise GovernanceError("invalid_initial_role")
 
         def apply(doc: dict[str, Any]) -> dict[str, Any]:
-            if identity.role == "manager":
+            if role == "boss":
+                self._require_boss(identity)
+            elif identity.role == "manager":
                 self._require_campus_manager(doc, identity, tenant_id, campus_id)
             else:
                 self._require_boss(identity)
@@ -339,6 +352,52 @@ class PersonnelServiceGovernance:
             doc["employments"].append(replacement)
             return {"person": deepcopy(person), "previous_employment": deepcopy(old), "current_employment": deepcopy(replacement), "role_changed": False}
         return self._mutate(operation_id=operation_id, identity=identity, tenant_id=tenant_id, action="employment_transferred", mutate=apply)
+
+    def change_employment_role(
+        self,
+        *,
+        identity: UserIdentity,
+        tenant_id: str,
+        employment_id: str,
+        target_role: str,
+        operation_id: str,
+    ) -> dict[str, Any]:
+        """Close one current assignment and open a role-correct successor.
+
+        A role is never overwritten in place: history keeps the old role and
+        its effective period.  The enclosing aggregate validation rejects a
+        promotion that would create a second active boss or a demotion that
+        would leave the institution without one.
+        """
+
+        if target_role not in {"boss", "manager", "teacher"}:
+            raise GovernanceError("invalid_target_role")
+
+        def apply(doc: dict[str, Any]) -> dict[str, Any]:
+            self._require_boss(identity)
+            old = self._find(doc["employments"], "employment_id", employment_id)
+            person = self._person(doc, tenant_id=tenant_id, user_id=str(old.get("staff_user_id") or ""))
+            if old.get("state") != "active" or str(old.get("effective_until") or "") or not person or person.get("state") != "active":
+                raise GovernanceError("employment_not_current_active")
+            old.update({"state": "closed", "effective_until": _now(), "closed_by": identity.canonical_user_id, "close_reason": "role_change"})
+            replacement = {key: deepcopy(value) for key, value in old.items() if key not in {"employment_id", "state", "effective_from", "effective_until", "closed_by", "close_reason"}}
+            replacement.update({
+                "employment_id": _id("employment"),
+                "role": target_role,
+                "state": "active",
+                "effective_from": _now(),
+                "effective_until": "",
+                "supersedes_employment_id": employment_id,
+                "created_by": identity.canonical_user_id,
+            })
+            if target_role != "manager":
+                replacement["managed_campus_ids"] = []
+            elif not replacement.get("managed_campus_ids"):
+                replacement["managed_campus_ids"] = [str(replacement.get("campus_id") or "")]
+            doc["employments"].append(replacement)
+            return {"person": deepcopy(person), "previous_employment": deepcopy(old), "current_employment": deepcopy(replacement), "role_changed": True}
+
+        return self._mutate(operation_id=operation_id, identity=identity, tenant_id=tenant_id, action="employment_role_changed", mutate=apply)
 
     def request_employment_pause(self, *, identity: UserIdentity, tenant_id: str, employment_id: str, reason: str, operation_id: str) -> dict[str, Any]:
         """A manager may initiate, but cannot silently apply, an access pause."""

@@ -96,7 +96,7 @@ PERSON_ASSIGNMENT_CLAIM_SCHEMA = _schema(
     {
         "reference_ids": {"type": "array", "items": {"type": "string"}, "description": "可选旧参考；不得编造。"},
         "staff_user_id": {"type": "string"},
-        "role": {"type": "string", "enum": ["manager", "teacher"]},
+        "role": {"type": "string", "enum": ["boss", "manager", "teacher"]},
         "campus_id": {"type": "string"},
     },
     ["reference_ids", "staff_user_id", "role", "campus_id"],

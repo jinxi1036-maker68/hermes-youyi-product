@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 from .models import UserIdentity
+from .personnel_identity_authority import authority_owner_user_id
 from .store import TuoguanStore
+from .tenant_context import current_tenant_id
 
 
 def system_identity() -> UserIdentity:
@@ -26,6 +28,14 @@ def owner_user_id(store: TuoguanStore) -> str:
     staff record or explicit trusted role says ``boss``; an arbitrary alias
     map on its own can never grant owner authority.
     """
+
+    authoritative_owner = authority_owner_user_id(store, tenant_id=current_tenant_id())
+    # ``None`` means the reviewed authority migration has not yet been
+    # enabled, so legacy compatibility remains intentional.  An empty string
+    # means it *is* enabled but malformed; fail closed instead of selecting an
+    # old or arbitrary owner.
+    if authoritative_owner is not None:
+        return authoritative_owner
 
     whitelist = store.read_json("wecom_whitelist.json", {})
     if isinstance(whitelist, dict):
