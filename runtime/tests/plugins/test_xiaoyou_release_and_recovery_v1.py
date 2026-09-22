@@ -37,6 +37,14 @@ def test_release_package_is_versioned_and_tamper_evident(tmp_path):
     assert any(item["error"] == "hash_mismatch" for item in failed["mismatches"])
 
 
+def test_wecom_plugin_doctor_loads_packaged_transport_policy():
+    from hermes_cli.plugin_dev import doctor_plugin
+
+    report = doctor_plugin(ROOT / "runtime/plugins/platforms/wecom")
+
+    assert report.ok, report.format_text()
+
+
 def test_release_installer_blocks_unknown_production_modules(tmp_path):
     from scripts.xiaoyou_release_installer import plan_install
     from scripts.xiaoyou_release_package import build_release
