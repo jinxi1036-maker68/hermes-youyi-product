@@ -15,6 +15,7 @@ from tuoguan_core.personnel_identity_authority import (
 from tuoguan_core.personnel_service_governance_v1 import PersonnelServiceGovernance
 from tuoguan_core.staff_administration import offboard_staff
 from tuoguan_core.store import TuoguanStore
+from tuoguan_core.tool_service import TuoguanToolService
 
 
 TENANT = "tenant-alpha"
@@ -110,6 +111,45 @@ def test_unknown_pending_is_recorded_in_authority_not_legacy_whitelist(tmp_path,
     assert (unknown.canonical_user_id, unknown.role, unknown.approval_state) == ("wx-new", "unknown", "pending")
     assert "wx-new" in document[ACCESS_KEY]["pending"]
     assert store.read_json("wecom_whitelist.json", {}) == before
+
+
+def test_non_approved_identity_never_inherits_a_legacy_staff_display_name(tmp_path, monkeypatch) -> None:
+    store = _store(tmp_path, monkeypatch)
+    # These old rows intentionally look like real staff.  Once the authority
+    # is enforced they remain historical reference, not a source of a current
+    # employee presentation for a pending/rejected/left transport identity.
+    staff = store.read_json("staff.json", {})
+    staff.update({
+        "wx-pending": {"business_name": "历史老师甲", "status": "active", "role": "teacher"},
+        "wx-rejected": {"business_name": "历史老师乙", "status": "active", "role": "teacher"},
+    })
+    store.write_json("staff.json", staff)
+    identities = IdentityService(store)
+
+    pending = identities.resolve("wecom_callback", "wx-pending", tenant_id=TENANT)
+    rejected = identities.resolve("wecom_callback", "wx-rejected", tenant_id=TENANT)
+    left = identities.resolve("wecom_callback", "wx-left", tenant_id=TENANT)
+
+    assert (pending.person_name, pending.role, pending.approval_state) == ("", "unknown", "pending")
+    assert (rejected.person_name, rejected.role, rejected.approval_state) == ("", "unknown", "rejected")
+    assert (left.person_name, left.role, left.approval_state) == ("", "unknown", "left")
+
+
+def test_unapproved_identity_message_requires_boss_confirmation_not_manager_review(tmp_path, monkeypatch) -> None:
+    store = _store(tmp_path, monkeypatch)
+    pending = IdentityService(store).resolve("wecom_callback", "wx-pending", tenant_id=TENANT)
+    result = TuoguanToolService(
+        store,
+        platform="wecom_callback",
+        user_id="wx-pending",
+        identity=pending,
+    ).read_agenda_work_facts()
+
+    assert result["ok"] is False
+    assert result["error"] == "account_not_approved"
+    assert "身份确认" in result["message"]
+    assert "老板" in result["message"]
+    assert "店长" not in result["message"]
 
 
 def test_non_wecom_sender_cannot_inherit_a_wecom_role_from_matching_text(tmp_path, monkeypatch) -> None:

@@ -175,11 +175,24 @@ class IdentityService:
                     tenant_id=trusted_tenant,
                     user_id=sender_id,
                 ) or authority
+            # Once the personnel authority is enforced, old staff profiles are
+            # historical reference only.  In particular, a pending, rejected,
+            # suspended, left, or otherwise unknown WeCom userid must not be
+            # presented to the model as a recognised employee merely because a
+            # legacy staff row happens to carry the same transport userid.
+            #
+            # A formally approved person may still use the legacy display
+            # fallback for presentation compatibility when the authoritative
+            # record has no display name.  The fallback never affects the
+            # canonical userid, lifecycle, role, or approval decision.
+            person_name = ""
+            if authority.approval_state == "approved":
+                person_name = authority.display_name or self._person_name(platform_key, sender_id)
             return UserIdentity(
                 platform=platform_key,
                 platform_user_id=sender_id,
                 canonical_user_id=sender_id,
-                person_name=authority.display_name or self._person_name(platform_key, sender_id),
+                person_name=person_name,
                 role=authority.role,
                 approval_state=authority.approval_state,
             )

@@ -368,7 +368,7 @@ class TuoguanToolService:
             return None
         return self._error(
             "account_not_approved",
-            "当前渠道账号尚未通过托管系统身份审核。",
+            "当前企业微信账号尚未完成正式身份确认，暂无正式权限；如需启用，请由老板确认。",
         )
 
     def read_agenda_work_facts(self) -> dict[str, Any]:
