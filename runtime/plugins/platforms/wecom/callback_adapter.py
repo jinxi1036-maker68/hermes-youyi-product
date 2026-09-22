@@ -55,7 +55,7 @@ from gateway.platforms.base import BasePlatformAdapter, MessageEvent, MessageTyp
 from hermes_constants import get_hermes_home
 from plugins.platforms.wecom.inbound_receipts import WecomInboundReceiptStore
 from plugins.platforms.wecom.wecom_crypto import WXBizMsgCrypt, WeComCryptoError
-from plugins.platforms.http_policy import platform_httpx_limits
+from plugins.platforms.wecom.http_policy import platform_httpx_limits
 
 logger = logging.getLogger(__name__)
 
