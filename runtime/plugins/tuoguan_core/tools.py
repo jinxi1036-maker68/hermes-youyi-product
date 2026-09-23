@@ -250,7 +250,7 @@ TUOGUAN_QUERY_STUDENTS_SCHEMA = _schema(
 )
 
 TUOGUAN_QUERY_TASKS_SCHEMA = _schema(
-    "按当前可信身份和权限范围查询任务、任务状态、来源、触发原因、缺口和闭环证据。可按任务、学生、老师、状态、等级和查询范围筛选；工具负责权限收口。老师询问本人还有什么未完成工作时，调用本工具并传 scope=mine；只看未完成时再传 status=open。该接口不接受通用 query 或 result_scope 参数，查询意图由本次对话和这些结构化筛选字段共同表达。",
+    "按当前可信身份和权限范围查询任务、任务状态、来源、触发原因、缺口和闭环证据。可按任务、学生、老师、状态、等级、日期和查询范围筛选；工具负责权限收口。老师询问本人还有什么未完成工作时，调用本工具并传 scope=mine；只看未完成时再传 status=open；用户明确说今天、今日、今天未完成时再传 date_scope=today。不要把未设置 due_at 的历史/长期任务算作今天任务。该接口不接受通用 query 或 result_scope 参数，查询意图由本次对话和这些结构化筛选字段共同表达。",
     _identity_props(
         {
             "task_id": {"type": "string", "description": "任务 id，可为空。"},
@@ -259,6 +259,11 @@ TUOGUAN_QUERY_TASKS_SCHEMA = _schema(
             "assignee_user_id": {"type": "string", "description": "按执行人的企业微信 user id 筛选；已知姓名时优先填写 teacher_name。"},
             "status": {"type": "string", "description": "任务状态，可为空。"},
             "level": {"type": "string", "description": "S/A/B/C，可为空。"},
+            "date_scope": {
+                "type": "string",
+                "enum": ["today"],
+                "description": "仅当用户明确查询今天/今日任务时传 today；不传表示不按日期收窄。today 只认任务正式 due_at 的本地日期，没有 due_at 的任务不算今天。",
+            },
             "scope": {
                 "type": "string",
                 "enum": ["mine", "all"],
