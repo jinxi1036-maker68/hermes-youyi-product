@@ -103,20 +103,22 @@ def test_teacher_student_query_remains_person_scoped(tmp_path, monkeypatch) -> N
 
 def test_manager_task_query_sees_single_store_legacy_rows_and_rejects_foreign_tenant(tmp_path, monkeypatch) -> None:
     store = _store(tmp_path, monkeypatch)
-    result = _service(store, _identity("wx-manager", "店长", "manager")).query_tasks(limit=100)
+    result = _service(store, _identity("wx-manager", "店长", "manager")).query_tasks(limit=100, write_focus=False)
 
     assert result["ok"] is True
+    assert result["data"]["effective_scope"] == "all"
     assert result["data"]["total_count"] == 2
-    assert {row["task_id"] for row in result["data"]["tasks"]} == {"t-legacy-blank", "t-current"}
+    assert set(result["data"]["task_ids"]) == {"t-legacy-blank", "t-current"}
 
 
 def test_teacher_task_query_remains_assignee_scoped_and_tenant_safe(tmp_path, monkeypatch) -> None:
     store = _store(tmp_path, monkeypatch)
-    result = _service(store, _identity("wx-teacher-a", "李老师", "teacher")).query_tasks(limit=100)
+    result = _service(store, _identity("wx-teacher-a", "李老师", "teacher")).query_tasks(limit=100, write_focus=False)
 
     assert result["ok"] is True
+    assert result["data"]["effective_scope"] == "mine"
     assert result["data"]["total_count"] == 1
-    assert [row["task_id"] for row in result["data"]["tasks"]] == ["t-legacy-blank"]
+    assert result["data"]["task_ids"] == ["t-legacy-blank"]
 
 
 def test_manager_teacher_query_resolves_authoritative_teacher_not_legacy_alias_owner(tmp_path, monkeypatch) -> None:
