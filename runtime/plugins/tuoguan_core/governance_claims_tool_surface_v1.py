@@ -104,14 +104,14 @@ PERSON_ASSIGNMENT_CLAIM_SCHEMA = _schema(
 )
 
 PENDING_IDENTITY_ACTIVATION_SCHEMA = _schema(
-    "仅当当前已认证的老板明确要求把一个已由服务器记录为 pending 的企业微信账号正式确认为人员并启用角色时使用。这个单一受保护 Tool 会原子完成 pending 身份批准、正式展示姓名、当前任职关系和角色启用，并通过 Receipt/writeback 验证。staff_user_id 必须来自本轮可信人员目录/待确认身份结果；不得用姓名或旧 staff 资料猜 userid。不要把这件事拆成恢复状态、创建任职或多个 Claim。",
+    "仅当当前已认证的老板明确要求把一个已由服务器记录为 pending 的企业微信账号正式确认为人员并启用角色时使用。这个单一受保护 Tool 会原子完成 pending 身份批准、正式展示姓名、当前任职关系和角色启用，并通过 Receipt/writeback 验证。staff_user_id 必须来自本轮可信人员目录/待确认身份结果；不得用姓名或旧 staff 资料猜 userid。当前权威任职只存在一个实际校区时，campus_id 由服务端自动补齐，不得为了这个已知事实再次追问老板；只有确实存在多个当前校区且老板本轮已经明确指出目标校区时才传 campus_id。不要把这件事拆成恢复状态、创建任职或多个 Claim。",
     {
         "staff_user_id": {"type": "string", "description": "本轮可信目录或 pending 身份结果返回的企业微信 userid。"},
         "person_name": {"type": "string", "description": "老板明确确认的正式业务展示姓名；不用于身份匹配。"},
         "role": {"type": "string", "enum": ["boss", "manager", "teacher"]},
-        "campus_id": {"type": "string", "description": "老板明确确认的当前任职校区。"},
+        "campus_id": {"type": "string", "description": "可选。单校区由服务端从当前权威任职自动解析；多校区时仅填写老板本轮明确指定且属于当前权威校区的 campus_id。"},
     },
-    ["staff_user_id", "person_name", "role", "campus_id"],
+    ["staff_user_id", "person_name", "role"],
 )
 
 HANDOVER_OPEN_SCHEMA = _schema(
