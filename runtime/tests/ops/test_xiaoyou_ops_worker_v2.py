@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 import json
 from pathlib import Path
 from types import SimpleNamespace
@@ -38,6 +38,16 @@ def _command(**changes):
         "objective": "Inspect harmless state.",
         "evidence_requirements": ["production SHA"],
     }
+    payload.update(changes)
+    return payload
+
+
+def _live_command(**changes):
+    now = datetime.now(timezone.utc)
+    payload = _command(
+        issued_at=(now - timedelta(minutes=1)).isoformat().replace("+00:00", "Z"),
+        expires_at=(now + timedelta(hours=1)).isoformat().replace("+00:00", "Z"),
+    )
     payload.update(changes)
     return payload
 
@@ -330,7 +340,7 @@ def test_process_comment_records_executor_failure_stage(monkeypatch, tmp_path: P
     monkeypatch.setattr("scripts.xiaoyou_ops_worker_v2.run_fixed_executor", fail_executor)
 
     with pytest.raises(WorkerError, match="executor_failed:2"):
-        process_comment(config, store, _comment())
+        process_comment(config, store, _comment(_live_command()))
 
     row = store.db.execute(
         "SELECT status, failure_stage, failure_code FROM commands WHERE comment_id=101"
@@ -381,7 +391,7 @@ def test_process_comment_records_dispatch_failure_stage(monkeypatch, tmp_path: P
     monkeypatch.setattr("scripts.xiaoyou_ops_worker_v2.dispatch_report", fail_dispatch)
 
     with pytest.raises(WorkerError, match="github_request_failed:HTTPError"):
-        process_comment(config, store, _comment())
+        process_comment(config, store, _comment(_live_command()))
 
     row = store.db.execute(
         "SELECT status, failure_stage, failure_code FROM commands WHERE comment_id=101"
@@ -414,7 +424,7 @@ def test_process_comment_records_report_validation_failure_stage(monkeypatch, tm
     monkeypatch.setattr("scripts.xiaoyou_ops_worker_v2.run_fixed_executor", fail_report)
 
     with pytest.raises(WorkerError, match="executor_report_invalid"):
-        process_comment(config, store, _comment())
+        process_comment(config, store, _comment(_live_command()))
 
     row = store.db.execute(
         "SELECT status, failure_stage, failure_code FROM commands WHERE comment_id=101"
@@ -445,7 +455,7 @@ def test_fixture_runs_without_pythonpath_from_unrelated_cwd(tmp_path: Path):
     import subprocess
     import sys
 
-    command = _command()
+    command = _live_command()
     fixture = (
         Path(__file__).resolve().parents[3]
         / "scripts"
