@@ -10,20 +10,14 @@ independently from Codex authentication/runtime.
 from __future__ import annotations
 
 import json
-from pathlib import Path
-import sys
-
-from scripts.xiaoyou_ops_command_v1 import CommandValidationError, load_command
+from scripts.xiaoyou_ops_command_v1 import CommandValidationError, validate_command
 
 
 def main() -> int:
-    if len(sys.argv) != 2:
-        print(json.dumps({"ok": False, "error": "command_path_required"}))
-        return 2
-
     try:
-        command = load_command(Path(sys.argv[1]))
-    except (OSError, UnicodeDecodeError, json.JSONDecodeError, CommandValidationError) as exc:
+        payload = json.loads(input())
+        command = validate_command(payload)
+    except (EOFError, json.JSONDecodeError, CommandValidationError) as exc:
         print(json.dumps({"ok": False, "error": str(exc)}))
         return 2
 
