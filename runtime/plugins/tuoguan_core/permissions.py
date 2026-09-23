@@ -6,6 +6,7 @@ from .models import UserIdentity
 from .programs import can_access_program, item_program_id, student_program_ids
 from .store import TuoguanStore
 from .student_directory import find_student_candidates
+from .tenant_context import current_tenant_id
 
 
 class PermissionService:
@@ -20,6 +21,31 @@ class PermissionService:
             return {}
         profile = candidates[0].get("profile")
         return profile if isinstance(profile, dict) else {}
+
+    def can_query_student(self, identity: UserIdentity, student_name: str) -> bool:
+        """Authorize current single-institution student reads without legacy staff scope.
+
+        Empty tenant fields are legacy in-workspace data and remain readable to
+        an otherwise authorized current employee.  An explicit conflicting
+        tenant never crosses the institution boundary.
+        """
+
+        if identity.approval_state != "approved":
+            return False
+        student = self._student(student_name)
+        if not student:
+            return False
+        item_tenant = str(student.get("tenant_id") or "").strip()
+        trusted_tenant = str(current_tenant_id() or "").strip()
+        if item_tenant and trusted_tenant and item_tenant != trusted_tenant:
+            return False
+        if identity.role in {"boss", "manager"}:
+            return True
+        if identity.role == "teacher":
+            if _is_summer_student(student):
+                return True
+            return str(student.get("teacher") or "") == identity.canonical_user_id
+        return False
 
     def can_view_student(self, identity: UserIdentity, student_name: str) -> bool:
         if identity.approval_state != "approved":
