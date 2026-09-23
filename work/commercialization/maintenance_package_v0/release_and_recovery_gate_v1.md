@@ -80,6 +80,8 @@ python scripts/xiaoyou_non_youyi_tenant_gate.py
 
 > SQLite 主库、`-wal`、`-shm` 的 mtime、大小或 SHA256 变化不能单独作为“业务数据被候选修改”的失败条件。
 > WAL checkpoint 和 Agenda 心跳在稳定版本正常运行期间即可改变这些物理文件。文件级哈希仍可留作取证信息，但发布判定必须使用逻辑语义状态。
+>
+> 这条例外只适用于 Agenda SQLite 运行库及其 WAL/SHM。生产配置文件和普通业务 JSON 的既有哈希不变门禁继续严格执行，不能因为引入语义门禁而放宽。
 
 ## 边界
 
