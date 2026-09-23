@@ -13,6 +13,7 @@ from scripts.xiaoyou_ops_worker_v2 import (
     WorkerConfig,
     WorkerError,
     parse_command_comment,
+    process_comment,
     run_fixed_executor,
     verify_github_trust,
 )
@@ -222,3 +223,22 @@ def test_executor_report_cannot_claim_production_change(monkeypatch, tmp_path: P
     )
     with pytest.raises(WorkerError, match="executor_report_invalid"):
         run_fixed_executor(config, _command())
+
+
+def test_untrusted_marker_is_ignored_before_command_parsing(tmp_path: Path):
+    config = WorkerConfig(
+        repository="acme/repo",
+        trusted_issuer="trusted-owner",
+        executor=tmp_path / "missing-executor",
+        state_db=tmp_path / "state.sqlite",
+        actions_token="unused",
+    )
+    store = ReplayStore(config.state_db)
+    comment = {
+        "id": 555,
+        "body": "XIAOU_OPS_COMMAND_V1\nmalformed attacker payload",
+        "issue_url": "https://api.github.com/repos/acme/repo/issues/4",
+        "user": {"login": "untrusted-user"},
+    }
+
+    assert process_comment(config, store, comment) == "ignored"
