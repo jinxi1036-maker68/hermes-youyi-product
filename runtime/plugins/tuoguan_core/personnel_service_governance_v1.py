@@ -246,24 +246,38 @@ class PersonnelServiceGovernance:
         """Resolve a pending activation against current authoritative assignments.
 
         A single-campus institution should not make the owner restate a fact the
-        authority already knows.  Wildcard boss scope is not a physical campus.
-        When multiple current campuses genuinely exist, an explicit requested
-        campus is accepted only if it is one of those authoritative campuses.
+        authority already knows. Wildcard boss scope is not a physical campus.
+        Active manager managed-campus assignments are authoritative current
+        campus scope alongside scalar active-employment assignments.
         """
 
-        campuses = {
-            str(row.get("campus_id") or "").strip()
-            for row in doc["employments"]
-            if isinstance(row, dict)
-            and str(row.get("tenant_id") or "") == tenant_id
-            and str(row.get("state") or "") == "active"
-            and not str(row.get("effective_until") or "")
-            and str(row.get("campus_id") or "").strip()
-            and str(row.get("campus_id") or "").strip() != "*"
-        }
+        campuses: set[str] = set()
+        for row in doc["employments"]:
+            if (
+                not isinstance(row, dict)
+                or str(row.get("tenant_id") or "") != tenant_id
+                or str(row.get("state") or "") != "active"
+                or str(row.get("effective_until") or "")
+            ):
+                continue
+
+            campus_id = str(row.get("campus_id") or "").strip()
+            if campus_id and campus_id != "*":
+                campuses.add(campus_id)
+
+            if str(row.get("role") or "").strip().lower() != "manager":
+                continue
+            managed_campus_ids = row.get("managed_campus_ids") or []
+            if not isinstance(managed_campus_ids, (list, tuple, set)):
+                continue
+            for managed_campus_id in managed_campus_ids:
+                campus_id = str(managed_campus_id or "").strip()
+                if campus_id and campus_id != "*":
+                    campuses.add(campus_id)
+
         requested = str(requested_campus_id or "").strip()
         if requested:
-            if campuses and requested not in campuses:
+            if requested not in campuses:
                 raise GovernanceError("pending_identity_campus_not_current")
             return requested
         if len(campuses) == 1:

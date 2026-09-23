@@ -22,15 +22,28 @@ def _authority_document() -> dict:
         "schema_version": 3,
         AUTHORITY_KEY: {"mode": "enforced", "tenant_id": TENANT, "activated_at": "2026-01-01"},
         ACCESS_KEY: {"pending": {}, "rejected": {}},
-        "people": [{
-            "person_id": "person-owner", "tenant_id": TENANT, "staff_user_id": "wx-owner",
-            "display_name": "机构负责人", "state": "active",
-        }],
-        "employments": [{
-            "employment_id": "employment-owner", "tenant_id": TENANT, "staff_user_id": "wx-owner",
-            "role": "boss", "campus_id": "*", "managed_campus_ids": [], "state": "active",
-            "effective_from": "2026-01-01", "effective_until": "",
-        }],
+        "people": [
+            {
+                "person_id": "person-owner", "tenant_id": TENANT, "staff_user_id": "wx-owner",
+                "display_name": "机构负责人", "state": "active",
+            },
+            {
+                "person_id": "person-manager", "tenant_id": TENANT, "staff_user_id": "wx-manager",
+                "display_name": "校区店长", "state": "active",
+            },
+        ],
+        "employments": [
+            {
+                "employment_id": "employment-owner", "tenant_id": TENANT, "staff_user_id": "wx-owner",
+                "role": "boss", "campus_id": "*", "managed_campus_ids": [], "state": "active",
+                "effective_from": "2026-01-01", "effective_until": "",
+            },
+            {
+                "employment_id": "employment-manager", "tenant_id": TENANT, "staff_user_id": "wx-manager",
+                "role": "manager", "campus_id": "", "managed_campus_ids": ["campus-a"], "state": "active",
+                "effective_from": "2026-01-01", "effective_until": "",
+            },
+        ],
         "students": [], "service_relations": [], "service_records": [], "attentions": [],
         "work_links": [], "handovers": [], "change_requests": [], "operations": {}, "audit": [],
     }

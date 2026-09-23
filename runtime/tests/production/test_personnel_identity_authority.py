@@ -136,6 +136,99 @@ def test_pending_identity_activation_uses_unique_authoritative_campus_when_omitt
     assert (activated.person_name, activated.role, activated.approval_state) == ("李老师", "teacher", "approved")
 
 
+def test_pending_identity_activation_uses_manager_managed_campus_when_scalar_campuses_are_blank(tmp_path, monkeypatch) -> None:
+    store = _store(tmp_path, monkeypatch)
+    document = store.read_json("personnel_service_governance_v1.json", {})
+    for employment in document["employments"]:
+        if str(employment.get("state") or "") == "active" and not employment.get("effective_until"):
+            employment["campus_id"] = ""
+        if employment.get("staff_user_id") == "wx-manager":
+            employment["managed_campus_ids"] = ["main"]
+    store.write_json("personnel_service_governance_v1.json", document)
+    governance = PersonnelServiceGovernance(store)
+    boss = IdentityService(store).resolve("wecom_callback", "wx-boss", tenant_id=TENANT)
+
+    result = governance.activate_confirmed_pending_identity(
+        identity=boss,
+        tenant_id=TENANT,
+        staff_user_id="wx-pending",
+        person_name="李老师",
+        role="teacher",
+        campus_id="",
+        operation_id="activate-pending-manager-campus",
+    )
+
+    assert result["employment"]["campus_id"] == "main"
+    activated = IdentityService(store).resolve("wecom_callback", "wx-pending", tenant_id=TENANT)
+    assert (activated.person_name, activated.role, activated.approval_state) == ("李老师", "teacher", "approved")
+
+
+def test_pending_identity_activation_is_ambiguous_for_multiple_manager_managed_campuses(tmp_path, monkeypatch) -> None:
+    store = _store(tmp_path, monkeypatch)
+    document = store.read_json("personnel_service_governance_v1.json", {})
+    for employment in document["employments"]:
+        if str(employment.get("state") or "") == "active" and not employment.get("effective_until"):
+            employment["campus_id"] = ""
+        if employment.get("staff_user_id") == "wx-manager":
+            employment["managed_campus_ids"] = ["main"]
+    document["people"].append({
+        "person_id": "p-manager-b",
+        "tenant_id": TENANT,
+        "staff_user_id": "wx-manager-b",
+        "display_name": "店长乙",
+        "state": "active",
+    })
+    document["employments"].append({
+        "employment_id": "e-manager-b",
+        "tenant_id": TENANT,
+        "staff_user_id": "wx-manager-b",
+        "role": "manager",
+        "campus_id": "",
+        "managed_campus_ids": ["campus-b"],
+        "state": "active",
+        "effective_from": "2026-01-01",
+        "effective_until": "",
+    })
+    store.write_json("personnel_service_governance_v1.json", document)
+    governance = PersonnelServiceGovernance(store)
+    boss = IdentityService(store).resolve("wecom_callback", "wx-boss", tenant_id=TENANT)
+
+    with pytest.raises(GovernanceError, match="pending_identity_campus_ambiguous"):
+        governance.activate_confirmed_pending_identity(
+            identity=boss,
+            tenant_id=TENANT,
+            staff_user_id="wx-pending",
+            person_name="李老师",
+            role="teacher",
+            campus_id="",
+            operation_id="activate-pending-manager-campus-ambiguous",
+        )
+
+
+def test_pending_identity_activation_rejects_explicit_campus_outside_trusted_scope(tmp_path, monkeypatch) -> None:
+    store = _store(tmp_path, monkeypatch)
+    document = store.read_json("personnel_service_governance_v1.json", {})
+    for employment in document["employments"]:
+        if str(employment.get("state") or "") == "active" and not employment.get("effective_until"):
+            employment["campus_id"] = ""
+        if employment.get("staff_user_id") == "wx-manager":
+            employment["managed_campus_ids"] = ["main"]
+    store.write_json("personnel_service_governance_v1.json", document)
+    governance = PersonnelServiceGovernance(store)
+    boss = IdentityService(store).resolve("wecom_callback", "wx-boss", tenant_id=TENANT)
+
+    with pytest.raises(GovernanceError, match="pending_identity_campus_not_current"):
+        governance.activate_confirmed_pending_identity(
+            identity=boss,
+            tenant_id=TENANT,
+            staff_user_id="wx-pending",
+            person_name="李老师",
+            role="teacher",
+            campus_id="campus-not-trusted",
+            operation_id="activate-pending-manager-campus-rejected",
+        )
+
+
 def test_pending_identity_activation_requires_choice_only_when_current_campus_is_ambiguous(tmp_path, monkeypatch) -> None:
     store = _store(tmp_path, monkeypatch)
     document = store.read_json("personnel_service_governance_v1.json", {})
