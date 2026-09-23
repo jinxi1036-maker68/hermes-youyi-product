@@ -94,6 +94,23 @@ def test_runtime_heartbeat_and_wal_changes_do_not_fail_semantic_gate(tmp_path) -
     assert result["policy"]["physical_sqlite_hash_change_is_failure"] is False
 
 
+def test_runtime_status_schema_change_still_fails_closed(tmp_path) -> None:
+    from scripts.xiaoyou_agenda_semantic_gate import compare_snapshots, snapshot_database
+
+    database = tmp_path / "agenda_work_runtime.sqlite"
+    _create_runtime_database(database)
+    before = snapshot_database(database)
+
+    with sqlite3.connect(database) as connection:
+        connection.execute("ALTER TABLE agenda_runtime_status ADD COLUMN new_runtime_field TEXT NOT NULL DEFAULT ''")
+
+    result = compare_snapshots(before, snapshot_database(database))
+
+    assert result["ok"] is False
+    assert result["runtime_schema_changes_detected"] is True
+    assert result["changed_runtime_schema_tables"] == ["agenda_runtime_status"]
+
+
 def test_new_ticket_fails_semantic_gate(tmp_path) -> None:
     from scripts.xiaoyou_agenda_semantic_gate import compare_snapshots, snapshot_database
 
