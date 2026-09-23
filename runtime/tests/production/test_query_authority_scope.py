@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from datetime import datetime, timedelta
+
 from tuoguan_core.models import UserIdentity
 from tuoguan_core.personnel_identity_authority import ACCESS_KEY, AUTHORITY_KEY
 from tuoguan_core.permissions import PermissionService
@@ -141,3 +143,136 @@ def test_manager_teacher_query_resolves_authoritative_teacher_not_legacy_alias_o
     assert resolved.canonical_user_id == "wx-teacher-a"
     assert resolved.role == "teacher"
     assert service._query_manager_can_view_teacher("legacy-only") is False
+
+
+
+def _local_due(days: int, hour: int = 12) -> str:
+    base = datetime.now().astimezone() + timedelta(days=days)
+    return base.replace(hour=hour, minute=0, second=0, microsecond=0).isoformat(timespec="seconds")
+
+
+def test_task_query_today_scope_excludes_historical_undated_and_closed_tasks(tmp_path, monkeypatch) -> None:
+    store = _store(tmp_path, monkeypatch)
+    store.write_json("tasks.json", [
+        {
+            "id": "t-today-open",
+            "title": "今天未完成",
+            "assignee_userid": "wx-teacher-a",
+            "status": "pending",
+            "tenant_id": TENANT,
+            "campus_id": "main",
+            "due_at": _local_due(0),
+        },
+        {
+            "id": "t-yesterday-open",
+            "title": "历史积压",
+            "assignee_userid": "wx-teacher-a",
+            "status": "pending",
+            "tenant_id": TENANT,
+            "campus_id": "main",
+            "due_at": _local_due(-1),
+        },
+        {
+            "id": "t-undated-open",
+            "title": "长期任务",
+            "assignee_userid": "wx-teacher-a",
+            "status": "pending",
+            "tenant_id": TENANT,
+            "campus_id": "main",
+            "due_at": "",
+        },
+        {
+            "id": "t-today-closed",
+            "title": "今天已完成",
+            "assignee_userid": "wx-teacher-a",
+            "status": "completed",
+            "tenant_id": TENANT,
+            "campus_id": "main",
+            "due_at": _local_due(0, 10),
+        },
+    ])
+
+    result = _service(
+        store,
+        _identity("wx-teacher-a", "李老师", "teacher"),
+    ).query_tasks(
+        scope="mine",
+        status="open",
+        date_scope="today",
+        limit=100,
+        write_focus=False,
+    )
+
+    assert result["ok"] is True
+    assert result["data"]["date_scope"] == "today"
+    assert result["data"]["task_ids"] == ["t-today-open"]
+    assert result["data"]["total_count"] == 1
+    assert result["data"]["rendered_text"].splitlines()[0] == "我今天的任务共 1 条"
+
+
+def test_boss_open_tasks_report_counts_only_today_due_open_tasks(tmp_path, monkeypatch) -> None:
+    store = _store(tmp_path, monkeypatch)
+    store.write_json("tasks.json", [
+        {
+            "id": "t-today-open",
+            "title": "今天未完成",
+            "assignee_userid": "wx-teacher-a",
+            "status": "pending",
+            "tenant_id": TENANT,
+            "campus_id": "main",
+            "due_at": _local_due(0),
+        },
+        {
+            "id": "t-yesterday-open",
+            "title": "历史积压",
+            "assignee_userid": "wx-teacher-a",
+            "status": "pending",
+            "tenant_id": TENANT,
+            "campus_id": "main",
+            "due_at": _local_due(-1),
+        },
+        {
+            "id": "t-undated-open",
+            "title": "长期任务",
+            "assignee_userid": "wx-teacher-b",
+            "status": "pending",
+            "tenant_id": TENANT,
+            "campus_id": "main",
+            "due_at": "",
+        },
+        {
+            "id": "t-today-closed",
+            "title": "今天已完成",
+            "assignee_userid": "wx-teacher-b",
+            "status": "completed",
+            "tenant_id": TENANT,
+            "campus_id": "main",
+            "due_at": _local_due(0, 10),
+        },
+    ])
+
+    result = _service(
+        store,
+        _identity("wx-boss", "金总", "boss"),
+    ).query_operations_report(query_type="open_tasks")
+
+    assert result["ok"] is True
+    summary = result["data"]["summary"]
+    assert summary["open_task_count"] == 3
+    assert summary["today_open_task_count"] == 1
+    assert result["data"]["rendered_text"] == "今天未完成任务\n今日未完成：1条"
+
+
+def test_task_query_rejects_unknown_date_scope(tmp_path, monkeypatch) -> None:
+    store = _store(tmp_path, monkeypatch)
+    result = _service(
+        store,
+        _identity("wx-teacher-a", "李老师", "teacher"),
+    ).query_tasks(
+        scope="mine",
+        date_scope="yesterday",
+        write_focus=False,
+    )
+
+    assert result["ok"] is False
+    assert result["error"] == "date_scope_invalid"

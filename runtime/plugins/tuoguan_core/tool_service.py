@@ -2718,6 +2718,7 @@ class TuoguanToolService:
         status: str = "",
         level: str = "",
         scope: str = "",
+        date_scope: str = "",
         limit: int = 20,
         offset: int = 0,
         write_focus: bool = True,
@@ -2798,6 +2799,26 @@ class TuoguanToolService:
             tasks = [task for task in tasks if str(task.get("status") or "").lower() == requested_status]
         if level:
             tasks = [task for task in tasks if str(task.get("level") or "") == level]
+        requested_date_scope = str(date_scope or "").strip().lower()
+        if requested_date_scope:
+            if requested_date_scope != "today":
+                return self._error("date_scope_invalid", "当前任务日期范围仅支持 today。")
+            today = datetime.now().astimezone().date()
+            def due_on_today(task: dict[str, Any]) -> bool:
+                raw = str(task.get("due_at") or "").strip()
+                if not raw:
+                    return False
+                try:
+                    due = datetime.fromisoformat(raw)
+                except ValueError:
+                    try:
+                        due = datetime.fromisoformat(raw.replace(" ", "T"))
+                    except ValueError:
+                        return False
+                if due.tzinfo is not None:
+                    due = due.astimezone()
+                return due.date() == today
+            tasks = [task for task in tasks if due_on_today(task)]
         tasks = sorted(
             tasks,
             key=lambda item: (
@@ -2829,13 +2850,24 @@ class TuoguanToolService:
             for task in visible_tasks
         ]
         if target_teacher_id:
-            header = f"{requested_teacher}任务共 {len(tasks)} 条"
-        else:
             header = (
-                f"当前全员任务共 {len(tasks)} 条"
-                if effective_scope == "all"
-                else f"我的任务共 {len(tasks)} 条"
+                f"{requested_teacher}今天任务共 {len(tasks)} 条"
+                if requested_date_scope == "today"
+                else f"{requested_teacher}任务共 {len(tasks)} 条"
             )
+        else:
+            if requested_date_scope == "today":
+                header = (
+                    f"今天全员任务共 {len(tasks)} 条"
+                    if effective_scope == "all"
+                    else f"我今天的任务共 {len(tasks)} 条"
+                )
+            else:
+                header = (
+                    f"当前全员任务共 {len(tasks)} 条"
+                    if effective_scope == "all"
+                    else f"我的任务共 {len(tasks)} 条"
+                )
         if scope_adjusted:
             header = f"你是老师，只能查看本人任务。{header}"
         lines = [header]
@@ -2875,6 +2907,7 @@ class TuoguanToolService:
                 "task_summaries": task_summaries,
                 "requested_scope": requested_scope or effective_scope,
                 "effective_scope": effective_scope,
+                "date_scope": requested_date_scope,
                 "scope_adjusted": scope_adjusted,
                 "scope_user_id": target_teacher_id or (self.identity.canonical_user_id if effective_scope == "mine" else ""),
                 "scope_person_name": requested_teacher or (self.identity.person_name if effective_scope == "mine" else ""),
