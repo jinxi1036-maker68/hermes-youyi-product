@@ -1,0 +1,17 @@
+[Unit]
+Description=XiaoU Codex Readonly Ops Bridge
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=@@WORKER_USER@@
+Group=@@WORKER_GROUP@@
+WorkingDirectory=@@CONTROL_REPO_ROOT@@
+EnvironmentFile=@@ENV_FILE@@
+ExecStart=/usr/bin/python3 @@CONTROL_REPO_ROOT@@/scripts/xiaoyou_codex_readonly_worker_v1.py
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=@@STATE_DIR@@ /tmp
