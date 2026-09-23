@@ -492,6 +492,43 @@ def test_tool_descriptions_are_capabilities_not_phrase_routers():
         assert fragment not in descriptions
 
 
+def test_query_tool_contracts_describe_semantics_not_user_phrase_routes():
+    from plugins.tuoguan_core.tools import (
+        TUOGUAN_QUERY_OPERATIONS_REPORT_SCHEMA,
+        TUOGUAN_QUERY_STUDENTS_SCHEMA,
+        TUOGUAN_QUERY_TASKS_SCHEMA,
+    )
+
+    schemas = (
+        TUOGUAN_QUERY_STUDENTS_SCHEMA,
+        TUOGUAN_QUERY_TASKS_SCHEMA,
+        TUOGUAN_QUERY_OPERATIONS_REPORT_SCHEMA,
+    )
+    serialized = "\n".join(json.dumps(schema, ensure_ascii=False, sort_keys=True) for schema in schemas)
+
+    forbidden_phrase_routes = [
+        "用户明确说",
+        "老师询问",
+        "我的任务必须",
+        "查老师人数或老师名单用",
+        "查指定老师最近怎么样用",
+        "时再传 date_scope",
+        "时传 today",
+    ]
+    for fragment in forbidden_phrase_routes:
+        assert fragment not in serialized
+
+    task_props = TUOGUAN_QUERY_TASKS_SCHEMA["parameters"]["properties"]
+    assert "due_at 的本地日期等于当前日期" in task_props["date_scope"]["description"]
+    assert "mine=当前可信人员本人任务" in task_props["scope"]["description"]
+
+    operations_props = TUOGUAN_QUERY_OPERATIONS_REPORT_SCHEMA["parameters"]["properties"]
+    assert "staff=人员概况与名单" in operations_props["query_type"]["description"]
+    assert "teacher_activity=指定老师近期执行情况" in operations_props["query_type"]["description"]
+
+
+
+
 def test_youyi_digital_employee_handbook_is_present_and_model_led():
     skill_dir = _home_proddata() / "skills" / "youyi-digital-employee"
     skill_md = skill_dir / "SKILL.md"

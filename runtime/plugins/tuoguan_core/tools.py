@@ -234,15 +234,15 @@ TUOGUAN_CONTEXT_SCHEMA = _schema(
 )
 
 TUOGUAN_QUERY_STUDENTS_SCHEMA = _schema(
-    "按当前可信身份和权限范围查询学生、学生名单、年级范围和最近记录。可按 student_name、student_id、班级、老师姓名、暑假班范围或年级筛选；不要传通用 query 字段。遇到同名学生时，如用户已给出班级或年级，使用同一显示姓名加 class_name 或 grade 做一次精确查询；工具只在唯一、授权的结果中返回 object_ref，随后写入可同时带回该 object_ref 和 student_id。不能把候选名单直接当成写入对象。工具负责执行权限收口和数据返回。这个工具只返回学生事实，不负责审查机构目标、制定覆盖计划或判断目标是否合理；老板提出经营目标、覆盖目标、每个孩子都要完成某项工作时，应优先考虑 tuoguan_goal_workspace。",
+    "按当前可信身份和权限范围读取学生事实、学生名单、年级范围和最近记录。支持按 student_name、student_id、class_name、teacher_name、query_scope 或 grade 进行结构化筛选；不接受通用 query 字段。同名学生可通过 class_name、grade 或已验证 student_id/object_ref 消歧；工具只在唯一且授权的结果中返回可延续使用的 object_ref。该工具只读取学生事实，不承担机构目标审查、经营计划制定或目标执行。",
     _identity_props({
-        "student_name": {"type": "string", "description": "学生姓名；查询自己班/名下/负责范围学生名单或数量时留空。"},
-        "student_id": {"type": "string", "description": "同名消歧后由查询结果返回的学生唯一 ID；不得编造。"},
-        "teacher_name": {"type": "string", "description": "老板/店长代查某位老师负责范围时填写老师姓名；老师查自己范围时留空。"},
-        "name": {"type": "string", "description": "student_name 的兼容别名；优先填写 student_name。"},
-        "query_scope": {"type": "string", "enum": ["visible", "regular", "summer"], "description": "默认 visible；正式托管班（不含暑假班口径）填 regular；用户明确查暑假班孩子时才填 summer。"},
-        "grade": {"type": "string", "description": "按年级筛选时填写，如一年级、二年级；不筛选年级时留空。"},
-        "class_name": {"type": "string", "description": "班级精确确认，如三年级1班；同名学生消歧时优先填写，不能编造。"},
+        "student_name": {"type": "string", "description": "可选学生显示姓名；留空表示不按姓名收窄。"},
+        "student_id": {"type": "string", "description": "可选学生唯一 ID；只能使用可信查询结果返回的真实 ID，不得编造。"},
+        "teacher_name": {"type": "string", "description": "可选负责老师姓名筛选；实际可见范围仍由当前可信身份和权限决定。"},
+        "name": {"type": "string", "description": "student_name 的兼容别名。"},
+        "query_scope": {"type": "string", "enum": ["visible", "regular", "summer"], "description": "学生业务范围：visible=当前身份全部可见学生；regular=正式托管范围；summer=暑假班范围。"},
+        "grade": {"type": "string", "description": "可选年级筛选，如一年级、二年级。"},
+        "class_name": {"type": "string", "description": "可选班级筛选或同名消歧条件，如三年级1班；不得编造。"},
         "limit": {"type": "integer", "default": 30, "description": "本页最多返回多少名学生，范围 1-100；完整名单在 100 名以内可直接传 100。"},
         "offset": {"type": "integer", "default": 0, "description": "分页起点，默认 0；仅当 has_more=true 时使用工具返回的 next_offset 继续读取。"},
     }),
@@ -250,24 +250,24 @@ TUOGUAN_QUERY_STUDENTS_SCHEMA = _schema(
 )
 
 TUOGUAN_QUERY_TASKS_SCHEMA = _schema(
-    "按当前可信身份和权限范围查询任务、任务状态、来源、触发原因、缺口和闭环证据。可按任务、学生、老师、状态、等级、日期和查询范围筛选；工具负责权限收口。老师询问本人还有什么未完成工作时，调用本工具并传 scope=mine；只看未完成时再传 status=open；用户明确说今天/今日任务时再传 date_scope=today。该接口不接受通用 query 或 result_scope 参数，查询意图由本次对话和这些结构化筛选字段共同表达。",
+    "按当前可信身份和权限范围读取任务、任务状态、来源、触发原因、缺口和闭环证据。支持按 task_id、student_name、teacher_name、assignee_user_id、status、level、date_scope 和 scope 进行结构化筛选；工具只执行参数所表达的范围并负责权限收口，不负责从用户措辞预判查询意图。该接口不接受通用 query 或 result_scope 参数。",
     _identity_props(
         {
             "task_id": {"type": "string", "description": "任务 id，可为空。"},
             "student_name": {"type": "string", "description": "学生姓名，可为空。"},
-            "teacher_name": {"type": "string", "description": "老板/店长查询某位老师任务时填写老师姓名；老师查自己任务时留空。"},
-            "assignee_user_id": {"type": "string", "description": "按执行人的企业微信 user id 筛选；已知姓名时优先填写 teacher_name。"},
-            "status": {"type": "string", "description": "任务状态，可为空。"},
-            "level": {"type": "string", "description": "S/A/B/C，可为空。"},
+            "teacher_name": {"type": "string", "description": "可选负责老师姓名筛选；是否允许代查由当前可信身份权限决定。"},
+            "assignee_user_id": {"type": "string", "description": "可选执行人企业微信 user id 筛选。"},
+            "status": {"type": "string", "description": "可选任务状态筛选；open 表示规范定义下的未关闭任务，closed 表示已关闭任务。"},
+            "level": {"type": "string", "description": "可选任务等级筛选：S/A/B/C。"},
             "date_scope": {
                 "type": "string",
                 "enum": ["today"],
-                "description": "日期范围。用户明确说今天/今日任务时传 today；未指定日期时留空，不能擅自收窄。",
+                "description": "可选日期范围；today 表示 due_at 的本地日期等于当前日期。留空表示不按日期收窄。",
             },
             "scope": {
                 "type": "string",
                 "enum": ["mine", "all"],
-                "description": "查询范围。我的任务必须传 mine；老师请求 all 时系统仍收口为 mine。",
+                "description": "查询范围：mine=当前可信人员本人任务；all=当前身份权限范围内全部可见任务。权限不足时系统会自动收口。",
             },
             "limit": {"type": "integer", "default": 20, "description": "最多返回多少条任务，范围 1-100。"},
             "offset": {"type": "integer", "default": 0, "description": "分页起点，默认 0；仅当 has_more=true 时使用 next_offset 继续读取。"},
@@ -404,11 +404,11 @@ TUOGUAN_CANCEL_TASK_SCHEMA = _schema(
 )
 
 TUOGUAN_QUERY_OPERATIONS_REPORT_SCHEMA = _schema(
-    "老板查询经营、老师名单、指定老师近期执行、老师工作量、试听跟进、日报或周报。用户说查老师、有哪些老师、几位老师时用 staff；说查某老师最近怎么样时用 teacher_activity。所有数字和名单由工具确定性生成。不要用于 H5、看板链接、打开看板、看板地址，这些请求使用 tuoguan_dashboard_link。",
+    "只读返回老板权限范围内的经营汇总、老师名单与人员概况、指定老师近期执行、老师工作量、试听跟进、日报或周报。query_type 明确选择返回的数据投影，所有数字和名单由工具确定性生成。该工具不生成 H5 或看板链接。",
     _identity_props({
-        "report_type": {"type": "string", "enum": ["operations", "teacher_workload", "trial_follow_up", "daily", "weekly"], "description": "兼容旧报表类型；普通经营查询可留空。"},
-        "query_type": {"type": "string", "enum": ["overview", "teacher_records", "open_tasks", "safety_tasks", "summer_students", "points", "staff", "teacher_activity"], "description": "查老师人数或老师名单用 staff；查指定老师最近怎么样用 teacher_activity；查机构经营用 overview。"},
-        "teacher_name": {"type": "string", "description": "仅 query_type=teacher_activity 时填写原话中的老师姓名。"},
+        "report_type": {"type": "string", "enum": ["operations", "teacher_workload", "trial_follow_up", "daily", "weekly"], "description": "兼容旧报表投影；不需要该旧投影时可留空。"},
+        "query_type": {"type": "string", "enum": ["overview", "teacher_records", "open_tasks", "safety_tasks", "summer_students", "points", "staff", "teacher_activity"], "description": "结构化查询投影：overview=经营概况，teacher_records=老师记录统计，open_tasks=今日未完成任务，safety_tasks=安全任务，summer_students=暑假班学生，points=积分，staff=人员概况与名单，teacher_activity=指定老师近期执行情况。"},
+        "teacher_name": {"type": "string", "description": "teacher_activity 投影的可选老师姓名筛选。"},
     }),
     ["user_id"],
 )
