@@ -59,7 +59,11 @@ class WorkerConfig:
     executor_home: Path | None = None
 
 
-def parse_command_comment(body: str) -> dict[str, Any]:
+def parse_command_comment(
+    body: str,
+    *,
+    now: datetime | None = None,
+) -> dict[str, Any]:
     if COMMAND_MARKER not in body:
         raise CommandValidationError("command_marker_missing")
     match = _JSON_FENCE_RE.search(body)
@@ -69,7 +73,7 @@ def parse_command_comment(body: str) -> dict[str, Any]:
         payload = json.loads(match.group("body"))
     except json.JSONDecodeError as exc:
         raise CommandValidationError("command_json_invalid") from exc
-    return validate_command(payload)
+    return validate_command(payload, now=now)
 
 
 def _github_json(
