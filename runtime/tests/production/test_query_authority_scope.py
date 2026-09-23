@@ -125,9 +125,9 @@ def test_manager_teacher_query_resolves_authoritative_teacher_not_legacy_alias_o
     store = _store(tmp_path, monkeypatch)
     service = _service(store, _identity("wx-manager", "店长", "manager"))
 
-    resolved = service._teacher_identity_by_name("李老师")
+    resolved = service._query_teacher_identity_by_name("李老师")
 
     assert resolved is not None
     assert resolved.canonical_user_id == "wx-teacher-a"
     assert resolved.role == "teacher"
-    assert service._manager_can_view_teacher("legacy-only") is False
+    assert service._query_manager_can_view_teacher("legacy-only") is False
