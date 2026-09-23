@@ -438,3 +438,37 @@ def test_github_http_error_retains_status_without_body(monkeypatch):
 
     with pytest.raises(WorkerError, match=r"^github_request_failed:HTTPError:403$"):
         _github_json("https://api.github.com/example", token="must-not-leak")
+
+
+def test_fixture_runs_without_pythonpath_from_unrelated_cwd(tmp_path: Path):
+    import os
+    import subprocess
+    import sys
+
+    command = _command()
+    fixture = (
+        Path(__file__).resolve().parents[3]
+        / "scripts"
+        / "xiaoyou_ops_fixture_executor_v2.py"
+    )
+    env = {
+        "PATH": os.environ.get("PATH", "/usr/local/bin:/usr/bin:/bin"),
+        "LANG": os.environ.get("LANG", "C.UTF-8"),
+    }
+
+    completed = subprocess.run(
+        [sys.executable, str(fixture)],
+        input=(json.dumps(command) + "\n").encode("utf-8"),
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        cwd=tmp_path,
+        env=env,
+        check=False,
+        timeout=10,
+    )
+
+    assert completed.returncode == 0, completed.stderr.decode("utf-8", errors="replace")
+    report = json.loads(completed.stdout.decode("utf-8"))
+    assert report["command_id"] == command["command_id"]
+    assert report["result"] == "PASS"
+    assert report["evidence"]["fixture_executor"] is True
