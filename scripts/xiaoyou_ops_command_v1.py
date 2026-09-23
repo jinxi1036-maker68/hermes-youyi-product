@@ -211,14 +211,15 @@ def command_from_github_comment(
 
 
 def _github_json(url: str) -> Any:
-    req = Request(
-        url,
-        headers={
-            "Accept": "application/vnd.github+json",
-            "User-Agent": "xiaou-ops-command-bridge-v1",
-            "X-GitHub-Api-Version": "2022-11-28",
-        },
-    )
+    headers = {
+        "Accept": "application/vnd.github+json",
+        "User-Agent": "xiaou-ops-command-bridge-v1",
+        "X-GitHub-Api-Version": "2022-11-28",
+    }
+    read_token = os.environ.get("XIAOU_GITHUB_READ_TOKEN", "").strip()
+    if read_token:
+        headers["Authorization"] = f"Bearer {read_token}"
+    req = Request(url, headers=headers)
     with urlopen(req, timeout=15) as response:
         return json.loads(response.read().decode("utf-8"))
 
