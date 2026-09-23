@@ -131,14 +131,32 @@ def compare_snapshots(before: dict[str, Any], after: dict[str, Any]) -> dict[str
         raise ValueError("after_snapshot_schema_invalid")
 
     semantic_changes = _changed_tables(before, after, "semantic_tables")
-    runtime_changes = _changed_tables(before, after, "runtime_tables")
+    before_runtime = before.get("runtime_tables") if isinstance(before.get("runtime_tables"), dict) else {}
+    after_runtime = after.get("runtime_tables") if isinstance(after.get("runtime_tables"), dict) else {}
+    runtime_names = sorted(set(before_runtime) | set(after_runtime))
+    runtime_schema_changes = [
+        name
+        for name in runtime_names
+        if name not in before_runtime
+        or name not in after_runtime
+        or str((before_runtime.get(name) or {}).get("schema_digest") or "")
+        != str((after_runtime.get(name) or {}).get("schema_digest") or "")
+    ]
+    runtime_data_changes = [
+        name
+        for name in runtime_names
+        if name not in runtime_schema_changes
+        and before_runtime.get(name) != after_runtime.get(name)
+    ]
     return {
-        "ok": not semantic_changes,
+        "ok": not semantic_changes and not runtime_schema_changes,
         "gate": "agenda_semantic_deployment_gate_v1",
         "semantic_changes_detected": bool(semantic_changes),
         "changed_semantic_tables": semantic_changes,
-        "allowed_runtime_changes_detected": bool(runtime_changes),
-        "changed_runtime_tables": runtime_changes,
+        "runtime_schema_changes_detected": bool(runtime_schema_changes),
+        "changed_runtime_schema_tables": runtime_schema_changes,
+        "allowed_runtime_changes_detected": bool(runtime_data_changes),
+        "changed_runtime_tables": runtime_data_changes,
         "ignored_physical_files": [
             "agenda_work_runtime.sqlite",
             "agenda_work_runtime.sqlite-wal",
@@ -146,7 +164,8 @@ def compare_snapshots(before: dict[str, Any], after: dict[str, Any]) -> dict[str
         ],
         "policy": {
             "physical_sqlite_hash_change_is_failure": False,
-            "runtime_status_table_change_is_failure": False,
+            "runtime_status_row_change_is_failure": False,
+            "runtime_status_schema_change_is_failure": True,
             "all_other_application_table_change_is_failure": True,
         },
     }
