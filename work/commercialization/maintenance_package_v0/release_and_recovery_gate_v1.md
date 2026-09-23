@@ -53,9 +53,33 @@ python scripts/xiaoyou_non_youyi_tenant_gate.py
 3. 只读比较生产模块和发布清单。
 4. 备份代码、Home、业务数据、systemd 和哈希清单。
 5. 影子环境执行导入、真实模型和无外发回放。
-6. 低峰窗口最小切换，一次受控重启。
-7. 核对实际 import 路径、Hermes 版本、模型、日志、outbox 和 timer。
-8. 出现重复回复、跨人记忆、未经授权外发、任务覆盖或日报失效时立即回滚。
+6. 对生产 Agenda 运行库建立只读语义快照：
+
+   ```text
+   python scripts/xiaoyou_agenda_semantic_gate.py snapshot \
+     --database <workspace>/data/agenda_work_runtime.sqlite \
+     --output /tmp/agenda-before.json
+   ```
+
+7. 低峰窗口最小切换，一次受控重启。
+8. 核对实际 import 路径、Hermes 版本、模型、日志、outbox 和 timer。
+9. 用同一生产库执行部署后语义比较：
+
+   ```text
+   python scripts/xiaoyou_agenda_semantic_gate.py compare \
+     --before /tmp/agenda-before.json \
+     --database <workspace>/data/agenda_work_runtime.sqlite \
+     --after-output /tmp/agenda-after.json
+   ```
+
+   `agenda_runtime_status` 和 `agenda_runtime_daily_status` 的正常心跳/统计变化允许通过。
+   其它用户表默认按业务/工作语义状态处理；ticket、work fact、payload、binding、wake batch、
+   receipt、reply/delivery、lease 或未知未来非心跳表发生变化时门禁失败并进入人工核验或回滚。
+
+10. 出现重复回复、跨人记忆、未经授权外发、任务覆盖、日报失效或未经解释的 Agenda 语义状态变化时立即回滚。
+
+> SQLite 主库、`-wal`、`-shm` 的 mtime、大小或 SHA256 变化不能单独作为“业务数据被候选修改”的失败条件。
+> WAL checkpoint 和 Agenda 心跳在稳定版本正常运行期间即可改变这些物理文件。文件级哈希仍可留作取证信息，但发布判定必须使用逻辑语义状态。
 
 ## 边界
 
