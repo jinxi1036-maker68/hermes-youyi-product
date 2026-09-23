@@ -682,7 +682,7 @@ class TuoguanToolService:
             str(name): deepcopy(profile)
             for name, profile in students.items()
             if isinstance(profile, dict)
-            and self.permissions.can_view_student(identity, str(name))
+            and self.permissions.can_query_student(identity, str(name))
         }
 
     def _filter_student_coverage(
@@ -748,25 +748,65 @@ class TuoguanToolService:
                 names.add(name)
         return names
 
+    def _current_query_staff_entries(self) -> list[dict[str, Any]]:
+        """Return staff usable for current query authorization.
+
+        Once personnel identity authority is enforced, legacy staff metadata may
+        still provide aliases and directory labels, but it cannot create an
+        active person, role, or permission.  Before an institution has migrated
+        to the authority aggregate, keep the historical read-only compatibility
+        surface.
+        """
+
+        from .personnel_identity_authority import active_identity_snapshot
+        from .staff_directory import _build_entries
+
+        entries = [row for row in _build_entries(self.store) if isinstance(row, dict)]
+        snapshot = active_identity_snapshot(self.store, tenant_id=current_tenant_id())
+        if snapshot is None:
+            return [row for row in entries if bool(row.get("is_active_staff"))]
+        approved = {
+            str(user_id)
+            for user_id, resolved in snapshot.items()
+            if str(getattr(resolved, "approval_state", "") or "") == "approved"
+        }
+        return [
+            row
+            for row in entries
+            if str(row.get("user_id") or "") in approved
+            and int(row.get("identity_authority_rank") or 0) >= 3
+            and bool(row.get("is_active_staff"))
+        ]
+
     def _teacher_identity_by_name(self, teacher_name: str) -> UserIdentity | None:
         requested = str(teacher_name or "").strip()
         if not requested:
             return None
-        staff = self.store.read_json("staff.json", {})
-        if isinstance(staff, dict):
-            for user_id, profile in staff.items():
-                if not isinstance(profile, dict):
-                    continue
-                if str(profile.get("role") or "") != "teacher":
-                    continue
-                names = {str(profile.get("name") or ""), str(user_id)}
-                if requested in names:
-                    return UserIdentity(self.platform, str(user_id), str(user_id), str(profile.get("name") or requested), "teacher", "approved")
-        mapping = self.store.read_json("teacher_wecom_map.json", {})
-        user_id = str(mapping.get(requested) or "") if isinstance(mapping, dict) else ""
-        if user_id:
-            return UserIdentity(self.platform, user_id, user_id, requested, "teacher", "approved")
-        return None
+        normalized = "".join(requested.casefold().split())
+        matches: list[dict[str, Any]] = []
+        for entry in self._current_query_staff_entries():
+            if str(entry.get("role") or "") != "teacher":
+                continue
+            aliases = {
+                "".join(str(value or "").casefold().split())
+                for value in (
+                    entry.get("business_name"),
+                    entry.get("staff_name"),
+                    entry.get("directory_name"),
+                    entry.get("user_id"),
+                    *(entry.get("known_aliases") or []),
+                )
+                if str(value or "").strip()
+            }
+            if normalized in aliases:
+                matches.append(entry)
+        user_ids = {str(row.get("user_id") or "") for row in matches if str(row.get("user_id") or "")}
+        if len(user_ids) != 1:
+            return None
+        row = next(row for row in matches if str(row.get("user_id") or "") in user_ids)
+        user_id = str(row.get("user_id") or "")
+        display_name = str(row.get("business_name") or row.get("directory_name") or user_id)
+        return UserIdentity(self.platform, user_id, user_id, display_name, "teacher", "approved")
 
     def _resolve_task_assignee(
         self,
@@ -829,15 +869,16 @@ class TuoguanToolService:
         if not raw_text:
             return ""
         candidates: list[str] = []
-        staff = self.store.read_json("staff.json", {})
-        if isinstance(staff, dict):
-            for user_id, profile in staff.items():
-                if not isinstance(profile, dict) or str(profile.get("role") or "") != "teacher":
-                    continue
-                candidates.extend([str(profile.get("name") or ""), str(user_id)])
-        mapping = self.store.read_json("teacher_wecom_map.json", {})
-        if isinstance(mapping, dict):
-            candidates.extend(str(name or "") for name in mapping)
+        for entry in self._current_query_staff_entries():
+            if str(entry.get("role") or "") != "teacher":
+                continue
+            candidates.extend([
+                str(entry.get("business_name") or ""),
+                str(entry.get("directory_name") or ""),
+                str(entry.get("staff_name") or ""),
+                str(entry.get("user_id") or ""),
+                *[str(value or "") for value in entry.get("known_aliases") or []],
+            ])
         candidates = sorted({name.strip() for name in candidates if name and name.strip()}, key=len, reverse=True)
         for name in candidates:
             if name in raw_text:
@@ -847,29 +888,26 @@ class TuoguanToolService:
     def _manager_can_view_teacher(self, teacher_user_id: str) -> bool:
         if self.identity.role != "manager":
             return True
-        staff = self.store.read_json("staff.json", {})
-        if not isinstance(staff, dict):
-            return False
-        manager = staff.get(self.identity.canonical_user_id, {})
-        teacher = staff.get(teacher_user_id, {})
-        if not isinstance(manager, dict) or not isinstance(teacher, dict):
-            return False
-        manager_programs = set(manager.get("program_ids") or [])
-        teacher_programs = set(teacher.get("program_ids") or [])
-        if manager_programs and teacher_programs and manager_programs & teacher_programs:
-            return True
-        manager_campuses = set(manager.get("campus_ids") or [])
-        teacher_campuses = set(teacher.get("campus_ids") or [])
-        return bool(manager_campuses and teacher_campuses and manager_campuses & teacher_campuses)
+        target = str(teacher_user_id or "").strip()
+        return any(
+            str(entry.get("user_id") or "") == target
+            and str(entry.get("role") or "") == "teacher"
+            for entry in self._current_query_staff_entries()
+        )
 
     def _visible_tasks(self) -> list[dict[str, Any]]:
+        trusted_tenant = str(current_tenant_id() or "").strip()
         tasks = [
             task
             for task in self.store.load_tasks()
             if not task.get("safety_test")
             and str(task.get("source_type") or "").lower() != "safety_test"
+            and (
+                not str(task.get("tenant_id") or "").strip()
+                or str(task.get("tenant_id") or "").strip() == trusted_tenant
+            )
         ]
-        if self.identity.role == "boss":
+        if self.identity.role in {"boss", "manager"}:
             return tasks
         if self.identity.role == "teacher":
             return [
@@ -877,23 +915,6 @@ class TuoguanToolService:
                 for task in tasks
                 if str(task.get("assignee_userid") or "")
                 == self.identity.canonical_user_id
-            ]
-        if self.identity.role == "manager":
-            staff = self.store.read_json("staff.json", {})
-            profile = (
-                staff.get(self.identity.canonical_user_id, {})
-                if isinstance(staff, dict)
-                else {}
-            )
-            campuses = (
-                set(profile.get("campus_ids") or [])
-                if isinstance(profile, dict)
-                else set()
-            )
-            return [
-                task
-                for task in tasks
-                if str(task.get("campus_id") or "") in campuses
             ]
         return []
 
@@ -1804,7 +1825,7 @@ class TuoguanToolService:
             directory_candidates = find_student_candidates(self.store, requested)
             authorised_candidates = [
                 entry for entry in directory_candidates
-                if self.permissions.can_view_student(target_identity, str(entry.get("student_id") or ""))
+                if self.permissions.can_query_student(target_identity, str(entry.get("student_id") or ""))
             ]
             # Keep the pre-filter cardinality.  A model may offer a class
             # predicate after seeing a broad directory/context result, but a
@@ -1824,7 +1845,7 @@ class TuoguanToolService:
                 )
                 authorised_candidates = [
                     entry for entry in directory_candidates
-                    if self.permissions.can_view_student(target_identity, str(entry.get("student_id") or ""))
+                    if self.permissions.can_query_student(target_identity, str(entry.get("student_id") or ""))
                 ]
                 if not directory_candidates:
                     return self._error(
@@ -2623,9 +2644,9 @@ class TuoguanToolService:
         if denied:
             return denied
         requested_scope = str(scope or "").strip().lower()
-        effective_scope = requested_scope or ("all" if self.identity.role == "boss" else "mine")
+        effective_scope = requested_scope or ("all" if self.identity.role in {"boss", "manager"} else "mine")
         scope_adjusted = False
-        if effective_scope == "all" and self.identity.role != "boss":
+        if effective_scope == "all" and self.identity.role not in {"boss", "manager"}:
             effective_scope = "mine"
             scope_adjusted = True
         tasks = self._visible_tasks()
@@ -2654,9 +2675,18 @@ class TuoguanToolService:
             target_teacher_id = requested_assignee
             effective_scope = "all"
             if not requested_teacher:
-                staff = self.store.read_json("staff.json", {})
-                profile = staff.get(requested_assignee, {}) if isinstance(staff, dict) else {}
-                requested_teacher = str(profile.get("name") or requested_assignee) if isinstance(profile, dict) else requested_assignee
+                entry = next(
+                    (
+                        row for row in self._current_query_staff_entries()
+                        if str(row.get("user_id") or "") == requested_assignee
+                    ),
+                    {},
+                )
+                requested_teacher = str(
+                    entry.get("business_name")
+                    or entry.get("directory_name")
+                    or requested_assignee
+                )
         if effective_scope == "mine":
             tasks = [
                 task
