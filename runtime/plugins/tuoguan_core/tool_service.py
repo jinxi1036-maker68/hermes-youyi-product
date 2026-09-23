@@ -778,7 +778,7 @@ class TuoguanToolService:
             and bool(row.get("is_active_staff"))
         ]
 
-    def _teacher_identity_by_name(self, teacher_name: str) -> UserIdentity | None:
+    def _query_teacher_identity_by_name(self, teacher_name: str) -> UserIdentity | None:
         requested = str(teacher_name or "").strip()
         if not requested:
             return None
@@ -807,6 +807,33 @@ class TuoguanToolService:
         user_id = str(row.get("user_id") or "")
         display_name = str(row.get("business_name") or row.get("directory_name") or user_id)
         return UserIdentity(self.platform, user_id, user_id, display_name, "teacher", "approved")
+
+    def _teacher_identity_by_name(self, teacher_name: str) -> UserIdentity | None:
+        requested = str(teacher_name or "").strip()
+        if not requested:
+            return None
+        staff = self.store.read_json("staff.json", {})
+        if isinstance(staff, dict):
+            for user_id, profile in staff.items():
+                if not isinstance(profile, dict):
+                    continue
+                if str(profile.get("role") or "") != "teacher":
+                    continue
+                names = {str(profile.get("name") or ""), str(user_id)}
+                if requested in names:
+                    return UserIdentity(
+                        self.platform,
+                        str(user_id),
+                        str(user_id),
+                        str(profile.get("name") or requested),
+                        "teacher",
+                        "approved",
+                    )
+        mapping = self.store.read_json("teacher_wecom_map.json", {})
+        user_id = str(mapping.get(requested) or "") if isinstance(mapping, dict) else ""
+        if user_id:
+            return UserIdentity(self.platform, user_id, user_id, requested, "teacher", "approved")
+        return None
 
     def _resolve_task_assignee(
         self,
@@ -885,7 +912,7 @@ class TuoguanToolService:
                 return name
         return ""
 
-    def _manager_can_view_teacher(self, teacher_user_id: str) -> bool:
+    def _query_manager_can_view_teacher(self, teacher_user_id: str) -> bool:
         if self.identity.role != "manager":
             return True
         target = str(teacher_user_id or "").strip()
@@ -895,7 +922,62 @@ class TuoguanToolService:
             for entry in self._current_query_staff_entries()
         )
 
+    def _manager_can_view_teacher(self, teacher_user_id: str) -> bool:
+        if self.identity.role != "manager":
+            return True
+        staff = self.store.read_json("staff.json", {})
+        if not isinstance(staff, dict):
+            return False
+        manager = staff.get(self.identity.canonical_user_id, {})
+        teacher = staff.get(teacher_user_id, {})
+        if not isinstance(manager, dict) or not isinstance(teacher, dict):
+            return False
+        manager_programs = set(manager.get("program_ids") or [])
+        teacher_programs = set(teacher.get("program_ids") or [])
+        if manager_programs and teacher_programs and manager_programs & teacher_programs:
+            return True
+        manager_campuses = set(manager.get("campus_ids") or [])
+        teacher_campuses = set(teacher.get("campus_ids") or [])
+        return bool(manager_campuses and teacher_campuses and manager_campuses & teacher_campuses)
+
     def _visible_tasks(self) -> list[dict[str, Any]]:
+        tasks = [
+            task
+            for task in self.store.load_tasks()
+            if not task.get("safety_test")
+            and str(task.get("source_type") or "").lower() != "safety_test"
+        ]
+        if self.identity.role == "boss":
+            return tasks
+        if self.identity.role == "teacher":
+            return [
+                task
+                for task in tasks
+                if str(task.get("assignee_userid") or "")
+                == self.identity.canonical_user_id
+            ]
+        if self.identity.role == "manager":
+            staff = self.store.read_json("staff.json", {})
+            profile = (
+                staff.get(self.identity.canonical_user_id, {})
+                if isinstance(staff, dict)
+                else {}
+            )
+            campuses = (
+                set(profile.get("campus_ids") or [])
+                if isinstance(profile, dict)
+                else set()
+            )
+            return [
+                task
+                for task in tasks
+                if str(task.get("campus_id") or "") in campuses
+            ]
+        return []
+
+    def _query_visible_tasks(self) -> list[dict[str, Any]]:
+        """Read visibility for the current single-institution query surface."""
+
         trusted_tenant = str(current_tenant_id() or "").strip()
         tasks = [
             task
@@ -1704,7 +1786,7 @@ class TuoguanToolService:
         if denied:
             return denied
         visible_students = sorted(self._visible_students())
-        visible_tasks = self._visible_tasks()
+        visible_tasks = self._query_visible_tasks()
         current = current_task_for_user(
             visible_tasks,
             self.identity.canonical_user_id,
@@ -1810,10 +1892,10 @@ class TuoguanToolService:
         if requested_teacher:
             if self.identity.role not in {"boss", "manager"}:
                 return self._error("permission_denied", "当前账号不能代查其他老师负责的学生。")
-            target_identity = self._teacher_identity_by_name(requested_teacher)
+            target_identity = self._query_teacher_identity_by_name(requested_teacher)
             if target_identity is None:
                 return self._error("teacher_not_found", f"没有找到老师“{requested_teacher}”。")
-            if not self._manager_can_view_teacher(target_identity.canonical_user_id):
+            if not self._query_manager_can_view_teacher(target_identity.canonical_user_id):
                 return self._error("permission_denied", f"老师“{requested_teacher}”不在当前店长管理范围内。")
         visible = self._visible_students_for(target_identity)
         if requested_student_id:
@@ -2649,7 +2731,7 @@ class TuoguanToolService:
         if effective_scope == "all" and self.identity.role not in {"boss", "manager"}:
             effective_scope = "mine"
             scope_adjusted = True
-        tasks = self._visible_tasks()
+        tasks = self._query_visible_tasks()
         requested_teacher = str(teacher_name or "").strip()
         requested_assignee = str(assignee_user_id or "").strip()
         if not requested_teacher and not requested_assignee and self.identity.role in {"boss", "manager"}:
@@ -2658,10 +2740,10 @@ class TuoguanToolService:
         if requested_teacher:
             if self.identity.role not in {"boss", "manager"}:
                 return self._error("permission_denied", "当前账号不能代查其他老师的任务。")
-            teacher_identity = self._teacher_identity_by_name(requested_teacher)
+            teacher_identity = self._query_teacher_identity_by_name(requested_teacher)
             if teacher_identity is None:
                 return self._error("teacher_not_found", f"没有找到老师“{requested_teacher}”。")
-            if not self._manager_can_view_teacher(teacher_identity.canonical_user_id):
+            if not self._query_manager_can_view_teacher(teacher_identity.canonical_user_id):
                 return self._error("permission_denied", f"老师“{requested_teacher}”不在当前店长管理范围内。")
             target_teacher_id = teacher_identity.canonical_user_id
             effective_scope = "all"
@@ -2670,7 +2752,7 @@ class TuoguanToolService:
                 return self._error("ambiguous_target", "teacher_name 与 assignee_user_id 指向不同执行人，请只保留一个明确对象。")
             if self.identity.role == "teacher" and requested_assignee != self.identity.canonical_user_id:
                 return self._error("permission_denied", "老师只能按本人账号查询任务。")
-            if self.identity.role == "manager" and not self._manager_can_view_teacher(requested_assignee):
+            if self.identity.role == "manager" and not self._query_manager_can_view_teacher(requested_assignee):
                 return self._error("permission_denied", "该执行人不在当前店长管理范围内。")
             target_teacher_id = requested_assignee
             effective_scope = "all"
