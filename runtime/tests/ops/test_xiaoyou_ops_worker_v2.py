@@ -144,6 +144,8 @@ def test_replay_store_rejects_same_comment_or_command(tmp_path: Path):
 def test_executor_receives_no_worker_github_token(monkeypatch, tmp_path: Path):
     executor = tmp_path / "executor"
     executor.write_text("#!/bin/true\n", encoding="utf-8")
+    sudo = tmp_path / "sudo"
+    sudo.write_text("#!/bin/true\n", encoding="utf-8")
 
     report = {
         "protocol": "XIAOU_OPS_REPORT_V1",
@@ -175,14 +177,25 @@ def test_executor_receives_no_worker_github_token(monkeypatch, tmp_path: Path):
         repository="acme/repo",
         trusted_issuer="trusted-owner",
         executor=executor.resolve(),
+        executor_user="xiaou-codex",
         state_db=tmp_path / "state.sqlite",
         actions_token="must-not-reach-codex",
-        executor_home=tmp_path / "codex-home",
+        sudo_path=sudo.resolve(),
     )
     result = run_fixed_executor(config, _command())
 
     assert result["result"] == "PASS"
     assert captured["kwargs"]["shell"] is False
+    assert captured["args"] == [
+        str(sudo.resolve()),
+        "-H",
+        "-n",
+        "-u",
+        "xiaou-codex",
+        "--",
+        str(executor.resolve()),
+    ]
+    assert b"worker-v2-boundary-001" in captured["kwargs"]["input"]
     assert "must-not-reach-codex" not in captured["kwargs"]["env"].values()
     assert "XIAOU_GITHUB_ACTIONS_TOKEN" not in captured["kwargs"]["env"]
 
@@ -190,6 +203,8 @@ def test_executor_receives_no_worker_github_token(monkeypatch, tmp_path: Path):
 def test_executor_report_cannot_claim_production_change(monkeypatch, tmp_path: Path):
     executor = tmp_path / "executor"
     executor.write_text("#!/bin/true\n", encoding="utf-8")
+    sudo = tmp_path / "sudo"
+    sudo.write_text("#!/bin/true\n", encoding="utf-8")
 
     report = {
         "protocol": "XIAOU_OPS_REPORT_V1",
@@ -218,8 +233,10 @@ def test_executor_report_cannot_claim_production_change(monkeypatch, tmp_path: P
         repository="acme/repo",
         trusted_issuer="trusted-owner",
         executor=executor.resolve(),
+        executor_user="xiaou-codex",
         state_db=tmp_path / "state.sqlite",
         actions_token="worker-token",
+        sudo_path=sudo.resolve(),
     )
     with pytest.raises(WorkerError, match="executor_report_invalid"):
         run_fixed_executor(config, _command())
@@ -230,6 +247,7 @@ def test_untrusted_marker_is_ignored_before_command_parsing(tmp_path: Path):
         repository="acme/repo",
         trusted_issuer="trusted-owner",
         executor=tmp_path / "missing-executor",
+        executor_user="xiaou-codex",
         state_db=tmp_path / "state.sqlite",
         actions_token="unused",
     )
