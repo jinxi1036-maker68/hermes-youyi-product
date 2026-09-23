@@ -377,9 +377,17 @@ def query_active_work_context(
         "ok": True,
         "generated_at": now.isoformat(timespec="seconds"),
         "current_time": now.isoformat(timespec="seconds"),
+        "context_scope": "conversation_continuation_only",
+        "authoritative_for_task_inventory": False,
+        "authoritative_for_task_count": False,
+        "authoritative_for_date_scoped_tasks": False,
         "context_count": len(items),
         "contexts": items,
-        "rendered_text": f"查到 {len(items)} 条当前活动事项。它们只是衔接证据，是否相关仍由小优结合本轮原话判断。",
+        "rendered_text": (
+            f"查到 {len(items)} 条会话衔接证据。"
+            "这个数量只表示可供当前对话衔接的近期上下文，不代表任务数量，"
+            "不能据此判断是否还有待办、今日任务或机构范围内任务。"
+        ),
         "render_verified": True,
     }
 
@@ -389,8 +397,9 @@ def render_active_work_context(result: dict[str, Any]) -> str:
     if not items:
         return ""
     lines = [
-        "【当前活动工作线程】",
-        "下面是当前人的近期活动事项，只用于判断短回复在回答哪一件事；不要机械选择，也不要在没有真实写入时声称已执行。",
+        "【当前会话衔接证据】",
+        "下面是当前人的近期上下文，只用于判断短回复可能在承接哪一件事；它不是任务库存或任务清单，context_count 也不是任务数量。",
+        "不能用这里的 0 条或少量条目推断“没有待办”“今天没有任务”或“机构范围没有任务”。",
     ]
     current_time = str(result.get("current_time") or "")
     if current_time:
@@ -402,5 +411,5 @@ def render_active_work_context(result: dict[str, Any]) -> str:
         )
         if item.get("context_type") == "relationship_touch":
             lines.append(f"  发送/回复证据={item.get('reply_wait_state') or '未知'}；未取得 sent/delivered 回执时，绝不能说对方未响应。")
-    lines.append("先由模型判断本轮原话与哪条最相关；只有确实相关时才沿该线程回答或调用可信工具。")
+    lines.append("先由模型判断本轮原话与哪条最相关；只有确实相关时才沿该线程回答。任务数量、任务清单、状态或日期范围必须使用专门任务查询事实。")
     return "\n".join(lines)
