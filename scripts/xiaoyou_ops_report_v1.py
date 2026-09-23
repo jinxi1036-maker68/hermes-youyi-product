@@ -26,6 +26,24 @@ READ_ONLY_ACTIONS = {"READ_ONLY_INSPECTION", "VERIFY"}
 _SHA_RE = re.compile(r"^[0-9a-f]{40}$")
 _COMMAND_RE = re.compile(r"^[A-Za-z0-9._:-]{3,120}$")
 MAX_REPORT_BYTES = 64 * 1024
+_FORBIDDEN_KEY_PARTS = {
+    "authorization",
+    "cookie",
+    "credential",
+    "api_key",
+    "apikey",
+    "password",
+    "passwd",
+    "private_key",
+    "secret",
+    "token",
+}
+_SECRET_PATTERNS = (
+    re.compile(r"-----BEGIN [A-Z0-9 ]*PRIVATE KEY-----"),
+    re.compile(r"\bBearer\s+[A-Za-z0-9._~+/=-]{12,}", re.IGNORECASE),
+    re.compile(r"\b(?:ghp_|github_pat_|sk-)[A-Za-z0-9_-]{12,}"),
+    re.compile(r"\bAKIA[0-9A-Z]{16}\b"),
+)
 
 
 class ReportValidationError(ValueError):
@@ -46,9 +64,29 @@ def _validate_sha(value: str, key: str) -> str:
     return normalized
 
 
+def _reject_sensitive_material(value: Any, *, path: str = "report") -> None:
+    if isinstance(value, dict):
+        for raw_key, child in value.items():
+            key = str(raw_key or "").strip().lower()
+            if any(part in key for part in _FORBIDDEN_KEY_PARTS):
+                raise ReportValidationError(f"sensitive_key_rejected:{path}.{raw_key}")
+            _reject_sensitive_material(child, path=f"{path}.{raw_key}")
+        return
+    if isinstance(value, list):
+        for index, child in enumerate(value):
+            _reject_sensitive_material(child, path=f"{path}[{index}]")
+        return
+    if isinstance(value, str):
+        for pattern in _SECRET_PATTERNS:
+            if pattern.search(value):
+                raise ReportValidationError(f"sensitive_value_rejected:{path}")
+
+
 def validate_report(payload: Any) -> dict[str, Any]:
     if not isinstance(payload, dict):
         raise ReportValidationError("report_must_be_object")
+
+    _reject_sensitive_material(payload)
 
     protocol = _require_text(payload, "protocol")
     if protocol != PROTOCOL:
