@@ -1,0 +1,32 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "XiaoU Codex Readonly Result V1",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "result": {
+      "type": "string",
+      "enum": ["PASS", "FAIL", "BLOCKED"]
+    },
+    "summary": {
+      "type": "string"
+    },
+    "evidence": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "key": {"type": "string"},
+          "value": {"type": "string"}
+        },
+        "required": ["key", "value"]
+      }
+    },
+    "anomalies": {
+      "type": "array",
+      "items": {"type": "string"}
+    }
+  },
+  "required": ["result", "summary", "evidence", "anomalies"]
+}
