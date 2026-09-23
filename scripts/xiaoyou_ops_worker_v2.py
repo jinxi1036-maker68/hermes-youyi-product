@@ -104,7 +104,9 @@ def _github_json(
             if not raw:
                 return None
             return json.loads(raw.decode("utf-8"))
-    except (urlerror.URLError, urlerror.HTTPError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+    except urlerror.HTTPError as exc:
+        raise WorkerError(f"github_request_failed:HTTPError:{exc.code}") from exc
+    except (urlerror.URLError, UnicodeDecodeError, json.JSONDecodeError) as exc:
         raise WorkerError(f"github_request_failed:{type(exc).__name__}") from exc
 
 
