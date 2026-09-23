@@ -252,6 +252,8 @@ def run_fixed_executor(config: WorkerConfig, command: dict[str, Any]) -> dict[st
             )
         except subprocess.TimeoutExpired as exc:
             raise WorkerError("executor_timeout") from exc
+        except OSError as exc:
+            raise WorkerError("executor_start_failed") from exc
 
     stdout = completed.stdout or b""
     if len(stdout) > MAX_EXECUTOR_STDOUT_BYTES:
@@ -310,6 +312,10 @@ def process_comment(
 ) -> str:
     body = str(comment.get("body") or "")
     if COMMAND_MARKER not in body:
+        return "ignored"
+
+    comment_login = ((comment.get("user") or {}).get("login") or "").strip()
+    if comment_login != config.trusted_issuer:
         return "ignored"
 
     comment_id = comment.get("id")
