@@ -52,3 +52,19 @@ def test_markdown_contains_machine_marker_and_structured_evidence():
     assert "<!-- xiaou-ops-report:v1 -->" in rendered
     assert "XIAOU_OPS_REPORT_V1" in rendered
     assert SHA in rendered
+
+
+def test_secret_like_evidence_is_rejected():
+    with pytest.raises(ReportValidationError, match="sensitive_key_rejected"):
+        validate_report(_report(evidence={"api_token": "should-never-be-posted"}))
+
+
+def test_private_key_material_is_rejected():
+    with pytest.raises(ReportValidationError, match="sensitive_value_rejected"):
+        validate_report(
+            _report(
+                evidence={
+                    "diagnostic": "-----BEGIN PRIVATE KEY-----\\nredacted-but-still-forbidden"
+                }
+            )
+        )
