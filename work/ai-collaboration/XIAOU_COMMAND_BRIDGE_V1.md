@@ -109,7 +109,7 @@ The server-side GitHub credential must:
 - never be passed into Codex;
 - live outside the repository and logs.
 
-Reading the public PR command queue does not require this credential.
+Reading the public PR command queue does not require a credential, but production should use a separate read-only `XIAOU_GITHUB_READ_TOKEN` to avoid unauthenticated API rate limits. This read token must also be withheld from Codex.
 
 ## Scheduling
 
@@ -117,7 +117,7 @@ The worker should run as a dedicated unprivileged service account from a systemd
 
 The service account must not own the production source checkout and must not have Git push credentials.
 
-V1 requires read access to the production checkout and the ability to run the already-installed Codex CLI. No service restart/deployment privilege is granted.
+V1 requires read access to the production checkout and the ability to run the already-installed Codex CLI. Set `CODEX_HOME` to a worker-owned path under the writable state directory when Codex needs writable session/cache state. No service restart/deployment privilege is granted.
 
 ## V1 acceptance
 
