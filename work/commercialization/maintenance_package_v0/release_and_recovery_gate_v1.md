@@ -30,6 +30,39 @@ python scripts/xiaoyou_release_installer.py --release-root <解压后的发布�
 
 检查只操作临时数据库，覆盖事务提交、回滚、备份、恢复和完整性检查。候选 Python 未通过时不得替换生产运行时，也不得碰生产 Hermes 数据库。
 
+### 3.1 生产 Agenda 语义变更门禁
+
+Agenda/Wake 是常驻运行时，健康状态会周期性更新 `agenda_runtime_status` 和
+`agenda_runtime_daily_status`，SQLite WAL checkpoint 也会自然改变主库、`-wal` 和
+`-shm` 的字节、mtime 与 SHA256。因此这些物理文件变化**不能**作为“候选修改业务数据”的
+回滚依据。
+
+生产切换前后使用只读语义快照：
+
+```text
+python scripts/xiaoyou_agenda_semantic_gate.py snapshot \
+  --database "$XIAOYOU_AGENDA_SERVICE_INGRESS_DB" \
+  --output /tmp/xiaoyou-agenda-before.json
+
+# 候选完成受控切换和健康检查后
+
+python scripts/xiaoyou_agenda_semantic_gate.py snapshot \
+  --database "$XIAOYOU_AGENDA_SERVICE_INGRESS_DB" \
+  --output /tmp/xiaoyou-agenda-after.json
+
+python scripts/xiaoyou_agenda_semantic_gate.py compare \
+  --before /tmp/xiaoyou-agenda-before.json \
+  --after /tmp/xiaoyou-agenda-after.json \
+  --strict
+```
+
+门禁只允许两个运行状态表的**行内容**自然变化。它们的 schema 变化仍然失败；除此之外，
+任何应用表的逻辑内容或 schema 变化都失败，包括 ticket、work fact、payload、binding、
+wake batch、lease、ack、delivery、business truth、agent truth、reply job 和 runtime audit。
+未知的新应用表默认也受保护。
+
+配置文件和人员、学生、任务、身份权威等业务 JSON 仍按原规则做严格哈希比对，不因本门禁放宽。
+
 ## 4. 恢复演练
 
 ```text
@@ -53,9 +86,11 @@ python scripts/xiaoyou_non_youyi_tenant_gate.py
 3. 只读比较生产模块和发布清单。
 4. 备份代码、Home、业务数据、systemd 和哈希清单。
 5. 影子环境执行导入、真实模型和无外发回放。
-6. 低峰窗口最小切换，一次受控重启。
-7. 核对实际 import 路径、Hermes 版本、模型、日志、outbox 和 timer。
-8. 出现重复回复、跨人记忆、未经授权外发、任务覆盖或日报失效时立即回滚。
+6. 对生产 Agenda 数据库生成切换前只读语义快照；业务 JSON 与配置继续保存严格哈希基线。
+7. 低峰窗口最小切换，一次受控重启。
+8. 核对实际 import 路径、Hermes 版本、模型、日志、outbox 和 timer。
+9. 生成 Agenda 切换后语义快照并执行 strict compare；只允许运行状态行变化，不按 SQLite/WAL/SHM 文件哈希回滚。
+10. 出现语义门禁失败、重复回复、跨人记忆、未经授权外发、任务覆盖或日报失效时立即回滚。
 
 ## 边界
 
