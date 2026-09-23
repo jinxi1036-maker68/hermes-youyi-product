@@ -236,6 +236,42 @@ class PersonnelServiceGovernance:
             return None
         return sorted(rows, key=lambda row: str(row.get("effective_from") or ""), reverse=True)[0]
 
+    @staticmethod
+    def _resolve_activation_campus_id(
+        doc: dict[str, Any],
+        *,
+        tenant_id: str,
+        requested_campus_id: str = "",
+    ) -> str:
+        """Resolve a pending activation against current authoritative assignments.
+
+        A single-campus institution should not make the owner restate a fact the
+        authority already knows.  Wildcard boss scope is not a physical campus.
+        When multiple current campuses genuinely exist, an explicit requested
+        campus is accepted only if it is one of those authoritative campuses.
+        """
+
+        campuses = {
+            str(row.get("campus_id") or "").strip()
+            for row in doc["employments"]
+            if isinstance(row, dict)
+            and str(row.get("tenant_id") or "") == tenant_id
+            and str(row.get("state") or "") == "active"
+            and not str(row.get("effective_until") or "")
+            and str(row.get("campus_id") or "").strip()
+            and str(row.get("campus_id") or "").strip() != "*"
+        }
+        requested = str(requested_campus_id or "").strip()
+        if requested:
+            if campuses and requested not in campuses:
+                raise GovernanceError("pending_identity_campus_not_current")
+            return requested
+        if len(campuses) == 1:
+            return next(iter(campuses))
+        if not campuses:
+            raise GovernanceError("pending_identity_campus_unavailable")
+        raise GovernanceError("pending_identity_campus_ambiguous")
+
     def _require_boss(self, identity: UserIdentity) -> None:
         if identity.role != "boss":
             raise GovernanceError("boss_confirmation_required")
@@ -367,13 +403,16 @@ class PersonnelServiceGovernance:
             raise GovernanceError("pending_identity_userid_required")
         if not person_name:
             raise GovernanceError("pending_identity_display_name_required")
-        if not campus_id:
-            raise GovernanceError("pending_identity_campus_required")
         if role not in {"boss", "manager", "teacher"}:
             raise GovernanceError("pending_identity_role_invalid")
 
         def apply(doc: dict[str, Any]) -> dict[str, Any]:
             self._require_boss(identity)
+            resolved_campus_id = self._resolve_activation_campus_id(
+                doc,
+                tenant_id=tenant_id,
+                requested_campus_id=campus_id,
+            )
             access = doc.setdefault(ACCESS_KEY, {"pending": {}, "rejected": {}})
             pending = access.setdefault("pending", {})
             rejected = access.setdefault("rejected", {})
@@ -415,8 +454,8 @@ class PersonnelServiceGovernance:
                 "tenant_id": tenant_id,
                 "staff_user_id": staff_user_id,
                 "role": role,
-                "campus_id": campus_id,
-                "managed_campus_ids": [campus_id] if role == "manager" else [],
+                "campus_id": resolved_campus_id,
+                "managed_campus_ids": [resolved_campus_id] if role == "manager" else [],
                 "state": "active",
                 "effective_from": now,
                 "effective_until": "",
@@ -429,7 +468,7 @@ class PersonnelServiceGovernance:
                 "tenant_id": tenant_id,
                 "staff_user_id": staff_user_id,
                 "role": role,
-                "campus_id": campus_id,
+                "campus_id": resolved_campus_id,
                 "state": "pending",
                 # Do not retrospectively close a Claim created after this
                 # formal activation.  Only predecessor Claims can be a
