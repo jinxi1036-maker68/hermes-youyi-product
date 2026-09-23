@@ -19,7 +19,7 @@ from scripts.xiaoyou_ops_worker_v2 import (
 
 
 SHA = "b" * 40
-NOW = "2026-09-23T10:00:00Z"
+NOW = datetime(2026, 9, 23, 10, 30, tzinfo=timezone.utc)
 
 
 def _command(**changes):
@@ -29,8 +29,8 @@ def _command(**changes):
         "pr_number": 4,
         "candidate_sha": SHA,
         "action": "READ_ONLY_INSPECTION",
-        "issued_at": NOW,
-        "expires_at": "2099-09-23T11:00:00Z",
+        "issued_at": "2026-09-23T10:00:00Z",
+        "expires_at": "2026-09-23T11:00:00Z",
         "production_change_authorized": False,
         "objective": "Inspect harmless state.",
         "evidence_requirements": ["production SHA"],
@@ -70,11 +70,11 @@ def _pr(**changes):
 
 def test_command_comment_requires_json_fence():
     with pytest.raises(CommandValidationError, match="command_json_fence_missing"):
-        parse_command_comment("XIAOU_OPS_COMMAND_V1\nnot json")
+        parse_command_comment("XIAOU_OPS_COMMAND_V1\nnot json", now=NOW)
 
 
 def test_trusted_comment_and_pr_binding_pass():
-    command = parse_command_comment(_comment()["body"])
+    command = parse_command_comment(_comment()["body"], now=NOW)
     verify_github_trust(
         repository="acme/repo",
         trusted_issuer="trusted-owner",
@@ -85,7 +85,7 @@ def test_trusted_comment_and_pr_binding_pass():
 
 
 def test_untrusted_comment_author_fails_closed():
-    command = parse_command_comment(_comment()["body"])
+    command = parse_command_comment(_comment()["body"], now=NOW)
     with pytest.raises(WorkerError, match="untrusted_comment_author"):
         verify_github_trust(
             repository="acme/repo",
@@ -97,7 +97,7 @@ def test_untrusted_comment_author_fails_closed():
 
 
 def test_candidate_sha_must_match_current_pr_head():
-    command = parse_command_comment(_comment()["body"])
+    command = parse_command_comment(_comment()["body"], now=NOW)
     with pytest.raises(WorkerError, match="candidate_sha_not_current_pr_head"):
         verify_github_trust(
             repository="acme/repo",
@@ -109,7 +109,7 @@ def test_candidate_sha_must_match_current_pr_head():
 
 
 def test_fork_pr_is_rejected():
-    command = parse_command_comment(_comment()["body"])
+    command = parse_command_comment(_comment()["body"], now=NOW)
     with pytest.raises(WorkerError, match="fork_head_rejected"):
         verify_github_trust(
             repository="acme/repo",
@@ -121,7 +121,7 @@ def test_fork_pr_is_rejected():
 
 
 def test_non_main_base_is_rejected():
-    command = parse_command_comment(_comment()["body"])
+    command = parse_command_comment(_comment()["body"], now=NOW)
     with pytest.raises(WorkerError, match="pr_base_not_main"):
         verify_github_trust(
             repository="acme/repo",
