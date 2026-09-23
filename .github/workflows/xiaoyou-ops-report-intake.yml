@@ -1,0 +1,60 @@
+name: XiaoU Ops Report Intake
+
+on:
+  workflow_dispatch:
+    inputs:
+      pr_number:
+        description: "Target pull request number"
+        required: true
+        type: string
+      report_base64:
+        description: "Base64-encoded XIAOU_OPS_REPORT_V1 JSON"
+        required: true
+        type: string
+
+permissions:
+  contents: read
+  pull-requests: write
+  issues: write
+
+jobs:
+  validate-and-comment:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout exact default branch
+        uses: actions/checkout@v4
+
+      - name: Decode and validate report
+        env:
+          REPORT_BASE64: ${{ inputs.report_base64 }}
+          INPUT_PR: ${{ inputs.pr_number }}
+        run: |
+          set -euo pipefail
+          test "$INPUT_PR" -gt 0
+          printf '%s' "$REPORT_BASE64" | base64 --decode > /tmp/xiaou-ops-report.json
+          python scripts/xiaoyou_ops_report_v1.py             --input /tmp/xiaou-ops-report.json             --normalized-output /tmp/xiaou-ops-report.normalized.json             --markdown-output /tmp/xiaou-ops-report.md
+
+          REPORT_PR="$(python -c 'import json; print(json.load(open("/tmp/xiaoyou-ops-report.normalized.json"))["pr_number"])')"
+          test "$REPORT_PR" = "$INPUT_PR"
+
+      - name: Bind report to current PR head
+        env:
+          GH_TOKEN: ${{ github.token }}
+          INPUT_PR: ${{ inputs.pr_number }}
+        run: |
+          set -euo pipefail
+          REPORT_SHA="$(python -c 'import json; print(json.load(open("/tmp/xiaoyou-ops-report.normalized.json"))["candidate_sha"])')"
+          PR_JSON="$(gh api "repos/$GITHUB_REPOSITORY/pulls/$INPUT_PR")"
+          PR_STATE="$(printf '%s' "$PR_JSON" | jq -r '.state')"
+          PR_SHA="$(printf '%s' "$PR_JSON" | jq -r '.head.sha')"
+          test "$PR_STATE" = "open"
+          test "$REPORT_SHA" = "$PR_SHA"
+
+      - name: Post validated evidence to PR
+        env:
+          GH_TOKEN: ${{ github.token }}
+          INPUT_PR: ${{ inputs.pr_number }}
+        run: |
+          set -euo pipefail
+          gh api             --method POST             "repos/$GITHUB_REPOSITORY/issues/$INPUT_PR/comments"             -f body="$(cat /tmp/xiaou-ops-report.md)"
