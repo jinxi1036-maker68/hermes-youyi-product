@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from copy import deepcopy
 
+import pytest
+
 from tuoguan_core.employee_identity import owner_user_id
 from tuoguan_core.identity import IdentityService
 from tuoguan_core.models import UserIdentity
@@ -12,7 +14,8 @@ from tuoguan_core.personnel_identity_authority import (
     ACCESS_KEY,
     build_legacy_identity_authority_bootstrap,
 )
-from tuoguan_core.personnel_service_governance_v1 import PersonnelServiceGovernance
+from tuoguan_core.governance_claims_tool_surface_v1 import PENDING_IDENTITY_ACTIVATION_SCHEMA
+from tuoguan_core.personnel_service_governance_v1 import GovernanceError, PersonnelServiceGovernance
 from tuoguan_core.staff_administration import offboard_staff
 from tuoguan_core.store import TuoguanStore
 from tuoguan_core.tool_service import TuoguanToolService
@@ -111,6 +114,70 @@ def test_unknown_pending_is_recorded_in_authority_not_legacy_whitelist(tmp_path,
     assert (unknown.canonical_user_id, unknown.role, unknown.approval_state) == ("wx-new", "unknown", "pending")
     assert "wx-new" in document[ACCESS_KEY]["pending"]
     assert store.read_json("wecom_whitelist.json", {}) == before
+
+
+def test_pending_identity_activation_uses_unique_authoritative_campus_when_omitted(tmp_path, monkeypatch) -> None:
+    store = _store(tmp_path, monkeypatch)
+    governance = PersonnelServiceGovernance(store)
+    boss = IdentityService(store).resolve("wecom_callback", "wx-boss", tenant_id=TENANT)
+
+    result = governance.activate_confirmed_pending_identity(
+        identity=boss,
+        tenant_id=TENANT,
+        staff_user_id="wx-pending",
+        person_name="李老师",
+        role="teacher",
+        campus_id="",
+        operation_id="activate-pending-single-campus",
+    )
+
+    assert result["employment"]["campus_id"] == "campus-a"
+    activated = IdentityService(store).resolve("wecom_callback", "wx-pending", tenant_id=TENANT)
+    assert (activated.person_name, activated.role, activated.approval_state) == ("李老师", "teacher", "approved")
+
+
+def test_pending_identity_activation_requires_choice_only_when_current_campus_is_ambiguous(tmp_path, monkeypatch) -> None:
+    store = _store(tmp_path, monkeypatch)
+    document = store.read_json("personnel_service_governance_v1.json", {})
+    document["people"].append({
+        "person_id": "p-campus-b",
+        "tenant_id": TENANT,
+        "staff_user_id": "wx-campus-b",
+        "display_name": "老师乙",
+        "state": "active",
+    })
+    document["employments"].append({
+        "employment_id": "e-campus-b",
+        "tenant_id": TENANT,
+        "staff_user_id": "wx-campus-b",
+        "role": "teacher",
+        "campus_id": "campus-b",
+        "managed_campus_ids": [],
+        "state": "active",
+        "effective_from": "2026-01-01",
+        "effective_until": "",
+    })
+    store.write_json("personnel_service_governance_v1.json", document)
+    governance = PersonnelServiceGovernance(store)
+    boss = IdentityService(store).resolve("wecom_callback", "wx-boss", tenant_id=TENANT)
+
+    with pytest.raises(GovernanceError, match="pending_identity_campus_ambiguous"):
+        governance.activate_confirmed_pending_identity(
+            identity=boss,
+            tenant_id=TENANT,
+            staff_user_id="wx-pending",
+            person_name="李老师",
+            role="teacher",
+            campus_id="",
+            operation_id="activate-pending-ambiguous-campus",
+        )
+
+
+def test_pending_identity_tool_schema_does_not_force_owner_to_restate_single_campus() -> None:
+    required = set(PENDING_IDENTITY_ACTIVATION_SCHEMA["parameters"]["required"])
+
+    assert required == {"staff_user_id", "person_name", "role"}
+    assert "campus_id" in PENDING_IDENTITY_ACTIVATION_SCHEMA["parameters"]["properties"]
 
 
 def test_non_approved_identity_never_inherits_a_legacy_staff_display_name(tmp_path, monkeypatch) -> None:
