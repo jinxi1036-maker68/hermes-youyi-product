@@ -20,7 +20,6 @@ from pathlib import Path
 import re
 import sqlite3
 import subprocess
-import tempfile
 import time
 from typing import Any
 from urllib import error as urlerror
@@ -51,12 +50,13 @@ class WorkerConfig:
     repository: str
     trusted_issuer: str
     executor: Path
+    executor_user: str
     state_db: Path
     actions_token: str
     workflow: str = DEFAULT_WORKFLOW
     poll_seconds: int = DEFAULT_POLL_SECONDS
     executor_timeout_seconds: int = 900
-    executor_home: Path | None = None
+    sudo_path: Path = Path("/usr/bin/sudo")
 
 
 def parse_command_comment(
@@ -223,37 +223,46 @@ def run_fixed_executor(config: WorkerConfig, command: dict[str, Any]) -> dict[st
         raise WorkerError("executor_path_must_be_absolute")
     if not config.executor.exists():
         raise WorkerError("executor_missing")
+    if not config.sudo_path.is_absolute():
+        raise WorkerError("sudo_path_must_be_absolute")
+    if not config.sudo_path.exists():
+        raise WorkerError("sudo_missing")
+    if not re.fullmatch(r"[a-z_][a-z0-9_-]{0,31}", config.executor_user):
+        raise WorkerError("executor_user_invalid")
 
-    with tempfile.TemporaryDirectory(prefix="xiaou-ops-command-") as tmpdir:
-        command_path = Path(tmpdir) / "command.json"
-        command_path.write_text(
-            json.dumps(command, ensure_ascii=False, sort_keys=True) + "\n",
-            encoding="utf-8",
+    command_bytes = (
+        json.dumps(command, ensure_ascii=False, sort_keys=True) + "\n"
+    ).encode("utf-8")
+
+    child_env = {
+        "PATH": os.environ.get("PATH", "/usr/local/bin:/usr/bin:/bin"),
+        "LANG": os.environ.get("LANG", "C.UTF-8"),
+    }
+
+    try:
+        completed = subprocess.run(
+            [
+                str(config.sudo_path),
+                "-H",
+                "-n",
+                "-u",
+                config.executor_user,
+                "--",
+                str(config.executor),
+            ],
+            input=command_bytes,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=False,
+            timeout=config.executor_timeout_seconds,
+            check=False,
+            shell=False,
+            env=child_env,
         )
-
-        child_env = {
-            "PATH": os.environ.get("PATH", "/usr/local/bin:/usr/bin:/bin"),
-            "LANG": os.environ.get("LANG", "C.UTF-8"),
-        }
-        if config.executor_home is not None:
-            child_env["HOME"] = str(config.executor_home)
-
-        try:
-            completed = subprocess.run(
-                [str(config.executor), str(command_path)],
-                stdin=subprocess.DEVNULL,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                text=False,
-                timeout=config.executor_timeout_seconds,
-                check=False,
-                shell=False,
-                env=child_env,
-            )
-        except subprocess.TimeoutExpired as exc:
-            raise WorkerError("executor_timeout") from exc
-        except OSError as exc:
-            raise WorkerError("executor_start_failed") from exc
+    except subprocess.TimeoutExpired as exc:
+        raise WorkerError("executor_timeout") from exc
+    except OSError as exc:
+        raise WorkerError("executor_start_failed") from exc
 
     stdout = completed.stdout or b""
     if len(stdout) > MAX_EXECUTOR_STDOUT_BYTES:
@@ -367,9 +376,10 @@ def _load_config() -> WorkerConfig:
     repository = os.environ.get("XIAOU_REPOSITORY", "").strip()
     issuer = os.environ.get("XIAOU_TRUSTED_ISSUER", "").strip()
     executor = os.environ.get("XIAOU_EXECUTOR", "").strip()
+    executor_user = os.environ.get("XIAOU_EXECUTOR_USER", "").strip()
     token = os.environ.get("XIAOU_GITHUB_ACTIONS_TOKEN", "").strip()
     state_db = os.environ.get("XIAOU_STATE_DB", "").strip()
-    if not all((repository, issuer, executor, token, state_db)):
+    if not all((repository, issuer, executor, executor_user, token, state_db)):
         raise WorkerError("required_worker_configuration_missing")
 
     poll_seconds = int(os.environ.get("XIAOU_POLL_SECONDS", str(DEFAULT_POLL_SECONDS)))
@@ -380,16 +390,17 @@ def _load_config() -> WorkerConfig:
     if timeout <= 0 or timeout > 3600:
         raise WorkerError("executor_timeout_invalid")
 
-    home = os.environ.get("XIAOU_EXECUTOR_HOME", "").strip()
+    sudo_path = os.environ.get("XIAOU_SUDO_PATH", "/usr/bin/sudo").strip()
     return WorkerConfig(
         repository=repository,
         trusted_issuer=issuer,
         executor=Path(executor),
+        executor_user=executor_user,
         state_db=Path(state_db),
         actions_token=token,
         poll_seconds=poll_seconds,
         executor_timeout_seconds=timeout,
-        executor_home=Path(home) if home else None,
+        sudo_path=Path(sudo_path),
     )
 
 
