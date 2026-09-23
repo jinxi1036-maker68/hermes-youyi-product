@@ -39,6 +39,17 @@ def _stamp(row: dict[str, Any]) -> str:
     return str(row.get("created_at") or row.get("timestamp") or row.get("date") or "")[:10]
 
 
+def _due_local_date(row: dict[str, Any]) -> str:
+    raw = str(row.get("due_at") or "").strip()
+    if not raw:
+        return ""
+    try:
+        parsed = datetime.fromisoformat(raw)
+    except ValueError:
+        return ""
+    return parsed.astimezone().date().isoformat()
+
+
 def _is_safety_task(row: dict[str, Any]) -> bool:
     return str(row.get("level") or row.get("priority") or "").upper() == "S" or any(
         word in str(row.get(key) or "") for key in ("title", "task_type", "source", "category")
@@ -154,6 +165,7 @@ def query_operations(
     teacher_counts = Counter(str(row.get("operator_user_id") or row.get("teacher_user_id") or row.get("teacher") or "unknown") for row in today_records)
     scoped_tasks = [row for row in (tasks or []) if belongs_to_teacher(row)]
     open_tasks = [row for row in scoped_tasks if str(row.get("status") or "pending").lower() not in COMPLETED_STATUSES]
+    today_open_tasks = [row for row in open_tasks if _due_local_date(row) == today]
     safety_tasks = [row for row in scoped_tasks if _is_safety_task(row)]
     open_safety_tasks = [row for row in safety_tasks if str(row.get("status") or "pending").lower() not in COMPLETED_STATUSES]
     summer_students = active_summer_students(store)
@@ -167,6 +179,7 @@ def query_operations(
         "today_recorded_student_count": len(recorded_students) if records is not None else None,
         "teacher_record_counts": dict(sorted(teacher_counts.items())),
         "open_task_count": len(open_tasks) if tasks is not None else None,
+        "today_open_task_count": len(today_open_tasks) if tasks is not None else None,
         "safety_task_count": len(safety_tasks) if tasks is not None else None,
         "open_safety_task_count": len(open_safety_tasks) if tasks is not None else None,
         "summer_student_count": len(summer_students),
@@ -194,7 +207,7 @@ def query_operations(
             f"有记录学生：{summary['today_recorded_student_count'] if summary['today_recorded_student_count'] is not None else unavailable}人",
             f"老师明细：{teacher_text if records is not None else unavailable}",
         ],
-        "open_tasks": ["今天未完成任务", f"当前待办任务：{summary['open_task_count'] if summary['open_task_count'] is not None else unavailable}条"],
+        "open_tasks": ["今天未完成任务", f"今日待办任务：{summary['today_open_task_count'] if summary['today_open_task_count'] is not None else unavailable}条"],
         "safety_tasks": ["安全任务情况", f"S级安全任务：{summary['safety_task_count'] if summary['safety_task_count'] is not None else unavailable}条"],
         "summer_students": ["暑假班学生情况", f"当前有效暑假班学生：{summary['summer_student_count']}人"],
         "points": [

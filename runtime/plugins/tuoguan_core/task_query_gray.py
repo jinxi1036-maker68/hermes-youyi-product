@@ -77,6 +77,7 @@ def begin_inbound(
     raw_text: str,
 ) -> dict[str, Any] | None:
     scope = requested_scope(raw_text)
+    date_scope = "today" if _compact(raw_text) == "我的今日任务" else ""
     if not scope or not capability_enabled(store):
         return None
     if role not in {"teacher", "boss"}:
@@ -97,6 +98,7 @@ def begin_inbound(
         "used_manual_cards": [CAPABILITY],
         "used_tool_registry_entry": TOOL_NAME,
         "requested_scope": scope,
+        "requested_date_scope": date_scope,
         "effective_scope": None,
         "tool_calls": [],
         "tool_results": [],
@@ -129,13 +131,20 @@ def inject_model_context(
         item["session_id"] = str(session_id or "")
         _TURN_BY_SESSION[str(session_id or "")] = item
     scope = item["requested_scope"]
+    date_scope = item.get("requested_date_scope") or ""
     role = item["role"]
     user_id = item["user_id"]
+    date_instruction = (
+        "用户明确请求今日任务；调用参数必须额外包含 date_scope=today。"
+        if date_scope == "today"
+        else "用户未限定日期；不要擅自传 date_scope。"
+    )
     return {
         "context": (
             "【本机构灰度能力卡：老师本人任务查询】\n"
             "本轮必须调用可信工具 tuoguan_query_tasks，不得凭聊天历史回答。\n"
             f"可信角色：{role}；可信 user_id：{user_id}；用户请求范围：{scope}。\n"
+            f"{date_instruction}\n"
             "调用参数必须包含上述 user_id 和 scope。系统会校验权限并返回 effective_scope、result_count、"
             "task_summaries 和 rendered_text。不要自行添加、删除、重算或改写任务；"
             "最终对外内容将由系统按工具结果确定性渲染。"
@@ -164,6 +173,7 @@ def observe_tool_result(
         item["tool_results"].append(parsed)
         data = parsed.get("data", {}) if isinstance(parsed, dict) else {}
         item["effective_scope"] = data.get("effective_scope")
+        item["effective_date_scope"] = data.get("date_scope")
         item["result_count"] = data.get("result_count", data.get("count"))
         item["task_ids"] = list(data.get("task_ids") or [])
         item["task_summaries"] = list(data.get("task_summaries") or [])
