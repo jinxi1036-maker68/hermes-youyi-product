@@ -104,6 +104,8 @@ The worker does not post PR comments directly. GitHub Actions posts the validate
 
 The GitHub dispatch credential must never be passed into the Codex executor process.
 
+The credential is loaded from a local absolute-path credential file with no group/other permissions. The secret value must not be placed directly in the worker environment.
+
 ## Unix identities
 
 Production setup should use two separate identities:
@@ -135,7 +137,13 @@ Use a root-owned fixed wrapper path configured into the worker service.
 
 The worker never executes a command string supplied by GitHub and never uses `shell=True`.
 
-The wrapper receives only the already validated JSON command.
+The worker invokes exactly one sudo target:
+
+`xiaou-ops-worker -> sudo -H -n -u xiaou-codex -- <fixed-root-owned-wrapper>`
+
+No arbitrary command or argument from GitHub is appended to that sudo invocation. The already validated command JSON is passed over stdin only.
+
+The sudoers rule must authorize only that exact wrapper path as `xiaou-codex`; it must not grant a shell, wildcard command family, generic sudo, or service-control access.
 
 The Codex process should run with:
 
@@ -155,15 +163,20 @@ The worker validates that report again before dispatch.
 
 Authentication is a server prerequisite, not repository source.
 
-Preferred order:
+For the current Plus-plan setup, do not assume Enterprise-only access-token or workload-identity features are available.
 
-1. short-lived/workload identity when available;
-2. a dedicated Codex access token for automation;
-3. a dedicated API/Codex credential supported by the installed CLI.
+The first production-compatible path is:
+
+1. install a current supported Codex CLI under the dedicated `xiaou-codex` identity;
+2. complete one supported ChatGPT sign-in for that identity during setup;
+3. keep the resulting Codex authentication store inside the private `xiaou-codex` home, outside the inspected XiaoU workspace;
+4. use non-interactive `codex exec` for subsequent worker jobs.
+
+Signing in to Codex with ChatGPT uses the ChatGPT plan's Codex allowance rather than API-key billing.
+
+If the account later gains managed access tokens or workload identity, those may replace persisted interactive login without changing the GitHub command protocol.
 
 Do not put Codex credentials in GitHub, repository files, command comments, worker logs, or operation reports.
-
-If persisted CLI auth is used, keep the credential store outside the inspected workspace and deny model-controlled filesystem access to it.
 
 ## Replay and idempotency
 
@@ -217,15 +230,33 @@ Never return:
 
 ## V2 acceptance sequence
 
+V2 is accepted in two separate gates so transport failures cannot be confused with Codex runtime/authentication failures.
+
+### Gate A — transport only
+
 1. Repository unit tests for command validation/replay/trust boundaries pass.
 2. Server prerequisite setup is reviewed before installation.
-3. Install worker identities, Codex CLI, fixed wrapper, state directory, and minimal secrets.
-4. Start worker with only `READ_ONLY_INSPECTION` and `VERIFY`.
+3. Install the two Unix identities, worker state directory, restricted GitHub dispatch credential, exact sudo boundary, and the harmless fixture executor.
+4. Start the worker with only `READ_ONLY_INSPECTION` and `VERIFY`.
 5. ChatGPT writes a valid command to a harmless test PR.
-6. No owner message is sent to Codex.
+6. No owner message is sent to any Codex session.
 7. Worker discovers the command automatically.
-8. Codex executes automatically.
-9. Validated report returns automatically to the PR.
+8. The fixture executor returns a valid no-op report.
+9. The report returns automatically through the existing intake workflow.
 10. ChatGPT reads and reviews it.
 
-Only after this passes is the second bridge sealed.
+Passing Gate A proves only: `ChatGPT -> GitHub -> server worker -> GitHub -> ChatGPT`.
+
+### Gate B — Codex runtime
+
+1. Install a current supported Codex CLI for `xiaou-codex`.
+2. Complete the one-time supported authentication setup.
+3. Replace only the fixed fixture executor with the reviewed fixed Codex wrapper.
+4. Issue a harmless `READ_ONLY_INSPECTION` command.
+5. Codex runs automatically without owner relay.
+6. A validated `XIAOU_OPS_REPORT_V1` returns automatically.
+7. ChatGPT reviews the returned evidence.
+
+Only after both gates pass is the second bridge sealed.
+
+Deployment, rollback, restart, and other production mutations remain out of scope after V2 sealing and require a later explicit capability stage.
