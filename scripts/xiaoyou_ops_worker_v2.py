@@ -104,7 +104,9 @@ def _github_json(
             if not raw:
                 return None
             return json.loads(raw.decode("utf-8"))
-    except (urlerror.URLError, urlerror.HTTPError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+    except urlerror.HTTPError as exc:
+        raise WorkerError(f"github_request_failed:HTTPError:{exc.code}") from exc
+    except (urlerror.URLError, UnicodeDecodeError, json.JSONDecodeError) as exc:
         raise WorkerError(f"github_request_failed:{type(exc).__name__}") from exc
 
 
@@ -179,10 +181,18 @@ class ReplayStore:
                 candidate_sha TEXT NOT NULL,
                 received_at TEXT NOT NULL,
                 status TEXT NOT NULL,
-                report_result TEXT
+                report_result TEXT,
+                failure_stage TEXT,
+                failure_code TEXT
             )
             """
         )
+        columns = {
+            row[1] for row in self.db.execute("PRAGMA table_info(commands)").fetchall()
+        }
+        for column in ("failure_stage", "failure_code"):
+            if column not in columns:
+                self.db.execute(f"ALTER TABLE commands ADD COLUMN {column} TEXT")
         self.db.commit()
 
     def seen(self, *, comment_id: int, command_id: str) -> bool:
@@ -210,12 +220,38 @@ class ReplayStore:
         )
         self.db.commit()
 
-    def finish(self, *, comment_id: int, status: str, report_result: str | None = None) -> None:
+    def finish(
+        self,
+        *,
+        comment_id: int,
+        status: str,
+        report_result: str | None = None,
+        failure_stage: str | None = None,
+        failure_code: str | None = None,
+    ) -> None:
         self.db.execute(
-            "UPDATE commands SET status=?, report_result=? WHERE comment_id=?",
-            (status, report_result, comment_id),
+            """
+            UPDATE commands
+            SET status=?, report_result=?, failure_stage=?, failure_code=?
+            WHERE comment_id=?
+            """,
+            (status, report_result, failure_stage, failure_code, comment_id),
         )
         self.db.commit()
+
+
+def _safe_failure_code(exc: BaseException) -> str:
+    if isinstance(exc, (WorkerError, CommandValidationError)):
+        value = str(exc).strip()
+        if re.fullmatch(r"[A-Za-z0-9_.:-]{1,160}", value):
+            return value
+    return type(exc).__name__
+
+
+def _executor_failure_stage(code: str) -> str:
+    if code == "executor_report_invalid" or code.startswith("report_"):
+        return "report_validation"
+    return "executor"
 
 
 def run_fixed_executor(config: WorkerConfig, command: dict[str, Any]) -> dict[str, Any]:
@@ -347,15 +383,33 @@ def process_comment(
     store.reserve(comment_id=comment_id, command=command)
     try:
         report = run_fixed_executor(config, command)
+    except Exception as exc:
+        code = _safe_failure_code(exc)
+        store.finish(
+            comment_id=comment_id,
+            status="FAILED",
+            failure_stage=_executor_failure_stage(code),
+            failure_code=code,
+        )
+        raise
+
+    try:
         dispatch_report(config, report)
-    except Exception:
-        store.finish(comment_id=comment_id, status="FAILED")
+    except Exception as exc:
+        store.finish(
+            comment_id=comment_id,
+            status="FAILED",
+            failure_stage="dispatch",
+            failure_code=_safe_failure_code(exc),
+        )
         raise
 
     store.finish(
         comment_id=comment_id,
         status="REPORTED",
         report_result=report["result"],
+        failure_stage=None,
+        failure_code=None,
     )
     return "reported"
 

@@ -10,6 +10,15 @@ independently from Codex authentication/runtime.
 from __future__ import annotations
 
 import json
+from pathlib import Path
+import sys
+
+# The production worker intentionally strips PYTHONPATH before invoking the
+# fixed executor. Make this script resolvable from its own root-owned install
+# location instead of depending on ambient shell/service environment.
+if __package__ in (None, ""):
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
 from scripts.xiaoyou_ops_command_v1 import CommandValidationError, validate_command
 
 

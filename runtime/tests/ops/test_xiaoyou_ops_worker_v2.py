@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 import json
 from pathlib import Path
 from types import SimpleNamespace
@@ -16,6 +16,7 @@ from scripts.xiaoyou_ops_worker_v2 import (
     process_comment,
     run_fixed_executor,
     verify_github_trust,
+    _github_json,
     _read_actions_token,
 )
 
@@ -37,6 +38,16 @@ def _command(**changes):
         "objective": "Inspect harmless state.",
         "evidence_requirements": ["production SHA"],
     }
+    payload.update(changes)
+    return payload
+
+
+def _live_command(**changes):
+    now = datetime.now(timezone.utc)
+    payload = _command(
+        issued_at=(now - timedelta(minutes=1)).isoformat().replace("+00:00", "Z"),
+        expires_at=(now + timedelta(hours=1)).isoformat().replace("+00:00", "Z"),
+    )
     payload.update(changes)
     return payload
 
@@ -273,3 +284,201 @@ def test_actions_token_file_requires_restricted_permissions(tmp_path: Path):
 
     token_file.chmod(0o600)
     assert _read_actions_token(token_file.resolve()) == "example-token"
+
+
+def test_replay_store_migrates_failure_columns(tmp_path: Path):
+    db_path = tmp_path / "legacy.sqlite"
+    import sqlite3
+
+    db = sqlite3.connect(db_path)
+    db.execute(
+        """
+        CREATE TABLE commands (
+            comment_id INTEGER PRIMARY KEY,
+            command_id TEXT NOT NULL UNIQUE,
+            pr_number INTEGER NOT NULL,
+            candidate_sha TEXT NOT NULL,
+            received_at TEXT NOT NULL,
+            status TEXT NOT NULL,
+            report_result TEXT
+        )
+        """
+    )
+    db.commit()
+    db.close()
+
+    store = ReplayStore(db_path)
+    columns = {
+        row[1] for row in store.db.execute("PRAGMA table_info(commands)").fetchall()
+    }
+    assert "failure_stage" in columns
+    assert "failure_code" in columns
+
+
+def test_process_comment_records_executor_failure_stage(monkeypatch, tmp_path: Path):
+    executor = tmp_path / "executor"
+    executor.write_text("#!/bin/true\n", encoding="utf-8")
+    sudo = tmp_path / "sudo"
+    sudo.write_text("#!/bin/true\n", encoding="utf-8")
+    config = WorkerConfig(
+        repository="acme/repo",
+        trusted_issuer="trusted-owner",
+        executor=executor.resolve(),
+        executor_user="xiaou-codex",
+        state_db=tmp_path / "state.sqlite",
+        actions_token="unused",
+        sudo_path=sudo.resolve(),
+    )
+    store = ReplayStore(config.state_db)
+
+    monkeypatch.setattr("scripts.xiaoyou_ops_worker_v2.fetch_pr", lambda *args, **kwargs: _pr())
+
+    def fail_executor(*args, **kwargs):
+        from scripts.xiaoyou_ops_worker_v2 import WorkerError
+        raise WorkerError("executor_failed:2")
+
+    monkeypatch.setattr("scripts.xiaoyou_ops_worker_v2.run_fixed_executor", fail_executor)
+
+    with pytest.raises(WorkerError, match="executor_failed:2"):
+        process_comment(config, store, _comment(_live_command()))
+
+    row = store.db.execute(
+        "SELECT status, failure_stage, failure_code FROM commands WHERE comment_id=101"
+    ).fetchone()
+    assert row == ("FAILED", "executor", "executor_failed:2")
+
+
+def test_process_comment_records_dispatch_failure_stage(monkeypatch, tmp_path: Path):
+    executor = tmp_path / "executor"
+    executor.write_text("#!/bin/true\n", encoding="utf-8")
+    sudo = tmp_path / "sudo"
+    sudo.write_text("#!/bin/true\n", encoding="utf-8")
+    config = WorkerConfig(
+        repository="acme/repo",
+        trusted_issuer="trusted-owner",
+        executor=executor.resolve(),
+        executor_user="xiaou-codex",
+        state_db=tmp_path / "state.sqlite",
+        actions_token="unused",
+        sudo_path=sudo.resolve(),
+    )
+    store = ReplayStore(config.state_db)
+
+    report = {
+        "protocol": "XIAOU_OPS_REPORT_V1",
+        "command_id": "worker-v2-boundary-001",
+        "pr_number": 4,
+        "candidate_sha": SHA,
+        "action": "READ_ONLY_INSPECTION",
+        "result": "PASS",
+        "code_changed": False,
+        "production_changed": False,
+        "summary": "Read-only inspection passed.",
+        "evidence": {},
+        "anomalies": [],
+    }
+
+    monkeypatch.setattr("scripts.xiaoyou_ops_worker_v2.fetch_pr", lambda *args, **kwargs: _pr())
+    monkeypatch.setattr(
+        "scripts.xiaoyou_ops_worker_v2.run_fixed_executor",
+        lambda *args, **kwargs: report,
+    )
+
+    def fail_dispatch(*args, **kwargs):
+        from scripts.xiaoyou_ops_worker_v2 import WorkerError
+        raise WorkerError("github_request_failed:HTTPError")
+
+    monkeypatch.setattr("scripts.xiaoyou_ops_worker_v2.dispatch_report", fail_dispatch)
+
+    with pytest.raises(WorkerError, match="github_request_failed:HTTPError"):
+        process_comment(config, store, _comment(_live_command()))
+
+    row = store.db.execute(
+        "SELECT status, failure_stage, failure_code FROM commands WHERE comment_id=101"
+    ).fetchone()
+    assert row == ("FAILED", "dispatch", "github_request_failed:HTTPError")
+
+
+def test_process_comment_records_report_validation_failure_stage(monkeypatch, tmp_path: Path):
+    executor = tmp_path / "executor"
+    executor.write_text("#!/bin/true\n", encoding="utf-8")
+    sudo = tmp_path / "sudo"
+    sudo.write_text("#!/bin/true\n", encoding="utf-8")
+    config = WorkerConfig(
+        repository="acme/repo",
+        trusted_issuer="trusted-owner",
+        executor=executor.resolve(),
+        executor_user="xiaou-codex",
+        state_db=tmp_path / "state.sqlite",
+        actions_token="unused",
+        sudo_path=sudo.resolve(),
+    )
+    store = ReplayStore(config.state_db)
+
+    monkeypatch.setattr("scripts.xiaoyou_ops_worker_v2.fetch_pr", lambda *args, **kwargs: _pr())
+
+    def fail_report(*args, **kwargs):
+        from scripts.xiaoyou_ops_worker_v2 import WorkerError
+        raise WorkerError("executor_report_invalid")
+
+    monkeypatch.setattr("scripts.xiaoyou_ops_worker_v2.run_fixed_executor", fail_report)
+
+    with pytest.raises(WorkerError, match="executor_report_invalid"):
+        process_comment(config, store, _comment(_live_command()))
+
+    row = store.db.execute(
+        "SELECT status, failure_stage, failure_code FROM commands WHERE comment_id=101"
+    ).fetchone()
+    assert row == ("FAILED", "report_validation", "executor_report_invalid")
+
+
+def test_github_http_error_retains_status_without_body(monkeypatch):
+    from urllib import error as urlerror
+
+    def fail_urlopen(*args, **kwargs):
+        raise urlerror.HTTPError(
+            "https://api.github.com/example",
+            403,
+            "forbidden-secret-body-not-exposed",
+            hdrs=None,
+            fp=None,
+        )
+
+    monkeypatch.setattr("scripts.xiaoyou_ops_worker_v2.urlrequest.urlopen", fail_urlopen)
+
+    with pytest.raises(WorkerError, match=r"^github_request_failed:HTTPError:403$"):
+        _github_json("https://api.github.com/example", token="must-not-leak")
+
+
+def test_fixture_runs_without_pythonpath_from_unrelated_cwd(tmp_path: Path):
+    import os
+    import subprocess
+    import sys
+
+    command = _live_command()
+    fixture = (
+        Path(__file__).resolve().parents[3]
+        / "scripts"
+        / "xiaoyou_ops_fixture_executor_v2.py"
+    )
+    env = {
+        "PATH": os.environ.get("PATH", "/usr/local/bin:/usr/bin:/bin"),
+        "LANG": os.environ.get("LANG", "C.UTF-8"),
+    }
+
+    completed = subprocess.run(
+        [sys.executable, str(fixture)],
+        input=(json.dumps(command) + "\n").encode("utf-8"),
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        cwd=tmp_path,
+        env=env,
+        check=False,
+        timeout=10,
+    )
+
+    assert completed.returncode == 0, completed.stderr.decode("utf-8", errors="replace")
+    report = json.loads(completed.stdout.decode("utf-8"))
+    assert report["command_id"] == command["command_id"]
+    assert report["result"] == "PASS"
+    assert report["evidence"]["fixture_executor"] is True
