@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from tuoguan_core.models import UserIdentity
 from tuoguan_core.personnel_identity_authority import ACCESS_KEY, AUTHORITY_KEY
+from tuoguan_core.permissions import PermissionService
 from tuoguan_core.store import TuoguanStore
 from tuoguan_core.tool_service import TuoguanToolService
 
@@ -91,6 +92,15 @@ def test_manager_student_query_uses_current_role_not_legacy_staff_scope(tmp_path
     assert result["ok"] is True
     assert result["data"]["total_count"] == 2
     assert {row["name"] for row in result["data"]["students"]} == {"张同学", "王同学"}
+
+
+def test_query_scope_change_does_not_change_student_write_permission(tmp_path, monkeypatch) -> None:
+    store = _store(tmp_path, monkeypatch)
+    manager = _identity("wx-manager", "店长", "manager")
+    permissions = PermissionService(store)
+
+    assert permissions.can_query_student(manager, "张同学") is True
+    assert permissions.can_write_student_record(manager, "张同学") is False
 
 
 def test_teacher_student_query_remains_person_scoped(tmp_path, monkeypatch) -> None:
