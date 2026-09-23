@@ -372,15 +372,35 @@ def run_once(config: WorkerConfig, store: ReplayStore) -> dict[str, int]:
     return counts
 
 
+def _read_actions_token(path: Path) -> str:
+    if not path.is_absolute():
+        raise WorkerError("token_file_path_must_be_absolute")
+    try:
+        stat = path.stat()
+    except OSError as exc:
+        raise WorkerError("token_file_unavailable") from exc
+    if stat.st_mode & 0o077:
+        raise WorkerError("token_file_permissions_too_broad")
+    try:
+        token = path.read_text(encoding="utf-8").strip()
+    except OSError as exc:
+        raise WorkerError("token_file_unreadable") from exc
+    if not token or len(token) > 4096:
+        raise WorkerError("token_file_invalid")
+    return token
+
+
 def _load_config() -> WorkerConfig:
     repository = os.environ.get("XIAOU_REPOSITORY", "").strip()
     issuer = os.environ.get("XIAOU_TRUSTED_ISSUER", "").strip()
     executor = os.environ.get("XIAOU_EXECUTOR", "").strip()
     executor_user = os.environ.get("XIAOU_EXECUTOR_USER", "").strip()
-    token = os.environ.get("XIAOU_GITHUB_ACTIONS_TOKEN", "").strip()
+    token_file = os.environ.get("XIAOU_GITHUB_ACTIONS_TOKEN_FILE", "").strip()
     state_db = os.environ.get("XIAOU_STATE_DB", "").strip()
-    if not all((repository, issuer, executor, executor_user, token, state_db)):
+    if not all((repository, issuer, executor, executor_user, token_file, state_db)):
         raise WorkerError("required_worker_configuration_missing")
+
+    token = _read_actions_token(Path(token_file))
 
     poll_seconds = int(os.environ.get("XIAOU_POLL_SECONDS", str(DEFAULT_POLL_SECONDS)))
     if poll_seconds < 60:
