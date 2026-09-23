@@ -16,6 +16,7 @@ from scripts.xiaoyou_ops_worker_v2 import (
     process_comment,
     run_fixed_executor,
     verify_github_trust,
+    _read_actions_token,
 )
 
 
@@ -260,3 +261,15 @@ def test_untrusted_marker_is_ignored_before_command_parsing(tmp_path: Path):
     }
 
     assert process_comment(config, store, comment) == "ignored"
+
+
+def test_actions_token_file_requires_restricted_permissions(tmp_path: Path):
+    token_file = tmp_path / "github-token"
+    token_file.write_text("example-token\n", encoding="utf-8")
+    token_file.chmod(0o644)
+
+    with pytest.raises(WorkerError, match="token_file_permissions_too_broad"):
+        _read_actions_token(token_file.resolve())
+
+    token_file.chmod(0o600)
+    assert _read_actions_token(token_file.resolve()) == "example-token"
