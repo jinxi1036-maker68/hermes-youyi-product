@@ -16,6 +16,7 @@ from scripts.xiaoyou_ops_worker_v2 import (
     process_comment,
     run_fixed_executor,
     verify_github_trust,
+    _github_json,
     _read_actions_token,
 )
 
@@ -386,3 +387,54 @@ def test_process_comment_records_dispatch_failure_stage(monkeypatch, tmp_path: P
         "SELECT status, failure_stage, failure_code FROM commands WHERE comment_id=101"
     ).fetchone()
     assert row == ("FAILED", "dispatch", "github_request_failed:HTTPError")
+
+
+def test_process_comment_records_report_validation_failure_stage(monkeypatch, tmp_path: Path):
+    executor = tmp_path / "executor"
+    executor.write_text("#!/bin/true\n", encoding="utf-8")
+    sudo = tmp_path / "sudo"
+    sudo.write_text("#!/bin/true\n", encoding="utf-8")
+    config = WorkerConfig(
+        repository="acme/repo",
+        trusted_issuer="trusted-owner",
+        executor=executor.resolve(),
+        executor_user="xiaou-codex",
+        state_db=tmp_path / "state.sqlite",
+        actions_token="unused",
+        sudo_path=sudo.resolve(),
+    )
+    store = ReplayStore(config.state_db)
+
+    monkeypatch.setattr("scripts.xiaoyou_ops_worker_v2.fetch_pr", lambda *args, **kwargs: _pr())
+
+    def fail_report(*args, **kwargs):
+        from scripts.xiaoyou_ops_worker_v2 import WorkerError
+        raise WorkerError("executor_report_invalid")
+
+    monkeypatch.setattr("scripts.xiaoyou_ops_worker_v2.run_fixed_executor", fail_report)
+
+    with pytest.raises(WorkerError, match="executor_report_invalid"):
+        process_comment(config, store, _comment())
+
+    row = store.db.execute(
+        "SELECT status, failure_stage, failure_code FROM commands WHERE comment_id=101"
+    ).fetchone()
+    assert row == ("FAILED", "report_validation", "executor_report_invalid")
+
+
+def test_github_http_error_retains_status_without_body(monkeypatch):
+    from urllib import error as urlerror
+
+    def fail_urlopen(*args, **kwargs):
+        raise urlerror.HTTPError(
+            "https://api.github.com/example",
+            403,
+            "forbidden-secret-body-not-exposed",
+            hdrs=None,
+            fp=None,
+        )
+
+    monkeypatch.setattr("scripts.xiaoyou_ops_worker_v2.urlrequest.urlopen", fail_urlopen)
+
+    with pytest.raises(WorkerError, match=r"^github_request_failed:HTTPError:403$"):
+        _github_json("https://api.github.com/example", token="must-not-leak")
