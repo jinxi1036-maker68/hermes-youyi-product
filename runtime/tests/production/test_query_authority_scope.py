@@ -9,6 +9,7 @@ from tuoguan_core.personnel_identity_authority import ACCESS_KEY, AUTHORITY_KEY
 from tuoguan_core.operations_query import query_operations
 from tuoguan_core.permissions import PermissionService
 from tuoguan_core.store import TuoguanStore
+from tuoguan_core.task_query_gray import begin_inbound, clear_runtime_state, inject_model_context
 from tuoguan_core.tool_service import TuoguanToolService
 
 
@@ -225,3 +226,79 @@ def test_operations_open_tasks_means_today_open_tasks_not_all_backlog(tmp_path, 
     assert result["summary"]["open_task_count"] == 4
     assert result["summary"]["today_open_task_count"] == 1
     assert result["rendered_text"] == "今天未完成任务\n今日待办任务：1条"
+
+
+
+def _enable_task_query_gray(store: TuoguanStore) -> None:
+    path = store.data_dir / "manual_context" / "hermes_model_context_injection_allowlist_v1.json"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        """{
+  "allowed_capability_cards": [
+    {
+      "capability": "老师本人任务查询",
+      "status": "confirmed",
+      "pilot": 0
+    }
+  ]
+}
+""",
+        encoding="utf-8",
+    )
+
+
+def test_gray_my_today_tasks_requires_today_date_scope(tmp_path, monkeypatch) -> None:
+    store = _store(tmp_path, monkeypatch)
+    _enable_task_query_gray(store)
+    clear_runtime_state()
+    try:
+        item = begin_inbound(
+            store=store,
+            message_id="msg-today",
+            conversation_id="conv-today",
+            user_id="wx-teacher-a",
+            role="teacher",
+            raw_text="我的今日任务",
+        )
+        assert item is not None
+        assert item["requested_scope"] == "mine"
+        assert item["requested_date_scope"] == "today"
+
+        injected = inject_model_context(
+            store=store,
+            session_id="session-today",
+            sender_id="wx-teacher-a",
+            user_message="我的今日任务",
+        )
+        assert injected is not None
+        assert "date_scope=today" in injected["context"]
+    finally:
+        clear_runtime_state()
+
+
+def test_gray_my_tasks_does_not_invent_today_scope(tmp_path, monkeypatch) -> None:
+    store = _store(tmp_path, monkeypatch)
+    _enable_task_query_gray(store)
+    clear_runtime_state()
+    try:
+        item = begin_inbound(
+            store=store,
+            message_id="msg-all-open",
+            conversation_id="conv-all-open",
+            user_id="wx-teacher-a",
+            role="teacher",
+            raw_text="我的任务",
+        )
+        assert item is not None
+        assert item["requested_date_scope"] == ""
+
+        injected = inject_model_context(
+            store=store,
+            session_id="session-all-open",
+            sender_id="wx-teacher-a",
+            user_message="我的任务",
+        )
+        assert injected is not None
+        assert "不要擅自传 date_scope" in injected["context"]
+    finally:
+        clear_runtime_state()
