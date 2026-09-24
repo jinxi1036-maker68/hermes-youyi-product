@@ -16,6 +16,7 @@ from typing import Any
 DEFAULT_SERVICE_USER = "hermes-youyi"
 DEFAULT_SERVICE_GROUP = "hermes-youyi"
 EXPECTED_HOME_MODE = 0o700
+RUNTIME_MUTABLE_DIRS = ("sessions", "cron")
 
 
 def _identity(user_name: str, group_name: str) -> tuple[int, int, set[int]]:
@@ -32,16 +33,24 @@ def _mode(path: Path) -> int:
     return stat.S_IMODE(path.stat().st_mode)
 
 
-def _has_execute(path: Path, *, uid: int, gids: set[int]) -> bool:
+def _permission_bits(path: Path, *, uid: int, gids: set[int]) -> int:
     meta = path.stat()
     mode = stat.S_IMODE(meta.st_mode)
     if uid == 0:
-        return True
+        return stat.S_IRWXU
     if meta.st_uid == uid:
-        return bool(mode & stat.S_IXUSR)
+        return (mode & stat.S_IRWXU) >> 6
     if meta.st_gid in gids:
-        return bool(mode & stat.S_IXGRP)
-    return bool(mode & stat.S_IXOTH)
+        return (mode & stat.S_IRWXG) >> 3
+    return mode & stat.S_IRWXO
+
+
+def _has_permissions(path: Path, *, uid: int, gids: set[int], required: int) -> bool:
+    return (_permission_bits(path, uid=uid, gids=gids) & required) == required
+
+
+def _has_execute(path: Path, *, uid: int, gids: set[int]) -> bool:
+    return _has_permissions(path, uid=uid, gids=gids, required=stat.S_IXUSR)
 
 
 def _traversal_paths(release_root: Path) -> list[Path]:
@@ -55,6 +64,82 @@ def _traversal_paths(release_root: Path) -> list[Path]:
         paths.append(current)
     paths.append(resolved / "home")
     return paths
+
+
+def _inspect_mutable_runtime_state(
+    *,
+    home: Path,
+    uid: int,
+    gid: int,
+    gids: set[int],
+) -> tuple[bool, list[dict[str, Any]]]:
+    rows: list[dict[str, Any]] = []
+    ok = True
+    for name in RUNTIME_MUTABLE_DIRS:
+        root = home / name
+        if not root.exists():
+            rows.append({"path": str(root), "exists": False, "ok": True})
+            continue
+        if root.is_symlink():
+            rows.append({
+                "path": str(root),
+                "exists": True,
+                "type": "symlink",
+                "ok": False,
+                "error": "mutable_runtime_path_must_not_be_symlink",
+            })
+            ok = False
+            continue
+        candidates = [root, *sorted(root.rglob("*"))]
+        for path in candidates:
+            if path.is_symlink():
+                rows.append({
+                    "path": str(path),
+                    "exists": True,
+                    "type": "symlink",
+                    "ok": False,
+                    "error": "mutable_runtime_path_must_not_be_symlink",
+                })
+                ok = False
+                continue
+            meta = path.stat()
+            mode = stat.S_IMODE(meta.st_mode)
+            owner_ok = meta.st_uid == uid
+            group_ok = meta.st_gid == gid
+            if path.is_dir():
+                access_ok = _has_permissions(
+                    path,
+                    uid=uid,
+                    gids=gids,
+                    required=stat.S_IRUSR | stat.S_IWUSR | stat.S_IXUSR,
+                )
+                path_type = "directory"
+            elif path.is_file():
+                access_ok = _has_permissions(
+                    path,
+                    uid=uid,
+                    gids=gids,
+                    required=stat.S_IRUSR | stat.S_IWUSR,
+                )
+                path_type = "file"
+            else:
+                access_ok = False
+                path_type = "other"
+            item_ok = owner_ok and group_ok and access_ok
+            rows.append({
+                "path": str(path),
+                "exists": True,
+                "type": path_type,
+                "owner_uid": meta.st_uid,
+                "group_gid": meta.st_gid,
+                "mode": f"{mode:04o}",
+                "owner_ok": owner_ok,
+                "group_ok": group_ok,
+                "service_access_ok": access_ok,
+                "ok": item_ok,
+            })
+            ok = ok and item_ok
+    return ok, rows
 
 
 def inspect_release_home(
@@ -117,7 +202,13 @@ def inspect_release_home(
     owner_ok = home_stat.st_uid == uid
     group_ok = home_stat.st_gid == gid
     mode_ok = stat.S_IMODE(home_stat.st_mode) == EXPECTED_HOME_MODE
-    ok = owner_ok and group_ok and mode_ok and traversal_ok
+    mutable_state_ok, mutable_state = _inspect_mutable_runtime_state(
+        home=home,
+        uid=uid,
+        gid=gid,
+        gids=gids,
+    )
+    ok = owner_ok and group_ok and mode_ok and traversal_ok and mutable_state_ok
     return {
         "ok": ok,
         "error": "" if ok else "runtime_home_permission_gate_failed",
@@ -134,6 +225,9 @@ def inspect_release_home(
         "mode_ok": mode_ok,
         "traversal_ok": traversal_ok,
         "traversal": traversal,
+        "mutable_runtime_dirs": list(RUNTIME_MUTABLE_DIRS),
+        "mutable_state_ok": mutable_state_ok,
+        "mutable_state": mutable_state,
         "secret_content_inspected": False,
     }
 
