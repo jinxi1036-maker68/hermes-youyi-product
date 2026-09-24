@@ -74,7 +74,7 @@ python scripts/xiaoyou_non_youyi_tenant_gate.py
    - `home/` 不能是 symlink；
    - 门禁只检查目录元数据，不读取 `.env` 或 secret 内容；
    - 不通过时禁止切换生产。
-   
+
    若候选组装过程把 `home/` 错建为 root 所有，只允许在候选目录上执行窄修复：
 
    ```text
