@@ -83,9 +83,28 @@ python scripts/xiaoyou_non_youyi_tenant_gate.py
 
    repair 只允许修候选 `home/` 目录本身的 owner/group/mode，不递归修改 Home 内容，不复制 secret，不放宽为 world-readable。修复后必须再次无 `--repair` 运行门禁并通过。
 
-8. 低峰窗口最小切换，一次受控重启。
-9. 核对实际 import 路径、Hermes 版本、模型、日志、outbox 和 timer。
-10. 用同一生产库执行部署后语义比较：
+8. 所有会接触候选 `HOME/HERMES_HOME` 的 import、Plugin Doctor、Hermes 启动探针或其它运行预检，必须通过服务身份预检执行器运行：
+
+   ```text
+   python scripts/xiaoyou_candidate_preflight.py \
+     --release-root <candidate-release> \
+     --cwd <candidate-release>/hermes-agent \
+     -- <candidate-preflight-command>
+   ```
+
+   执行器必须把 `HOME` 与 `HERMES_HOME` 固定到候选 `home/`，并确保实际预检进程以 Gateway 服务身份运行；当前生产服务身份为 `hermes-youyi:hermes-youyi`。禁止以 root 身份直接运行会初始化候选 Home 的 import/Doctor/启动预检。
+
+9. 所有候选运行预检完成后，必须再次运行 Runtime Home 门禁。该门禁除 `home/` 本身外，还检查已生成的可变运行状态 `sessions/` 与 `cron/` 及其现有内容：
+   - 必须由 Gateway 服务身份持有；
+   - 必须对 Gateway 服务身份保持所需读写/遍历权限；
+   - 不读取文件内容；
+   - 不允许 symlink 逃逸。
+   
+   若此时发现 `sessions/`、`cron/` 或其文件被 root/其它身份创建，禁止递归 chown/chmod 后继续发布；必须丢弃被污染的候选 Runtime Home、重新组装候选，并使用正确服务身份重新执行预检。
+
+10. 只有 Runtime Home 门禁、服务身份预检和预检后 Runtime Home 复检全部 PASS，才允许低峰窗口最小切换和一次受控重启。
+11. 核对实际 import 路径、Hermes 版本、模型、日志、outbox 和 timer。
+12. 用同一生产库执行部署后语义比较：
 
    ```text
    python scripts/xiaoyou_agenda_semantic_gate.py compare \
@@ -98,7 +117,7 @@ python scripts/xiaoyou_non_youyi_tenant_gate.py
    其它用户表默认按业务/工作语义状态处理；ticket、work fact、payload、binding、wake batch、
    receipt、reply/delivery、lease 或未知未来非心跳表发生变化时门禁失败并进入人工核验或回滚。
 
-10. 出现重复回复、跨人记忆、未经授权外发、任务覆盖、日报失效或未经解释的 Agenda 语义状态变化时立即回滚。
+13. 出现重复回复、跨人记忆、未经授权外发、任务覆盖、日报失效或未经解释的 Agenda 语义状态变化时立即回滚。
 
 > SQLite 主库、`-wal`、`-shm` 的 mtime、大小或 SHA256 变化不能单独作为“业务数据被候选修改”的失败条件。
 > WAL checkpoint 和 Agenda 心跳在稳定版本正常运行期间即可改变这些物理文件。文件级哈希仍可留作取证信息，但发布判定必须使用逻辑语义状态。
