@@ -131,3 +131,63 @@ def test_repair_is_narrow_to_release_home_directory(tmp_path, monkeypatch):
     assert home.stat().st_mode & 0o777 == 0o700
     assert preserved.read_bytes() == before
     assert observed == [(home, os.getuid(), os.getgid())]
+
+
+def test_release_home_gate_checks_mutable_runtime_directories(tmp_path, monkeypatch):
+    from scripts import xiaoyou_release_home_gate as gate
+
+    root = tmp_path / "hermes-youyi-candidate"
+    home = root / "home"
+    sessions = home / "sessions"
+    cron = home / "cron"
+    sessions.mkdir(parents=True)
+    cron.mkdir()
+    (sessions / "sessions.json").write_text("{}\n", encoding="utf-8")
+    (cron / "cron.db").write_bytes(b"fixture")
+    root.chmod(0o755)
+    home.chmod(0o700)
+    sessions.chmod(0o700)
+    cron.chmod(0o700)
+    (sessions / "sessions.json").chmod(0o600)
+    (cron / "cron.db").chmod(0o600)
+    monkeypatch.setattr(gate, "_identity", lambda *_args: _identity_for_current_process())
+
+    result = gate.inspect_release_home(
+        release_root=root,
+        service_user="svc",
+        service_group="svc",
+    )
+
+    assert result["ok"] is True
+    assert result["mutable_state_ok"] is True
+    assert {Path(row["path"]).name for row in result["mutable_state"] if row["exists"]} >= {
+        "sessions", "sessions.json", "cron", "cron.db"
+    }
+
+
+def test_release_home_gate_rejects_unwritable_mutable_runtime_state(tmp_path, monkeypatch):
+    from scripts import xiaoyou_release_home_gate as gate
+
+    root = tmp_path / "hermes-youyi-candidate"
+    home = root / "home"
+    sessions = home / "sessions"
+    sessions.mkdir(parents=True)
+    state = sessions / "sessions.json"
+    state.write_text("{}\n", encoding="utf-8")
+    root.chmod(0o755)
+    home.chmod(0o700)
+    sessions.chmod(0o500)
+    state.chmod(0o400)
+    monkeypatch.setattr(gate, "_identity", lambda *_args: _identity_for_current_process())
+
+    result = gate.inspect_release_home(
+        release_root=root,
+        service_user="svc",
+        service_group="svc",
+    )
+
+    assert result["ok"] is False
+    assert result["mutable_state_ok"] is False
+    failed = [row for row in result["mutable_state"] if row.get("exists") and not row.get("ok")]
+    assert any(Path(row["path"]).name == "sessions" for row in failed)
+    assert any(Path(row["path"]).name == "sessions.json" for row in failed)
