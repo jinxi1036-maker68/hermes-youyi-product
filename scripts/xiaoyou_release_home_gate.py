@@ -50,7 +50,7 @@ def _has_permissions(path: Path, *, uid: int, gids: set[int], required: int) -> 
 
 
 def _has_execute(path: Path, *, uid: int, gids: set[int]) -> bool:
-    return _has_permissions(path, uid=uid, gids=gids, required=stat.S_IXUSR)
+    return _has_permissions(path, uid=uid, gids=gids, required=0b001)
 
 
 def _traversal_paths(release_root: Path) -> list[Path]:
@@ -111,7 +111,7 @@ def _inspect_mutable_runtime_state(
                     path,
                     uid=uid,
                     gids=gids,
-                    required=stat.S_IRUSR | stat.S_IWUSR | stat.S_IXUSR,
+                    required=0b111,
                 )
                 path_type = "directory"
             elif path.is_file():
@@ -119,7 +119,7 @@ def _inspect_mutable_runtime_state(
                     path,
                     uid=uid,
                     gids=gids,
-                    required=stat.S_IRUSR | stat.S_IWUSR,
+                    required=0b110,
                 )
                 path_type = "file"
             else:
