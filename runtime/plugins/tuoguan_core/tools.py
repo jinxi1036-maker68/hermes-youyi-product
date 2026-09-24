@@ -250,7 +250,7 @@ TUOGUAN_QUERY_STUDENTS_SCHEMA = _schema(
 )
 
 TUOGUAN_QUERY_TASKS_SCHEMA = _schema(
-    "按当前可信身份和权限范围读取任务、任务状态、来源、触发原因、缺口和闭环证据。支持按 task_id、student_name、teacher_name、assignee_user_id、status、level、date_scope 和 scope 进行结构化筛选；工具只执行参数所表达的范围并负责权限收口，不负责从用户措辞预判查询意图。该接口不接受通用 query 或 result_scope 参数。",
+    "按当前可信身份和权限范围读取任务库存、任务清单、任务数量、任务状态、来源、触发原因、缺口和闭环证据；这是任务事实、状态和日期范围查询的权威只读入口。支持按 task_id、student_name、teacher_name、assignee_user_id、status、level、date_scope 和 scope 进行结构化筛选；工具只执行参数所表达的范围并负责权限收口，不负责从用户措辞预判查询意图。该接口不接受通用 query 或 result_scope 参数。",
     _identity_props(
         {
             "task_id": {"type": "string", "description": "任务 id，可为空。"},
@@ -1297,8 +1297,8 @@ TUOGUAN_QUERY_PROACTIVE_WORK_RADAR_SCHEMA = _schema(
 )
 
 TUOGUAN_QUERY_ACTIVE_WORK_CONTEXT_SCHEMA = _schema(
-    "只读查询当前人的活动工作线程，包括当前任务、最近主动提醒、关系触达和有权限查看的市场观察。结果只提供衔接证据，不判断用户意图、不规定下一工具。",
-    _identity_props({"limit": {"type": "integer", "default": 5}}),
+    "只读查询当前人的会话衔接证据，包括当前或最近任务焦点、最近主动提醒、关系触达和有权限查看的市场观察。它不是任务库存、任务清单、任务数量或日期状态查询，最多只提供少量近期线程；返回 0 条只表示没有可供本轮衔接的上下文证据，不能据此判断没有待办、没有今日任务或老板机构范围内没有任务。结果只提供衔接证据，不判断用户意图、不规定下一工具。",
+    _identity_props({"limit": {"type": "integer", "default": 5, "description": "最多返回会话衔接证据条数；该数量不是任务数量。"}}),
     ["user_id"],
 )
 
