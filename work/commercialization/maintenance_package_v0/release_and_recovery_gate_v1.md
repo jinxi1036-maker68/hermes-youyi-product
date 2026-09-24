@@ -61,9 +61,31 @@ python scripts/xiaoyou_non_youyi_tenant_gate.py
      --output /tmp/agenda-before.json
    ```
 
-7. 低峰窗口最小切换，一次受控重启。
-8. 核对实际 import 路径、Hermes 版本、模型、日志、outbox 和 timer。
-9. 用同一生产库执行部署后语义比较：
+7. 候选 release 组装完成后、切换生产前，必须执行 Runtime Home 权限门禁：
+
+   ```text
+   python scripts/xiaoyou_release_home_gate.py --release-root <candidate-release>
+   ```
+
+   门禁要求：
+   - release root 必须可被 Gateway 运行用户 traverse；
+   - `home/` 必须由实际 Gateway 运行账号持有，当前生产为 `hermes-youyi:hermes-youyi`；
+   - `home/` 模式必须为 `0700`；
+   - `home/` 不能是 symlink；
+   - 门禁只检查目录元数据，不读取 `.env` 或 secret 内容；
+   - 不通过时禁止切换生产。
+   
+   若候选组装过程把 `home/` 错建为 root 所有，只允许在候选目录上执行窄修复：
+
+   ```text
+   python scripts/xiaoyou_release_home_gate.py --release-root <candidate-release> --repair
+   ```
+
+   repair 只允许修候选 `home/` 目录本身的 owner/group/mode，不递归修改 Home 内容，不复制 secret，不放宽为 world-readable。修复后必须再次无 `--repair` 运行门禁并通过。
+
+8. 低峰窗口最小切换，一次受控重启。
+9. 核对实际 import 路径、Hermes 版本、模型、日志、outbox 和 timer。
+10. 用同一生产库执行部署后语义比较：
 
    ```text
    python scripts/xiaoyou_agenda_semantic_gate.py compare \
