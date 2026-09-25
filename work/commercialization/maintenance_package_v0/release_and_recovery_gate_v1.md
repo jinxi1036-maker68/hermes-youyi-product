@@ -153,8 +153,10 @@ python scripts/xiaoyou_core_compat_gate.py \
 门禁使用候选自己的 Python 扫描 `hermes_cli` 对 `hermes_constants` 的实际导入，并要求：
 - `hermes_constants` 来源位于候选 release 内；
 - 不得检测到 `XIAOYOU_TEST_SHIM`；
-- `hermes_cli` 实际导入的 Core API 必须全部存在；
-- 扫描失败或缺失 API 时 fail closed。
+- `hermes_cli` 未被异常兜底的 Core API 硬依赖必须全部存在；
+- 位于明确 `try/except Exception|ImportError|BaseException` fallback 内的兼容 import 只记录为 guarded optional，不因其缺失单独阻断；
+- 同一符号只要在任一未兜底路径中被导入，仍按硬依赖处理；
+- 扫描失败或缺失硬依赖 API 时 fail closed。
 
 ### 6.5 Release 自包含门禁
 
