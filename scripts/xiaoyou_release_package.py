@@ -26,6 +26,12 @@ PAYLOAD_ROOTS = (
 )
 FORBIDDEN_PARTS = {"__pycache__", ".pytest_cache", ".git", ".venv", "data", "logs", "backups"}
 FORBIDDEN_SUFFIXES = {".pyc", ".pyo", ".log", ".db", ".sqlite", ".sqlite3"}
+PRODUCTION_FORBIDDEN_OVERLAY_PATHS = {
+    "runtime/hermes_constants.py",
+    "runtime/gateway/__init__.py",
+    "runtime/gateway/config.py",
+    "runtime/gateway/session.py",
+}
 
 
 def sha256_file(path: Path) -> str:
@@ -73,6 +79,8 @@ def payload_files(root: Path) -> list[Path]:
         if any(part in FORBIDDEN_PARTS for part in relative.parts):
             continue
         if relative.suffix.lower() in FORBIDDEN_SUFFIXES:
+            continue
+        if relative.as_posix() in PRODUCTION_FORBIDDEN_OVERLAY_PATHS:
             continue
         files.append(relative)
     return sorted(files, key=lambda item: item.as_posix())
@@ -167,6 +175,8 @@ def build_release(
         "file_count": len(rows),
         "files": rows,
         "production_import_policy": "one_canonical_release_with_verified_links",
+        "production_overlay_policy": "allowlisted_xiaoyou_payload_only_no_core_shadow",
+        "production_forbidden_overlay_paths": sorted(PRODUCTION_FORBIDDEN_OVERLAY_PATHS),
         "contains_business_data": False,
         "contains_credentials": False,
     }
