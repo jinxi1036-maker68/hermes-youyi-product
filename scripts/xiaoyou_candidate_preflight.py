@@ -12,6 +12,11 @@ import grp
 import subprocess
 from typing import Any, Callable
 
+try:
+    from .xiaoyou_runtime_topology import validate_runtime_topology
+except ImportError:
+    from xiaoyou_runtime_topology import validate_runtime_topology
+
 
 DEFAULT_SERVICE_USER = "hermes-youyi"
 DEFAULT_SERVICE_GROUP = "hermes-youyi"
@@ -34,6 +39,7 @@ def _preexec(user_name: str, uid: int, gid: int) -> Callable[[], None]:
 def run_candidate_preflight(
     *,
     release_root: Path,
+    runtime_home: Path,
     command: list[str],
     service_user: str = DEFAULT_SERVICE_USER,
     service_group: str = DEFAULT_SERVICE_GROUP,
@@ -41,13 +47,19 @@ def run_candidate_preflight(
     runner: Callable[..., Any] = subprocess.run,
 ) -> dict[str, Any]:
     root = release_root.resolve()
-    home = root / "home"
-    if not root.is_dir():
-        return {"ok": False, "error": "release_root_missing", "release_root": str(root)}
-    if release_root.is_symlink():
-        return {"ok": False, "error": "release_root_must_not_be_symlink", "release_root": str(root)}
-    if not home.is_dir() or home.is_symlink():
-        return {"ok": False, "error": "runtime_home_invalid", "home": str(home)}
+    home = runtime_home.resolve()
+
+    topology = validate_runtime_topology(
+        release_root=root,
+        runtime_home=home,
+        require_existing=True,
+    )
+    if not topology.get("ok"):
+        return {
+            "ok": False,
+            "error": "runtime_topology_invalid",
+            "topology": topology,
+        }
     if not command:
         return {"ok": False, "error": "command_missing"}
 
@@ -87,20 +99,22 @@ def run_candidate_preflight(
         "error": "" if completed.returncode == 0 else "candidate_preflight_failed",
         "returncode": completed.returncode,
         "release_root": str(root),
-        "home": str(home),
+        "runtime_home": str(home),
         "cwd": str(workdir),
         "service_user": service_user,
         "service_group": service_group,
         "effective_identity_enforced": True,
+        "runtime_model": "version_neutral_persistent_home",
         "secret_content_inspected": False,
     }
 
 
 def main() -> int:
     parser = argparse.ArgumentParser(
-        description="Execute a candidate preflight command under the Gateway service identity."
+        description="Execute a candidate preflight command against an external persistent Hermes Home."
     )
     parser.add_argument("--release-root", type=Path, required=True)
+    parser.add_argument("--runtime-home", type=Path, required=True)
     parser.add_argument("--service-user", default=DEFAULT_SERVICE_USER)
     parser.add_argument("--service-group", default=DEFAULT_SERVICE_GROUP)
     parser.add_argument("--cwd", type=Path)
@@ -114,6 +128,7 @@ def main() -> int:
     try:
         result = run_candidate_preflight(
             release_root=args.release_root,
+            runtime_home=args.runtime_home,
             command=command,
             service_user=args.service_user,
             service_group=args.service_group,
