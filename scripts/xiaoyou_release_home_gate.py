@@ -21,8 +21,8 @@ except ImportError:
 DEFAULT_SERVICE_USER = "hermes-youyi"
 DEFAULT_SERVICE_GROUP = "hermes-youyi"
 EXPECTED_HOME_MODE = 0o700
-MUTABLE_RUNTIME_DIRS = ("sessions", "cron")
-REQUIRED_WRITABLE_DIRS = ("logs",)
+MUTABLE_RUNTIME_DIRS = ("sessions", "cron", "logs")
+REQUIRED_WRITABLE_DIRS: tuple[str, ...] = ()
 REQUIRED_WRITABLE_FILES = ("state.db",)
 
 
