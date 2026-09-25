@@ -13,13 +13,8 @@ import sqlite3
 import time
 from typing import Any
 
-from runtime.plugins.platforms.wecom.maintenance_drain import (
-    DRAIN_STATE,
-    SCHEMA_VERSION,
-    WecomCallbackDrainGate,
-)
-
-
+DRAIN_STATE = "draining"
+SCHEMA_VERSION = "xiaoyou_wecom_callback_drain_v1"
 DEFAULT_SERVICE_USER = "hermes-youyi"
 
 
@@ -103,12 +98,47 @@ def _resume(path: Path) -> None:
     path.unlink(missing_ok=True)
 
 
+def _drain_snapshot(path: Path) -> dict[str, Any]:
+    if not path.exists():
+        return {"active": False, "state": "open", "valid": True, "path": str(path)}
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+        return {
+            "active": True,
+            "state": DRAIN_STATE,
+            "valid": False,
+            "path": str(path),
+            "error": "drain_state_unreadable",
+        }
+    if not isinstance(payload, dict):
+        return {
+            "active": True,
+            "state": DRAIN_STATE,
+            "valid": False,
+            "path": str(path),
+            "error": "drain_state_invalid",
+        }
+    valid = (
+        payload.get("schema_version") == SCHEMA_VERSION
+        and str(payload.get("state") or "").strip().lower() == DRAIN_STATE
+    )
+    return {
+        "active": True,
+        "state": DRAIN_STATE,
+        "valid": valid,
+        "path": str(path),
+        "requested_at": payload.get("requested_at"),
+        "reason": str(payload.get("reason") or ""),
+        **({} if valid else {"error": "drain_state_invalid"}),
+    }
+
+
 def _snapshot(runtime_home: Path, drain_file: Path, receipt_db: Path) -> dict[str, Any]:
-    gate = WecomCallbackDrainGate(drain_file)
     return {
         "ok": True,
         "runtime_home": str(runtime_home.resolve()),
-        "drain": gate.snapshot(),
+        "drain": _drain_snapshot(drain_file),
         "receipts": _receipt_counts(receipt_db),
         "secret_content_inspected": False,
         "payload_content_inspected": False,
