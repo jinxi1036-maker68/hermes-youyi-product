@@ -170,6 +170,38 @@ python scripts/xiaoyou_release_self_contained_gate.py \
 
 候选 Python、console、`hermes_cli`、小优插件、WeCom 插件或 `sys.path` 一旦解析到同级旧 release，发布失败。
 
+### 6.6 WeCom callback 安全 drain
+
+当前生产 HTTP callback 采用“先持久 claim receipt，再立即 ACK，再异步派发模型”的链路。维护窗口必须利用该持久收件箱进行 drain，不能直接停止 Gateway。
+
+运行中的 Gateway 版本必须已经包含 safe-drain 能力。进入 drain：
+
+```text
+sudo -u hermes-youyi <candidate-python> scripts/xiaoyou_wecom_callback_drain.py enter \
+  --runtime-home <active-hermes-home> \
+  --reason runtime-topology-maintenance
+
+<candidate-python> scripts/xiaoyou_wecom_callback_drain.py wait \
+  --runtime-home <active-hermes-home>
+```
+
+语义：
+
+- drain 文件存在时，企业微信 callback 仍完成验签/解密、持久 claim 到 `wecom_callback_receipts.sqlite3` 并 ACK；
+- poller 停止派发新的业务/model turn；
+- `reply_status='processing'` 必须在模型任务创建前写入；
+- `wait` 只在 drain 有效且 `processing_count=0` 连续稳定后返回 quiesced；
+- 已 claim 但未处理的 callback 可以留在 durable receipt store，重启后由 `recover_pending()` 恢复；
+- drain 文件损坏或无法解析时 fail closed，继续暂停派发；
+- 恢复业务只能在新生产全部门禁、健康和回滚点确认后执行：
+
+```text
+sudo -u hermes-youyi <active-python> scripts/xiaoyou_wecom_callback_drain.py resume \
+  --runtime-home <active-hermes-home>
+```
+
+**首次启用门禁：** 如果当前正在运行的 Gateway 版本尚未包含上述 drain 逻辑，禁止为了“先装上 drain”而裸重启 Gateway。必须先证明存在独立于 Gateway 的安全 ingress holding/forwarding 层，能够在 Gateway 停止期间可靠持久接收并 ACK callback，或者采用其它同等可证明不丢消息的 bootstrap 方案。若没有该能力，生产切换继续 BLOCKED。
+
 ## 7. 生产发布顺序
 
 1. 固定回归与非示例机构门禁通过。
