@@ -100,6 +100,8 @@ sudo -u hermes-youyi python scripts/xiaoyou_runtime_home_migration.py finalize \
 
 `state.db` 使用 SQLite backup 建立一致副本，不直接复制 WAL/SHM。最终同步前不得仅凭文件 hash 判断 SQLite 业务语义。
 
+迁移期间，Unix domain socket（例如 Gateway loop-tick socket）视为进程级临时端点：inventory 必须记录但不得复制，目标 Home 中不应保留该 socket，由新进程启动后自行重建。除明确识别的 Unix socket 外，其它未知特殊节点继续 fail-closed，不能静默跳过。
+
 迁移后必须 verify。旧 Home 保持原样作为回滚源；首次新拓扑失败时只切回旧 selector + 旧 `HERMES_HOME`，禁止把新 Home 状态反向覆盖旧 Home。
 
 ### 6.2 外置 Runtime Home 门禁
