@@ -33,7 +33,6 @@ def _relative_files(path: Path) -> set[str]:
 def _targets(base: Path) -> list[tuple[str, Path, str]]:
     targets: list[tuple[str, Path, str]] = [
         ("tuoguan_runtime", base / "runtime/plugins/tuoguan_core", "runtime/plugins/tuoguan_core"),
-        ("tuoguan_home", base / "home-proddata/plugins/tuoguan_core", "runtime/plugins/tuoguan_core"),
         ("wecom_runtime", base / "runtime/plugins/platforms/wecom", "runtime/plugins/platforms/wecom"),
         ("scripts", base / "scripts", "scripts"),
     ]

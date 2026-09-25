@@ -46,64 +46,128 @@ python scripts/xiaoyou_non_youyi_tenant_gate.py
 
 门禁使用临时 demo 租户验证身份、人员目录、任务写后反查、主动授权、日报、健康查询、Memory、12 领域工具和看板，并扫描示例机构人员、路径与租户标记。任何污染命中都禁止发布。
 
-## 6. 生产发布顺序
+## 6. Runtime Topology V1
+
+生产长期结构固定为：
+
+```text
+<release-root>/<commit>/                  代码、依赖、不可变发布物
+/var/lib/hermes-youyi/hermes-home/        Hermes 持久运行状态
+/etc/hermes-youyi/                        稳定环境文件和部署配置
+<institution-workspace>/                  机构业务 Workspace
+<agenda-root>/                            Agenda / 业务运行数据
+```
+
+硬规则：
+
+- `HERMES_HOME` 不得位于任何版本化 release 内，也不得通过 symlink 指向旧 release；
+- release 中的 console、Python/venv、`hermes_cli`、小优插件和 WeCom 插件必须全部解析到本次 release；
+- `sessions/`、`cron/`、`state.db`、logs 等 Hermes profile 状态跨 release 持久化；
+- Institution Workspace 与 Agenda/业务数据保持独立，本迁移不得顺手搬入 Hermes Home；
+- secret 继续由受保护的 EnvironmentFile/secret store 提供，不复制到发布物。
+
+### 6.1 一次性旧 Home 迁移
+
+只在从旧 release-bound Home 切换到 Runtime Topology V1 时执行一次。
+
+先只读规划：
+
+```text
+python scripts/xiaoyou_runtime_home_migration.py plan \
+  --source-home <current-real-hermes-home>
+```
+
+任何未明确排除、且指向 source Home 外部的 symlink 都会 fail closed。Workspace/Agenda 必须继续独立。
+
+种子复制必须由 Gateway 服务身份执行：
+
+```text
+sudo -u hermes-youyi python scripts/xiaoyou_runtime_home_migration.py seed \
+  --release-root <candidate-release> \
+  --source-home <current-real-hermes-home> \
+  --target-home /var/lib/hermes-youyi/hermes-home
+```
+
+维护窗口中 Gateway 完全静止后，执行最终同步：
+
+```text
+sudo -u hermes-youyi python scripts/xiaoyou_runtime_home_migration.py finalize \
+  --release-root <candidate-release> \
+  --source-home <current-real-hermes-home> \
+  --target-home /var/lib/hermes-youyi/hermes-home \
+  --gateway-stopped-confirmed
+```
+
+`state.db` 使用 SQLite backup 建立一致副本，不直接复制 WAL/SHM。最终同步前不得仅凭文件 hash 判断 SQLite 业务语义。
+
+迁移后必须 verify。旧 Home 保持原样作为回滚源；首次新拓扑失败时只切回旧 selector + 旧 `HERMES_HOME`，禁止把新 Home 状态反向覆盖旧 Home。
+
+### 6.2 外置 Runtime Home 门禁
+
+```text
+python scripts/xiaoyou_runtime_topology.py \
+  --release-root <candidate-release> \
+  --runtime-home /var/lib/hermes-youyi/hermes-home \
+  --config-root /etc/hermes-youyi \
+  --workspace-root <institution-workspace> \
+  --agenda-root <agenda-root>
+
+python scripts/xiaoyou_release_home_gate.py \
+  --release-root <candidate-release> \
+  --runtime-home /var/lib/hermes-youyi/hermes-home
+```
+
+Runtime Home 必须是直接目录、由 Gateway 服务身份持有、模式为 `0700`，并且关键可变状态可被服务身份读写。Runtime Home 顶层出现跨 release symlink 时门禁失败。
+
+`--repair` 只允许修 Runtime Home 顶层目录自身 owner/group/mode；不得递归修 `sessions/cron/state.db/logs` 来掩盖污染。
+
+### 6.3 服务身份预检
+
+所有会触碰 Hermes Home 的 import、Plugin Doctor、启动探针，都必须通过：
+
+```text
+python scripts/xiaoyou_candidate_preflight.py \
+  --release-root <candidate-release> \
+  --runtime-home /var/lib/hermes-youyi/hermes-home \
+  --cwd <candidate-release>/hermes-agent \
+  -- <candidate-preflight-command>
+```
+
+预检必须以 Gateway 服务身份执行。预检完成后再次运行 Runtime Home Gate。
+
+### 6.4 Release 自包含门禁
+
+```text
+python scripts/xiaoyou_release_self_contained_gate.py \
+  --release-root <candidate-release> \
+  --runtime-home /var/lib/hermes-youyi/hermes-home \
+  --python <candidate-release>/.venv/bin/python \
+  --console <candidate-release>/.venv/bin/hermes
+```
+
+候选 Python、console、`hermes_cli`、小优插件、WeCom 插件或 `sys.path` 一旦解析到同级旧 release，发布失败。
+
+## 7. 生产发布顺序
 
 1. 固定回归与非示例机构门禁通过。
 2. 构建并校验发布物，保存 archive SHA256。
 3. 只读比较生产模块和发布清单。
-4. 备份代码、Home、业务数据、systemd 和哈希清单。
-5. 影子环境执行导入、真实模型和无外发回放。
-6. 对生产 Agenda 运行库建立只读语义快照：
-
-   ```text
-   python scripts/xiaoyou_agenda_semantic_gate.py snapshot \
-     --database <workspace>/data/agenda_work_runtime.sqlite \
-     --output /tmp/agenda-before.json
-   ```
-
-7. 候选 release 组装完成后、切换生产前，必须执行 Runtime Home 权限门禁：
-
-   ```text
-   python scripts/xiaoyou_release_home_gate.py --release-root <candidate-release>
-   ```
-
-   门禁要求：
-   - release root 必须可被 Gateway 运行用户 traverse；
-   - `home/` 必须由实际 Gateway 运行账号持有，当前生产为 `hermes-youyi:hermes-youyi`；
-   - `home/` 模式必须为 `0700`；
-   - `home/` 不能是 symlink；
-   - 门禁只检查目录元数据，不读取 `.env` 或 secret 内容；
-   - 不通过时禁止切换生产。
-
-   若候选组装过程把 `home/` 错建为 root 所有，只允许在候选目录上执行窄修复：
-
-   ```text
-   python scripts/xiaoyou_release_home_gate.py --release-root <candidate-release> --repair
-   ```
-
-   repair 只允许修候选 `home/` 目录本身的 owner/group/mode，不递归修改 Home 内容，不复制 secret，不放宽为 world-readable。修复后必须再次无 `--repair` 运行门禁并通过。
-
-8. 低峰窗口最小切换，一次受控重启。
-9. 核对实际 import 路径、Hermes 版本、模型、日志、outbox 和 timer。
-10. 用同一生产库执行部署后语义比较：
-
-   ```text
-   python scripts/xiaoyou_agenda_semantic_gate.py compare \
-     --before /tmp/agenda-before.json \
-     --database <workspace>/data/agenda_work_runtime.sqlite \
-     --after-output /tmp/agenda-after.json
-   ```
-
-   `agenda_runtime_status` 和 `agenda_runtime_daily_status` 的正常心跳/统计变化允许通过。
-   其它用户表默认按业务/工作语义状态处理；ticket、work fact、payload、binding、wake batch、
-   receipt、reply/delivery、lease 或未知未来非心跳表发生变化时门禁失败并进入人工核验或回滚。
-
-10. 出现重复回复、跨人记忆、未经授权外发、任务覆盖、日报失效或未经解释的 Agenda 语义状态变化时立即回滚。
+4. 备份当前 selector、systemd 有效配置、Runtime Home 元数据和业务数据恢复点；不把 secret/业务数据写入 Git。
+5. 对生产 Agenda 运行库建立只读语义快照。
+6. Runtime Topology Gate PASS。
+7. 外置 Runtime Home Gate PASS。
+8. 通过服务身份执行 candidate import / Plugin Doctor / 无外发预检。
+9. 预检后再次执行 Runtime Home Gate，必须 PASS。
+10. Release Self-contained Gate PASS，证明不存在旧 release 代码解析。
+11. 只有 6—10 全部 PASS 才允许低峰窗口最小切换和一次受控 Gateway 重启。
+12. 核对实际 import 路径、Hermes 版本、19092/8866、日志、outbox 和 timer。
+13. 用同一生产 Agenda 库执行部署后语义比较。
+14. 出现重复回复、跨人记忆、未经授权外发、任务覆盖、日报失效、旧 release 代码泄漏或未经解释的 Agenda 语义变化时立即回滚。
 
 > SQLite 主库、`-wal`、`-shm` 的 mtime、大小或 SHA256 变化不能单独作为“业务数据被候选修改”的失败条件。
 > WAL checkpoint 和 Agenda 心跳在稳定版本正常运行期间即可改变这些物理文件。文件级哈希仍可留作取证信息，但发布判定必须使用逻辑语义状态。
 >
-> 这条例外只适用于 Agenda SQLite 运行库及其 WAL/SHM。生产配置文件和普通业务 JSON 的既有哈希不变门禁继续严格执行，不能因为引入语义门禁而放宽。
+> 这条例外只适用于 Agenda SQLite 运行库及其 WAL/SHM。生产配置文件和普通业务 JSON 的既有哈希不变门禁继续严格执行。
 
 ## 边界
 
