@@ -10,6 +10,7 @@ Group=xiaoyou
 WorkingDirectory=${HERMES_RUNTIME_ROOT}
 EnvironmentFile=/etc/xiaoyou/secrets.env
 EnvironmentFile=/etc/xiaoyou/runtime.gateway.env
+Environment=HERMES_HOME=${HERMES_PERSISTENT_HOME}
 ExecStart=${HERMES_RUNTIME_ROOT}/.venv/bin/hermes gateway run --accept-hooks
 Restart=on-failure
 RestartSec=5
@@ -17,7 +18,7 @@ UMask=0077
 NoNewPrivileges=true
 PrivateTmp=true
 ProtectSystem=full
-ReadWritePaths=${XIAOYOU_WORKSPACE_ROOT} /var/log/xiaoyou
+ReadWritePaths=${HERMES_PERSISTENT_HOME} ${XIAOYOU_WORKSPACE_ROOT}
 
 [Install]
 WantedBy=multi-user.target
