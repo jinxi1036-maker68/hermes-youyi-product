@@ -54,6 +54,7 @@ from gateway.config import Platform, PlatformConfig
 from gateway.platforms.base import BasePlatformAdapter, MessageEvent, MessageType, SendResult
 from hermes_constants import get_hermes_home
 from plugins.platforms.wecom.inbound_receipts import WecomInboundReceiptStore
+from plugins.platforms.wecom.maintenance_drain import WecomCallbackDrainGate
 from plugins.platforms.wecom.wecom_crypto import WXBizMsgCrypt, WeComCryptoError
 from .http_policy import platform_httpx_limits
 
@@ -263,6 +264,14 @@ class WecomCallbackAdapter(BasePlatformAdapter):
         if not dedupe_path:
             dedupe_path = str(Path(get_hermes_home()) / "state" / "wecom_callback_receipts.sqlite3")
         self._inbound_receipts = WecomInboundReceiptStore(dedupe_path)
+        drain_path = str(
+            extra.get("drain_file")
+            or os.getenv("HERMES_WECOM_DRAIN_FILE")
+            or ""
+        ).strip()
+        if not drain_path:
+            drain_path = str(Path(get_hermes_home()) / "state" / "wecom_callback_drain.json")
+        self._drain_gate = WecomCallbackDrainGate(drain_path)
         self._user_app_map: Dict[str, str] = {}
         self._access_tokens: Dict[str, Dict[str, Any]] = {}
 
@@ -724,15 +733,35 @@ class WecomCallbackAdapter(BasePlatformAdapter):
             )
 
     async def _poll_loop(self) -> None:
-        """Drain the message queue and dispatch to the gateway runner."""
+        """Dispatch durable callbacks only while the maintenance drain is open.
+
+        Callback HTTP intake continues to claim durable receipts and ACK WeCom
+        while draining.  The poller pauses before marking a receipt processing,
+        so a maintenance controller can prove there are no in-flight model
+        turns by waiting for the durable processing count to reach zero.
+        """
         while True:
             event, receipt_key, session_id = await self._message_queue.get()
             try:
+                await self._drain_gate.wait_until_open()
+
+                # Persist the in-flight boundary BEFORE scheduling the task.
+                # This closes the race where an operator could observe zero
+                # processing rows while a model task had already been queued.
+                if not self._inbound_receipts.mark_processing(receipt_key):
+                    logger.error(
+                        "[WecomCallback] Refusing to dispatch receipt with lost claim %s",
+                        receipt_key,
+                    )
+                    continue
+
                 task = asyncio.create_task(
                     self._dispatch_claimed_message(event, receipt_key, session_id)
                 )
                 self._background_tasks.add(task)
                 task.add_done_callback(self._background_tasks.discard)
+            except asyncio.CancelledError:
+                raise
             except Exception:
                 self._inbound_receipts.mark_failed(receipt_key, "dispatch_schedule_failed")
                 logger.exception("[WecomCallback] Failed to enqueue event")
@@ -745,14 +774,7 @@ class WecomCallbackAdapter(BasePlatformAdapter):
         receipt_key: str,
         session_id: str,
     ) -> None:
-        """Mark an inbound receipt processed only after gateway handling ends."""
-
-        mark_processing = getattr(self._inbound_receipts, "mark_processing", None)
-        if callable(mark_processing):
-            try:
-                mark_processing(receipt_key)
-            except Exception:
-                logger.exception("[WecomCallback] Failed to mark inbound receipt processing")
+        """Finalize a receipt only after gateway handling ends."""
         try:
             await self.handle_message(event)
         except asyncio.CancelledError:
