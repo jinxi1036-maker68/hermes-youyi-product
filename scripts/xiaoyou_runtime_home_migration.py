@@ -28,6 +28,8 @@ DEFAULT_EXCLUDED_TOP_LEVEL = {
     "agenda",
     "agenda-data",
     "agenda_data",
+    "plugins",
+    "skills",
 }
 SQLITE_MAIN = "state.db"
 SQLITE_TRANSIENT = {"state.db-wal", "state.db-shm"}
@@ -404,9 +406,12 @@ def verify_runtime_home(
         if _sha256(Path(item.source)) != _sha256(target):
             mismatches.append({"path": item.logical, "error": "hash_mismatch"})
 
-    sqlite_integrity = "missing"
+    source_db = source_home.resolve() / SQLITE_MAIN
     target_db = target_home / SQLITE_MAIN
-    if target_db.is_file():
+    sqlite_integrity = "missing"
+    if source_db.is_file() and not target_db.is_file():
+        mismatches.append({"path": SQLITE_MAIN, "error": "target_missing"})
+    elif target_db.is_file():
         connection = sqlite3.connect(f"file:{target_db}?mode=ro", uri=True)
         try:
             sqlite_integrity = connection.execute("PRAGMA integrity_check").fetchone()[0]
