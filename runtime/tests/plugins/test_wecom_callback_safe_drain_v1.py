@@ -259,3 +259,29 @@ def test_callback_http_intake_still_claims_and_acks_while_drain_active(tmp_path)
     assert queued_event is event
     assert receipt_key == "receipt-1"
     assert session_id == "user-1"
+
+
+def test_claimed_callback_is_immediately_recoverable_by_new_process(tmp_path):
+    from plugins.platforms.wecom.inbound_receipts import WecomInboundReceiptStore
+
+    path = tmp_path / "wecom_callback_receipts.sqlite3"
+    old_process = WecomInboundReceiptStore(path)
+    claim = old_process.claim(
+        app_name="default",
+        message_id="msg-drain-1",
+        user_id="user-1",
+        session_id="user-1",
+        payload={"app_name": "default", "xml_text": "<decrypted/>"},
+    )
+    assert claim["accepted"] is True
+
+    new_process = WecomInboundReceiptStore(path)
+    recovered = new_process.recover_pending()
+
+    assert len(recovered) == 1
+    assert recovered[0]["message_id"] == "msg-drain-1"
+    assert recovered[0]["payload"] == {
+        "app_name": "default",
+        "xml_text": "<decrypted/>",
+    }
+    assert recovered[0]["attempt_count"] == 2
