@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 from pathlib import Path
 import sqlite3
+import socket
 
 
 def _release(tmp_path: Path) -> Path:
@@ -209,3 +210,77 @@ def test_runtime_home_verify_requires_state_database_when_source_has_one(tmp_pat
 
     assert result["ok"] is False
     assert {"path": "state.db", "error": "target_missing"} in result["mismatches"]
+
+
+def test_runtime_home_inventory_skips_unix_socket_as_ephemeral_state(tmp_path):
+    from scripts.xiaoyou_runtime_home_migration import inventory_runtime_home
+
+    home = _source_home(tmp_path)
+    state_dir = home / "state"
+    state_dir.mkdir()
+    socket_path = state_dir / "gateway.loop-tick.fixture.sock"
+
+    sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    try:
+        sock.bind(str(socket_path))
+        result = inventory_runtime_home(source_home=home)
+    finally:
+        sock.close()
+
+    assert result["ok"] is True
+    assert result["skipped_ephemeral_node_count"] == 1
+    assert result["skipped_ephemeral_nodes"] == [{
+        "logical": "state/gateway.loop-tick.fixture.sock",
+        "source": str(socket_path.resolve()),
+        "kind": "unix_socket",
+    }]
+    assert not any(
+        row["logical"] == "state/gateway.loop-tick.fixture.sock"
+        for row in result["entries"]
+    )
+
+
+def test_runtime_home_seed_does_not_copy_unix_socket(tmp_path, monkeypatch):
+    from scripts import xiaoyou_runtime_home_migration as migration
+
+    release = _release(tmp_path)
+    source = _source_home(tmp_path)
+    state_dir = source / "state"
+    state_dir.mkdir()
+    socket_path = state_dir / "gateway.loop-tick.fixture.sock"
+    target = tmp_path / "persistent-hermes-home"
+    monkeypatch.setattr(migration, "_service_uid", lambda _user: os.geteuid())
+
+    sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    try:
+        sock.bind(str(socket_path))
+        result = migration.migrate_runtime_home(
+            mode="seed",
+            release_root=release,
+            source_home=source,
+            target_home=target,
+            service_user="svc",
+        )
+    finally:
+        sock.close()
+
+    assert result["ok"] is True
+    assert not (target / "state" / "gateway.loop-tick.fixture.sock").exists()
+
+
+def test_runtime_home_inventory_still_blocks_unknown_special_node(tmp_path):
+    from scripts.xiaoyou_runtime_home_migration import inventory_runtime_home
+
+    if not hasattr(os, "mkfifo"):
+        return
+
+    home = _source_home(tmp_path)
+    special = home / "state"
+    special.mkdir()
+    fifo = special / "unexpected.pipe"
+    os.mkfifo(fifo)
+
+    result = inventory_runtime_home(source_home=home)
+
+    assert result["ok"] is False
+    assert "unsupported_runtime_home_node:state/unexpected.pipe" in result["errors"]

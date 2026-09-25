@@ -80,6 +80,7 @@ def _collect(
     errors: list[str],
     external_links: list[dict[str, str]],
     internal_links: list[dict[str, str]],
+    ephemeral_nodes: list[dict[str, str]],
 ) -> None:
     if _excluded(logical, excluded_top):
         return
@@ -124,7 +125,22 @@ def _collect(
                 errors=errors,
                 external_links=external_links,
                 internal_links=internal_links,
+                ephemeral_nodes=ephemeral_nodes,
             )
+        return
+
+    try:
+        node_mode = actual.stat().st_mode
+    except FileNotFoundError:
+        errors.append(f"runtime_home_node_disappeared:{logical.as_posix()}")
+        return
+
+    if stat.S_ISSOCK(node_mode):
+        ephemeral_nodes.append({
+            "logical": logical.as_posix(),
+            "source": str(actual.resolve()),
+            "kind": "unix_socket",
+        })
         return
 
     if actual.is_file():
@@ -159,6 +175,7 @@ def inventory_runtime_home(
     errors: list[str] = []
     external_links: list[dict[str, str]] = []
     internal_links: list[dict[str, str]] = []
+    ephemeral_nodes: list[dict[str, str]] = []
 
     for child in sorted(source.iterdir(), key=lambda item: item.name):
         logical = Path(child.name)
@@ -174,6 +191,7 @@ def inventory_runtime_home(
             errors=errors,
             external_links=external_links,
             internal_links=internal_links,
+            ephemeral_nodes=ephemeral_nodes,
         )
 
     rows = [
@@ -195,6 +213,8 @@ def inventory_runtime_home(
         "entries": rows,
         "internal_symlinks_to_dereference": internal_links,
         "external_symlinks": external_links,
+        "skipped_ephemeral_nodes": ephemeral_nodes,
+        "skipped_ephemeral_node_count": len(ephemeral_nodes),
         "errors": errors,
         "content_read": False,
     }
@@ -358,6 +378,7 @@ def migrate_runtime_home(
         "excluded_top_level": inventory.get("excluded_top_level"),
         "internal_symlinks_dereferenced": len(inventory.get("internal_symlinks_to_dereference") or []),
         "external_symlinks": inventory.get("external_symlinks") or [],
+        "skipped_ephemeral_nodes": inventory.get("skipped_ephemeral_nodes") or [],
         "sqlite": sqlite_result,
         "gateway_stopped_confirmed": bool(gateway_stopped_confirmed),
         "pruned_target_paths": removed,
