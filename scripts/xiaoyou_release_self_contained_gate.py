@@ -152,6 +152,13 @@ def inspect_release_self_containment(
 
     sibling_release_leaks: list[str] = []
     parent = root.parent
+    sibling_release_roots = [
+        item.resolve()
+        for item in parent.iterdir()
+        if item.is_dir()
+        and item.resolve() != root
+        and item.name.startswith("hermes-youyi-")
+    ]
     for value in probe.get("sys_path") or []:
         if not value:
             continue
@@ -161,11 +168,8 @@ def inspect_release_self_containment(
         resolved = path.resolve()
         if resolved == root or _inside(resolved, root):
             continue
-        try:
-            resolved.relative_to(parent)
-        except ValueError:
-            continue
-        sibling_release_leaks.append(str(resolved))
+        if any(resolved == sibling or _inside(resolved, sibling) for sibling in sibling_release_roots):
+            sibling_release_leaks.append(str(resolved))
 
     ok = module_ok and executable_ok and not sibling_release_leaks
     return {
