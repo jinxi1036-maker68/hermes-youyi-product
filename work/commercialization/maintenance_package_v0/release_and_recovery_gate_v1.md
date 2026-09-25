@@ -137,7 +137,28 @@ python scripts/xiaoyou_candidate_preflight.py \
 
 预检必须以 Gateway 服务身份执行。预检完成后再次运行 Runtime Home Gate。
 
-### 6.4 Release 自包含门禁
+### 6.4 Hermes Core 兼容与生产 Overlay 门禁
+
+候选必须从干净 Hermes Core runtime 组装，只允许叠加 release manifest 中明确允许的小优生产 payload。仓库内用于本地测试的兼容 shim（例如 `runtime/hermes_constants.py`、最小 gateway stubs）禁止覆盖 Hermes Core 正式模块。
+
+在 Plugin Doctor 之前必须执行：
+
+```text
+python scripts/xiaoyou_core_compat_gate.py \
+  --release-root <candidate-release> \
+  --runtime-home /var/lib/hermes-youyi/hermes-home \
+  --python <candidate-release>/.venv/bin/python
+```
+
+门禁使用候选自己的 Python 扫描 `hermes_cli` 对 `hermes_constants` 的实际导入，并要求：
+- `hermes_constants` 来源位于候选 release 内；
+- 不得检测到 `XIAOYOU_TEST_SHIM`；
+- `hermes_cli` 未被异常兜底的 Core API 硬依赖必须全部存在；
+- 位于明确 `try/except Exception|ImportError|BaseException` fallback 内的兼容 import 只记录为 guarded optional，不因其缺失单独阻断；
+- 同一符号只要在任一未兜底路径中被导入，仍按硬依赖处理；
+- 扫描失败或缺失硬依赖 API 时 fail closed。
+
+### 6.5 Release 自包含门禁
 
 ```text
 python scripts/xiaoyou_release_self_contained_gate.py \
@@ -158,13 +179,14 @@ python scripts/xiaoyou_release_self_contained_gate.py \
 5. 对生产 Agenda 运行库建立只读语义快照。
 6. Runtime Topology Gate PASS。
 7. 外置 Runtime Home Gate PASS。
-8. 通过服务身份执行 candidate import / Plugin Doctor / 无外发预检。
-9. 预检后再次执行 Runtime Home Gate，必须 PASS。
-10. Release Self-contained Gate PASS，证明不存在旧 release 代码解析。
-11. 只有 6—10 全部 PASS 才允许低峰窗口最小切换和一次受控 Gateway 重启。
-12. 核对实际 import 路径、Hermes 版本、19092/8866、日志、outbox 和 timer。
-13. 用同一生产 Agenda 库执行部署后语义比较。
-14. 出现重复回复、跨人记忆、未经授权外发、任务覆盖、日报失效、旧 release 代码泄漏或未经解释的 Agenda 语义变化时立即回滚。
+8. Core Compatibility Gate PASS，证明候选未被小优测试 shim 覆盖且 Hermes Core API 完整。
+9. 通过服务身份执行 candidate import / Plugin Doctor / 无外发预检。
+10. 预检后再次执行 Runtime Home Gate，必须 PASS。
+11. Release Self-contained Gate PASS，证明不存在旧 release 代码解析。
+12. 只有 6—11 全部 PASS 才允许低峰窗口最小切换和一次受控 Gateway 重启。
+13. 核对实际 import 路径、Hermes 版本、19092/8866、日志、outbox 和 timer。
+14. 用同一生产 Agenda 库执行部署后语义比较。
+15. 出现重复回复、跨人记忆、未经授权外发、任务覆盖、日报失效、Core API 不兼容、旧 release 代码泄漏或未经解释的 Agenda 语义变化时立即回滚。
 
 > SQLite 主库、`-wal`、`-shm` 的 mtime、大小或 SHA256 变化不能单独作为“业务数据被候选修改”的失败条件。
 > WAL checkpoint 和 Agenda 心跳在稳定版本正常运行期间即可改变这些物理文件。文件级哈希仍可留作取证信息，但发布判定必须使用逻辑语义状态。

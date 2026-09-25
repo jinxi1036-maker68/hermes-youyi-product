@@ -186,3 +186,28 @@ def test_release_installer_never_targets_persistent_home(tmp_path):
     for _label, target, _source in targets:
         relative = target.relative_to(base)
         assert "home-proddata" not in relative.parts
+
+
+def test_release_package_excludes_local_hermes_core_shims(tmp_path):
+    from scripts.xiaoyou_release_package import (
+        PRODUCTION_FORBIDDEN_OVERLAY_PATHS,
+        build_release,
+    )
+
+    result = build_release(
+        root=ROOT,
+        output_dir=tmp_path,
+        hermes_version="0.21.0",
+        model="agnes-2.5-flash",
+        require_clean=False,
+        source_commit="c" * 40,
+    )
+
+    release_root = Path(result["release_root"])
+    manifest = json.loads((release_root / "release_manifest.json").read_text(encoding="utf-8"))
+    packaged = {row["path"] for row in manifest["files"]}
+
+    assert "runtime/hermes_constants.py" in PRODUCTION_FORBIDDEN_OVERLAY_PATHS
+    assert "runtime/hermes_constants.py" not in packaged
+    assert manifest["production_overlay_policy"] == "allowlisted_xiaoyou_payload_only_no_core_shadow"
+    assert "runtime/hermes_constants.py" in manifest["production_forbidden_overlay_paths"]
