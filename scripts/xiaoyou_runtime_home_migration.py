@@ -246,8 +246,6 @@ def _prepare_target(
 def _copy_regular_entries(entries: list[Entry], target_home: Path) -> None:
     for item in sorted(entries, key=lambda row: (row.kind != "directory", row.logical)):
         logical = Path(item.logical)
-        if logical.name in SQLIITE_TRANSIENT if False else False:
-            pass
         target = target_home / logical
         if item.kind == "directory":
             target.mkdir(parents=True, exist_ok=True)
