@@ -80,7 +80,8 @@ def _receipt_counts(path: Path) -> dict[str, Any]:
 
 
 def _atomic_enter(path: Path, *, reason: str) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
+    if not path.parent.exists():
+        path.parent.mkdir(parents=True, mode=0o700)
     payload = {
         "schema_version": SCHEMA_VERSION,
         "state": DRAIN_STATE,
