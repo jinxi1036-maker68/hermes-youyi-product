@@ -56,8 +56,54 @@ constants_path = Path(constants.__file__).resolve()
 cli_spec = importlib.util.find_spec("hermes_cli")
 cli_locations = [Path(p).resolve() for p in (cli_spec.submodule_search_locations or [])] if cli_spec else []
 
-required = set()
+hard_required = set()
+guarded_optional = set()
 parse_errors = []
+
+def catches_import_failure(node):
+    if not isinstance(node, ast.Try):
+        return False
+    for handler in node.handlers:
+        if handler.type is None:
+            return True
+        names = []
+        if isinstance(handler.type, ast.Name):
+            names = [handler.type.id]
+        elif isinstance(handler.type, ast.Tuple):
+            names = [item.id for item in handler.type.elts if isinstance(item, ast.Name)]
+        if any(name in {"Exception", "BaseException", "ImportError"} for name in names):
+            return True
+    return False
+
+class ContractVisitor(ast.NodeVisitor):
+    def __init__(self):
+        self.guard_stack = []
+
+    def visit_Try(self, node):
+        guarded = catches_import_failure(node)
+        self.guard_stack.append(guarded or any(self.guard_stack))
+        for item in node.body:
+            self.visit(item)
+        self.guard_stack.pop()
+
+        inherited = any(self.guard_stack)
+        self.guard_stack.append(inherited)
+        for item in node.handlers:
+            self.visit(item)
+        for item in node.orelse:
+            self.visit(item)
+        for item in node.finalbody:
+            self.visit(item)
+        self.guard_stack.pop()
+
+    def visit_ImportFrom(self, node):
+        if node.module != "hermes_constants":
+            return
+        target = guarded_optional if any(self.guard_stack) else hard_required
+        for alias in node.names:
+            if alias.name != "*":
+                target.add(alias.name)
+
 for root in cli_locations:
     for path in root.rglob("*.py"):
         try:
@@ -65,20 +111,23 @@ for root in cli_locations:
         except (OSError, UnicodeDecodeError, SyntaxError) as exc:
             parse_errors.append(f"{path}:{type(exc).__name__}")
             continue
-        for node in ast.walk(tree):
-            if isinstance(node, ast.ImportFrom) and node.module == "hermes_constants":
-                for alias in node.names:
-                    if alias.name != "*":
-                        required.add(alias.name)
+        ContractVisitor().visit(tree)
 
-missing = sorted(name for name in required if not hasattr(constants, name))
+# An unguarded use is authoritative even if the same symbol also appears in
+# a guarded compatibility fallback elsewhere.
+guarded_optional.difference_update(hard_required)
+
+missing_hard = sorted(name for name in hard_required if not hasattr(constants, name))
+missing_guarded = sorted(name for name in guarded_optional if not hasattr(constants, name))
 print(json.dumps({
     "constants_path": str(constants_path),
     "test_shim_detected": bool(getattr(constants, "XIAOYOU_TEST_SHIM", False)),
     "hermes_cli_found": bool(cli_spec),
     "hermes_cli_locations": [str(p) for p in cli_locations],
-    "required_symbols": sorted(required),
-    "missing_symbols": missing,
+    "hard_required_symbols": sorted(hard_required),
+    "guarded_optional_symbols": sorted(guarded_optional),
+    "missing_hard_symbols": missing_hard,
+    "missing_guarded_optional_symbols": missing_guarded,
     "parse_errors": parse_errors,
 }))
 """
@@ -88,15 +137,17 @@ def _evaluate_probe(*, probe: dict[str, Any], release_root: Path) -> dict[str, A
     root = release_root.resolve()
     constants_path = Path(str(probe.get("constants_path") or ""))
     cli_locations = [Path(str(value)) for value in probe.get("hermes_cli_locations") or []]
-    required = sorted(str(value) for value in probe.get("required_symbols") or [])
-    missing = sorted(str(value) for value in probe.get("missing_symbols") or [])
+    hard_required = sorted(str(value) for value in probe.get("hard_required_symbols") or [])
+    guarded_optional = sorted(str(value) for value in probe.get("guarded_optional_symbols") or [])
+    missing_hard = sorted(str(value) for value in probe.get("missing_hard_symbols") or [])
+    missing_guarded = sorted(str(value) for value in probe.get("missing_guarded_optional_symbols") or [])
     parse_errors = [str(value) for value in probe.get("parse_errors") or []]
 
     constants_inside = bool(constants_path) and _inside(constants_path, root)
     cli_inside = bool(cli_locations) and all(_inside(path, root) for path in cli_locations)
     shim = bool(probe.get("test_shim_detected"))
     cli_found = bool(probe.get("hermes_cli_found"))
-    required_nonempty = bool(required)
+    contract_nonempty = bool(hard_required or guarded_optional)
 
     errors: list[str] = []
     if not constants_inside:
@@ -107,9 +158,9 @@ def _evaluate_probe(*, probe: dict[str, Any], release_root: Path) -> dict[str, A
         errors.append("hermes_cli_missing")
     if not cli_inside:
         errors.append("hermes_cli_outside_candidate")
-    if not required_nonempty:
+    if not contract_nonempty:
         errors.append("hermes_constants_contract_not_discovered")
-    if missing:
+    if missing_hard:
         errors.append("hermes_constants_missing_required_symbols")
     if parse_errors:
         errors.append("hermes_cli_contract_scan_error")
@@ -125,8 +176,10 @@ def _evaluate_probe(*, probe: dict[str, Any], release_root: Path) -> dict[str, A
         "hermes_cli_found": cli_found,
         "hermes_cli_locations": [str(path) for path in cli_locations],
         "hermes_cli_inside_candidate": cli_inside,
-        "required_symbols": required,
-        "missing_symbols": missing,
+        "hard_required_symbols": hard_required,
+        "guarded_optional_symbols": guarded_optional,
+        "missing_hard_symbols": missing_hard,
+        "missing_guarded_optional_symbols": missing_guarded,
         "parse_errors": parse_errors,
         "secret_content_inspected": False,
     }
