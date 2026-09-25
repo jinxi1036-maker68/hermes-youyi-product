@@ -165,3 +165,47 @@ def test_finalize_requires_gateway_stop_and_prunes_stale_target_state(tmp_path, 
     assert not (target / "stale.txt").exists()
     assert source.is_dir()
     assert (source / "state.db").is_file()
+
+
+def test_runtime_home_inventory_excludes_release_code_directories(tmp_path):
+    from scripts.xiaoyou_runtime_home_migration import inventory_runtime_home
+
+    home = _source_home(tmp_path)
+    (home / "plugins").mkdir()
+    (home / "plugins" / "legacy_plugin.py").write_text("VALUE = 1\n", encoding="utf-8")
+    (home / "skills").mkdir()
+    (home / "skills" / "legacy_skill.txt").write_text("legacy\n", encoding="utf-8")
+
+    result = inventory_runtime_home(source_home=home)
+
+    assert result["ok"] is True
+    assert "plugins" in result["excluded_top_level"]
+    assert "skills" in result["excluded_top_level"]
+    assert not any(row["logical"].startswith("plugins") for row in result["entries"])
+    assert not any(row["logical"].startswith("skills") for row in result["entries"])
+
+
+def test_runtime_home_verify_requires_state_database_when_source_has_one(tmp_path):
+    from scripts.xiaoyou_runtime_home_migration import verify_runtime_home
+
+    source = _source_home(tmp_path)
+    target = tmp_path / "persistent-hermes-home"
+    target.mkdir()
+    (target / "sessions").mkdir()
+    (target / "sessions" / "sessions.json").write_bytes(
+        (source / "sessions" / "sessions.json").read_bytes()
+    )
+    (target / "cron").mkdir()
+    (target / "cron" / "jobs.json").write_bytes(
+        (source / "cron" / "jobs.json").read_bytes()
+    )
+    (target / "logs").mkdir()
+    (target / "logs" / "agent.log").write_bytes(
+        (source / "logs" / "agent.log").read_bytes()
+    )
+    (target / "config.yaml").write_bytes((source / "config.yaml").read_bytes())
+
+    result = verify_runtime_home(source_home=source, target_home=target)
+
+    assert result["ok"] is False
+    assert {"path": "state.db", "error": "target_missing"} in result["mismatches"]
