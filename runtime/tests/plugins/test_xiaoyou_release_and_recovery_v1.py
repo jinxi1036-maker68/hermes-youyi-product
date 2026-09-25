@@ -183,5 +183,6 @@ def test_release_installer_never_targets_persistent_home(tmp_path):
     targets = _targets(base)
 
     assert targets
-    assert all("home-proddata" not in str(target) for _label, target, _source in targets)
-    assert all("/home/" not in str(target).replace("\\", "/") for _label, target, _source in targets)
+    for _label, target, _source in targets:
+        relative = target.relative_to(base)
+        assert "home-proddata" not in relative.parts
