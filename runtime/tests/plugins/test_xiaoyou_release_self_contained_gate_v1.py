@@ -61,7 +61,7 @@ def test_release_self_containment_rejects_module_from_old_release(tmp_path, monk
     from scripts import xiaoyou_release_self_contained_gate as gate
 
     release, home, python, console, site = _fixture(tmp_path)
-    old_site = release.parent / "old-release" / ".venv/lib/python3.11/site-packages"
+    old_site = release.parent / "hermes-youyi-old-release" / ".venv/lib/python3.11/site-packages"
     old_site.mkdir(parents=True)
     monkeypatch.setattr(gate, "_identity", lambda *_args: (os.geteuid(), os.getegid()))
 
