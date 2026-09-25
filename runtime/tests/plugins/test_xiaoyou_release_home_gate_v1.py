@@ -186,3 +186,31 @@ def test_runtime_home_repair_is_narrow_to_home_directory(tmp_path, monkeypatch):
     assert home.stat().st_mode & 0o777 == 0o700
     assert preserved.read_bytes() == before
     assert observed == [(home.resolve(), os.getuid(), os.getgid())]
+
+
+def test_runtime_home_gate_rejects_unwritable_log_file(tmp_path, monkeypatch):
+    from scripts import xiaoyou_release_home_gate as gate
+
+    release, home = _topology(tmp_path)
+    logs = home / "logs"
+    logs.mkdir()
+    agent_log = logs / "agent.log"
+    agent_log.write_text("existing\n", encoding="utf-8")
+    logs.chmod(0o700)
+    agent_log.chmod(0o400)
+    monkeypatch.setattr(gate, "_identity", lambda *_args: _identity_for_current_process())
+
+    result = gate.inspect_runtime_home(
+        release_root=release,
+        runtime_home=home,
+        service_user="svc",
+        service_group="svc",
+    )
+
+    assert result["ok"] is False
+    assert result["mutable_state_ok"] is False
+    assert any(
+        Path(row["path"]).name == "agent.log" and not row["ok"]
+        for row in result["mutable_state"]
+        if row.get("exists")
+    )
