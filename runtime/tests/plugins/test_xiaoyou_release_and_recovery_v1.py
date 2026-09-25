@@ -174,3 +174,14 @@ def test_systemd_templates_use_version_neutral_current_path():
         if "hermes-youyi-upgrade-0.19.0" in text or "runtime.gateway.019.env" in text:
             stale.append(path.name)
     assert stale == []
+
+
+def test_release_installer_never_targets_persistent_home(tmp_path):
+    from scripts.xiaoyou_release_installer import _targets
+
+    base = tmp_path / "release-root"
+    targets = _targets(base)
+
+    assert targets
+    assert all("home-proddata" not in str(target) for _label, target, _source in targets)
+    assert all("/home/" not in str(target).replace("\\", "/") for _label, target, _source in targets)
