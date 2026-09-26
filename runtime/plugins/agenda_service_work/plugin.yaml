@@ -1,7 +1,0 @@
-name: agenda_service_work
-version: "0.1.1-capability-candidate"
-kind: platform
-description: "Server-authenticated service-work ingress for the isolated XiaoYou Agenda POC."
-author: XiaoYou Project
-capabilities:
-  - tools.override

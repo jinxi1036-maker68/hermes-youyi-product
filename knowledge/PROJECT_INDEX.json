@@ -1,0 +1,140 @@
+{
+  "schema_version": "xiaoyou_project_knowledge_v2",
+  "knowledge_revision": 2,
+  "project": "xiaoyou-hermes",
+  "repository": "jinxi1036-maker68/hermes-youyi-product",
+  "knowledge_branch": "project-knowledge",
+  "code_branch": "main",
+  "repository_visibility": "public",
+  "updated_at": "2026-09-26T09:48:00+08:00",
+  "authority": {
+    "dynamic_current_state": "knowledge/PROJECT_INDEX.json",
+    "human_current_state": "knowledge/05_CURRENT_STATE.md",
+    "active_work": "knowledge/ACTIVE_WORK.md",
+    "evidence": "knowledge/EVIDENCE_INDEX.json",
+    "code": "main branch",
+    "deployed_runtime": "production server"
+  },
+  "current": {
+    "formal_stage": {
+      "id": 2,
+      "name": "Query",
+      "status": "active",
+      "sealed": false
+    },
+    "production_sha": "588ea6eecb1833159e886181f3259be6e0befe37",
+    "production_last_verified_at": "2026-09-26T09:16:49+08:00",
+    "main_sha": "3e9473d8083533387a9422a68f289793bb6d6585",
+    "main_last_verified_at": "2026-09-26T09:48:00+08:00",
+    "active_work_item_id": "WI-2026-09-bootstrap-durable-ingress",
+    "blocker_id": "bootstrap-durable-ingress",
+    "blocker_status": "blocked",
+    "blocker_summary": "The current production Gateway does not have safe-drain, and no Gateway-independent durable receive+ACK+persist+replay layer has yet been proven for the first Runtime Topology cutover.",
+    "next_action": "After Knowledge V2 is established, resume the production-cutover work with a read-only Nginx ingress switchover audit, then design the Git-governed bootstrap holding layer from verified facts."
+  },
+  "sealed_capabilities": [
+    {
+      "id": 1,
+      "name": "Identity + Session",
+      "status": "pass",
+      "stable_tag": "youyi-stable-PASS-identity-authority-2026-09-23",
+      "evidence_id": "EV-ID-001"
+    }
+  ],
+  "roadmap": [
+    {
+      "id": 1,
+      "name": "Identity + Session"
+    },
+    {
+      "id": 2,
+      "name": "Query"
+    },
+    {
+      "id": 3,
+      "name": "Direct Message / Outbound"
+    },
+    {
+      "id": 4,
+      "name": "Student Basic Writes"
+    },
+    {
+      "id": 5,
+      "name": "Student Archive/Delete Semantics"
+    },
+    {
+      "id": 6,
+      "name": "People & Organization"
+    },
+    {
+      "id": 7,
+      "name": "Student Service Relationships"
+    },
+    {
+      "id": 8,
+      "name": "Tasks"
+    },
+    {
+      "id": 9,
+      "name": "Task Progress / Contact Owner"
+    },
+    {
+      "id": 10,
+      "name": "Agenda Autonomous Work"
+    },
+    {
+      "id": 11,
+      "name": "Cross-Service Concern"
+    },
+    {
+      "id": 12,
+      "name": "Progressive Claims / Legacy Governance"
+    },
+    {
+      "id": 13,
+      "name": "Permission Regression"
+    },
+    {
+      "id": 14,
+      "name": "Final Response Truth / UX"
+    },
+    {
+      "id": 15,
+      "name": "Learning"
+    },
+    {
+      "id": 16,
+      "name": "H5"
+    },
+    {
+      "id": 17,
+      "name": "Long-term Stability"
+    },
+    {
+      "id": 18,
+      "name": "Voice / Hardware"
+    }
+  ],
+  "roles": {
+    "owner": "Business/product decisions, final real WeCom acceptance, unavoidable production authorization.",
+    "chatgpt": "Technical lead, GitHub code executor, evidence/PASS judgment, route controller, project-knowledge maintainer.",
+    "codex": "Server inspection, isolated verification, deployment, restart/rollback and factual reporting only."
+  },
+  "freshness_policy": {
+    "main": "Always compare current GitHub main HEAD to current.main_sha before code work.",
+    "production": "For production-affecting work, require a fresh read-only production verification when production_last_verified_at is stale or the server may have changed.",
+    "stale_if_conflict": "If live facts conflict with PROJECT_INDEX.json, stop and refresh project knowledge before implementation."
+  },
+  "safety": {
+    "public_safe_only": true,
+    "never_store": [
+      "secrets",
+      "tokens",
+      "environment contents",
+      "real student/parent/employee sensitive personal data",
+      "chat transcripts",
+      "production database backups",
+      "authentication headers"
+    ]
+  }
+}

@@ -1,5 +1,0 @@
-name: robot_poc
-version: "0.1.0"
-kind: platform
-description: "Loopback-only text Robot Channel POC for Hermes."
-author: Hermes Xiaoyou Project

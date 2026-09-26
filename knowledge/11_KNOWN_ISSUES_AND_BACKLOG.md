@@ -1,21 +1,16 @@
-# 已知问题与 Backlog
+# 已知问题与 Backlog 目录
 
-> 这里只记录已知但**当前不应混入主线**的问题。
+> **哪个问题当前正在做、哪个是 current blocker，只能从 `PROJECT_INDEX.json` 读取。**  
+> 本文件只是问题目录，不保存动态优先级。
 
-## 当前主线 blocker
+## Release / Runtime 类
 
-### Bootstrap durable ingress holding
-状态：BLOCKED / current
+- bootstrap durable ingress holding；
+- legacy release-bound Home 历史债务；
+- aa-nginx / proxy / Cloud Hub 历史运行治理；
+- 旧 release / rollback 依赖退役时机。
 
-需要在旧 Gateway 不具备 safe-drain 的情况下，完成第一次安全切换。
-必须证明：
-- Gateway down 时仍可靠接收；
-- 正确 ACK 上游；
-- durable persist；
-- 恢复后 replay；
-- duplicate 可控。
-
-## Query backlog
+## Query 类
 
 - `/new` 用户可见技术信息泄漏；
 - Query 结果可能泄漏 tenant_id / task_id / internal status / raw JSON；
@@ -23,28 +18,34 @@
 - Student authority 仍有 legacy 来源；
 - 历史未完成事项等后续 Query 回归。
 
-## 旧技术债
+## 业务能力类
 
-- create_task 既有 NameError（与当前主线分离）；
-- 旧测试/helper 失效；
-- 旧身份架构需要逐步退役；
-- legacy data governance；
-- aa-nginx / proxy 历史运行债务。
+- create_task 既有 NameError；
+- 学生主档与服务关系进一步权威化；
+- 旧人员/身份兼容数据退役；
+- progressive claims / legacy governance。
 
-## 后续能力
+## 后续正式能力
 
-- Direct Message
-- Student writes
-- People / Organization
-- Student Service
-- Tasks
-- Agenda
-- Learning
-- H5
-- Long-term stability
-- Voice / Hardware
+正式顺序见 PROJECT_INDEX roadmap / 04_CAPABILITY_MAP：
+- Direct Message；
+- Student Writes；
+- Student Archive/Delete；
+- People / Organization；
+- Student Service；
+- Tasks；
+- Agenda；
+- Learning；
+- H5；
+- Long-term Stability；
+- Voice / Hardware。
 
-## 原则
+## 使用原则
 
 发现 backlog 不等于立刻修。
-只有它成为当前阶段 blocker 或进入对应阶段，才展开。
+
+只有当：
+- PROJECT_INDEX 将它设为 active work / blocker；
+- 或正式能力路线进入对应 Stage；
+
+才展开实现。

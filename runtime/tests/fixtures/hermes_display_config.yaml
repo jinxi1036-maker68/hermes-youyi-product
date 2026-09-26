@@ -1,4 +1,0 @@
-# Disposable fixture for reply-truth regression. This is not a production
-# configuration and intentionally contains no provider or channel credentials.
-display:
-  busy_ack_enabled: false

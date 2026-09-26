@@ -1,0 +1,90 @@
+{
+  "schema_version": "xiaoyou_evidence_index_v1",
+  "updated_at": "2026-09-26T09:48:00+08:00",
+  "repository": "jinxi1036-maker68/hermes-youyi-product",
+  "evidence": [
+    {
+      "id": "EV-ID-001",
+      "area": "Identity + Session",
+      "judgment": "PASS_SEALED",
+      "date": "2026-09-23",
+      "stable_tag": "youyi-stable-PASS-identity-authority-2026-09-23",
+      "sealed_baseline_sha": "adbc01cba9f93a0e640743f1782e9526c6f9dee8",
+      "note": "Stage 1 identity authority and session continuity sealed after real WeCom acceptance."
+    },
+    {
+      "id": "EV-Q-001",
+      "area": "Query today date scope",
+      "judgment": "PASS_CODE",
+      "pr": 9,
+      "candidate_sha": "b95f98f926305a450cc5a6f5616533e5303efdff",
+      "merged_sha": "5c484056ff7594ffa101109d54c26dacc98f31b8",
+      "note": "Today task semantics use due_at local date; undated tasks are not today."
+    },
+    {
+      "id": "EV-Q-002",
+      "area": "Model-first query routing",
+      "judgment": "PASS_CODE_DEPLOYED_BASELINE",
+      "pr": 10,
+      "candidate_sha": "ab82ac047a8b9496339f764c451e8a74fa67027f",
+      "merged_sha": "588ea6eecb1833159e886181f3259be6e0befe37",
+      "note": "Ordinary business query routing no longer relies on keyword hidden business routing."
+    },
+    {
+      "id": "EV-Q-003",
+      "area": "Query evidence boundary",
+      "judgment": "PASS_CODE_NOT_YET_OWNER_ACCEPTED",
+      "pr": 11,
+      "candidate_sha": "8bae5a58fb0dedef3067b0cc7224190206a5a835",
+      "merged_sha": "1a9ba83ef83d8190e6b83e2c672e082c9e837666",
+      "note": "Task inventory/count/status/date facts require authoritative task query; active context is continuation evidence only."
+    },
+    {
+      "id": "EV-RT-001",
+      "area": "Runtime Topology V1",
+      "judgment": "PASS_ISOLATED",
+      "pr": 14,
+      "candidate_sha": "f2f13b300dd3bb5157c087c41f0af9844bd29e07",
+      "merged_sha": "c83b06ca742198c40823ade54af7d3f8fcb3430a",
+      "note": "Release code separated from persistent Runtime Home; migration/preflight/self-contained machinery established."
+    },
+    {
+      "id": "EV-RT-002",
+      "area": "Runtime Home ephemeral Unix socket",
+      "judgment": "PASS_ISOLATED_AND_REAL_PLAN",
+      "pr": 15,
+      "candidate_sha": "cee7d09589d044ebd1f6532dd5f562a07c752449",
+      "merged_sha": "20fe3018fe044021215c832eb85338c574b93681",
+      "note": "Ephemeral Unix socket is inventoried but not migrated; unknown special nodes remain fail-closed."
+    },
+    {
+      "id": "EV-RT-003",
+      "area": "Hermes Core compatibility and production overlay",
+      "judgment": "PASS",
+      "pr": 16,
+      "candidate_sha": "90c6cddf5f31701588c718b98e49681fcebb2750",
+      "merged_sha": "ff634186d8d7846daf33c680f788ce93a92c7ddd",
+      "verification_comment_id": 5835124242,
+      "note": "Test shim shadow removed; hard Core dependencies complete; guarded fallback imports classified correctly; Doctors PASS."
+    },
+    {
+      "id": "EV-RT-004",
+      "area": "WeCom callback safe-drain",
+      "judgment": "PASS",
+      "pr": 17,
+      "candidate_sha": "6422e3829502bdc560ee0f81ed56fb2be3d1924b",
+      "merged_sha": "3e9473d8083533387a9422a68f289793bb6d6585",
+      "verification_comment_id": 5841604102,
+      "note": "Durable intake+ACK continues while dispatch pauses; processing race closed; cross-process recovery verified."
+    },
+    {
+      "id": "EV-RT-005",
+      "area": "Cloud Hub bootstrap ingress audit",
+      "judgment": "BLOCKED",
+      "pr": 17,
+      "verification_comment_id": 5841868023,
+      "production_sha": "588ea6eecb1833159e886181f3259be6e0befe37",
+      "note": "Cloud Hub fallback queue is not engaged by current direct-forward failure and lacks replay/idempotency; not a proven bootstrap holding layer."
+    }
+  ]
+}
