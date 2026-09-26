@@ -720,16 +720,24 @@ class WeComHoldingBridge:
                 return web.Response(status=503, text="holding unavailable")
             return web.Response(status=400, text="invalid callback")
 
-        if _is_retryable_status(int(response.status_code)):
+        status_code = int(response.status_code)
+        if not (200 <= status_code < 300):
+            # A transport-authentic callback must not be lost merely because
+            # the downstream Gateway is misconfigured or temporarily rejects
+            # it. Invalid/untrusted requests still receive the Gateway error.
             ok, reason, _row = await self._persist_authenticated(request=request, body=body)
             if ok:
                 return self._ack()
             if reason == "holding_callback_tokens_unavailable" or reason.startswith("holding_persist_failed"):
                 return web.Response(status=503, text="holding unavailable")
-            return web.Response(status=400, text="invalid callback")
+            return web.Response(
+                status=status_code,
+                body=bytes(response.content),
+                headers=_selected_response_headers(response.headers),
+            )
 
         return web.Response(
-            status=int(response.status_code),
+            status=status_code,
             body=bytes(response.content),
             headers=_selected_response_headers(response.headers),
         )
