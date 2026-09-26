@@ -511,3 +511,85 @@ def test_response_lost_then_replay_can_rely_on_gateway_business_dedupe(tmp_path)
 
     assert business_exec_count == 1
     assert store.counts()["completed_count"] == 1
+
+
+def test_read_only_queue_counts_do_not_create_missing_database(tmp_path):
+    db = tmp_path / "missing" / "queue.sqlite3"
+
+    counts = holding.HoldingStore.read_counts(db)
+
+    assert counts == {
+        "total_count": 0,
+        "pending_count": 0,
+        "delivering_count": 0,
+        "completed_count": 0,
+    }
+    assert not db.exists()
+    assert not db.parent.exists()
+
+
+def test_replay_loop_does_not_deliver_while_hold_is_active(tmp_path):
+    body, query = _signed_callback()
+    client = FakeClient([FakeResponse(200)])
+    bridge, store, mode_file = _bridge(tmp_path, client=client, hold=True)
+    asyncio.run(bridge.handle_callback(FakeRequest(body=body, query=query)))
+
+    async def scenario():
+        task = asyncio.create_task(bridge.replay_loop())
+        try:
+            await asyncio.sleep(0.05)
+            assert client.calls == []
+            assert store.counts()["pending_count"] == 1
+        finally:
+            bridge._closed = True
+            task.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await task
+
+    asyncio.run(scenario())
+
+
+def test_replay_resumes_and_drains_after_hold_is_removed(tmp_path):
+    body, query = _signed_callback()
+    client = FakeClient([FakeResponse(200)])
+    bridge, store, mode_file = _bridge(tmp_path, client=client, hold=True)
+    asyncio.run(bridge.handle_callback(FakeRequest(body=body, query=query)))
+    mode_file.unlink()
+
+    async def scenario():
+        task = asyncio.create_task(bridge.replay_loop())
+        deadline = asyncio.get_running_loop().time() + 1.0
+        try:
+            while store.counts()["completed_count"] != 1:
+                if asyncio.get_running_loop().time() >= deadline:
+                    raise AssertionError("held callback did not drain")
+                await asyncio.sleep(0.01)
+        finally:
+            bridge._closed = True
+            task.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await task
+
+    asyncio.run(scenario())
+
+    assert store.counts()["pending_count"] == 0
+    assert store.counts()["completed_count"] == 1
+
+
+def test_oversized_callback_is_rejected_before_forward_or_spool(tmp_path):
+    client = FakeClient([])
+    bridge, store, _mode = _bridge(tmp_path, client=client)
+    bridge.max_body = 8
+
+    response = asyncio.run(
+        bridge.handle_callback(
+            FakeRequest(
+                body=b"x" * 9,
+                query={"msg_signature": "x", "timestamp": "1", "nonce": "n"},
+            )
+        )
+    )
+
+    assert response.status == 413
+    assert client.calls == []
+    assert store.counts()["total_count"] == 0
