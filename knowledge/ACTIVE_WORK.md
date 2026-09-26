@@ -111,6 +111,21 @@ public HTTPS
 - 一旦发给 Gateway 就立即标记完成；
 - 只验证 happy path，不验证 crash / timeout / duplicate path。
 
+## 当前执行中
+
+已向 Codex 发出只读审计：
+
+- command: `XIAOU_NGINX_BOOTSTRAP_SWITCHOVER_AUDIT_V1`
+- PR #17 comment: `5842332487`
+- 目标：确认 aa-nginx 当前 callback location、真实 upstream、graceful reload / local upstream swap / rollback 是否可行。
+- 本轮严格只读：不改配置、不 reload、不 restart、不创建 bridge。
+
+**当前状态：等待审计结果。**
+
+审计回来后：
+- 若本地 upstream graceful swap 可行，由 ChatGPT 基于事实直接设计 Git-governed holding bridge；
+- 若存在结构 blocker，先处理该 blocker，不猜配置、不进入生产变更。
+
 ## 当前下一步
 
 恢复主线后：

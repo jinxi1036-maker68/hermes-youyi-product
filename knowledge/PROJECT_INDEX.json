@@ -6,7 +6,7 @@
   "knowledge_branch": "project-knowledge",
   "code_branch": "main",
   "repository_visibility": "public",
-  "updated_at": "2026-09-26T09:48:00+08:00",
+  "updated_at": "2026-09-26",
   "authority": {
     "dynamic_current_state": "knowledge/PROJECT_INDEX.json",
     "human_current_state": "knowledge/05_CURRENT_STATE.md",
@@ -32,7 +32,7 @@
     "blocker_id": "bootstrap-durable-ingress",
     "blocker_status": "blocked",
     "blocker_summary": "The current production Gateway does not have safe-drain, and no Gateway-independent durable receive+ACK+persist+replay layer has yet been proven for the first Runtime Topology cutover.",
-    "next_action": "After Knowledge V2 is established, resume the production-cutover work with a read-only Nginx ingress switchover audit, then design the Git-governed bootstrap holding layer from verified facts.",
+    "next_action": "Await Codex read-only Nginx bootstrap switchover audit XIAOU_NGINX_BOOTSTRAP_SWITCHOVER_AUDIT_V1 (PR #17 comment 5842332487). After facts return, ChatGPT designs the Git-governed bootstrap holding layer; no production changes before that.",
     "working_method_id": "WM-005",
     "working_method_name": "Concurrency-Safe Governed Adaptive Method",
     "bootstrap_holding_contract": "ADR-009: transparent-forward / persist-before-ACK / idempotent-replay-complete-after-confirmed-success"
