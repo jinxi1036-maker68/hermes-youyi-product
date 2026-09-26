@@ -32,7 +32,7 @@
     "blocker_id": "bootstrap-durable-ingress",
     "blocker_status": "blocked",
     "blocker_summary": "Holding Bridge V1 code is merged and code-level fault/regression tests pass, including the direct-FORWARD versus replay ownership race. The remaining blocker is server-side isolated verification of runtime compatibility and the real loopback deployment boundary before any production routing change.",
-    "next_action": "Await Codex server-isolated verification XIAOU_HOLDING_BRIDGE_SERVER_ISOLATED_VERIFY_V1 on PR #20 comment 5843615519. Codex may only verify runtime/server facts and synthetic isolated fault semantics; no production changes or architecture redesign. If PASS, ChatGPT evaluates evidence and prepares the next production technical gate.",
+    "next_action": "The server-isolated verification instruction is prepared in PR #20 comment 5843615519, but the Codex execution channel is not connected and no Codex task has been dispatched or executed. The owner must manually hand this instruction to Codex, or execution must wait until that channel is available. Do not infer any Codex execution or verification result from the PR comment itself.",
     "working_method_id": "WM-005",
     "working_method_name": "Concurrency-Safe Governed Adaptive Method",
     "bootstrap_holding_contract": "ADR-009: transparent-forward / persist-before-ACK / idempotent-replay-complete-after-confirmed-success"

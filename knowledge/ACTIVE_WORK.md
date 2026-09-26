@@ -156,12 +156,16 @@ Holding Bridge V1 代码层已 PASS。
 
 ## 当前下一步
 
-向 Codex 发出目标导向的 **Holding Bridge V1 server isolated verification**，只做服务器事实和隔离验证，不设计架构。
+下一步需要执行 **Holding Bridge V1 server isolated verification**，只做服务器事实和隔离验证，不设计架构。
 
-已发出：
-- command: `XIAOU_HOLDING_BRIDGE_SERVER_ISOLATED_VERIFY_V1`
-- PR #20 comment: `5843615519`
-- command_id: `holding-bridge-server-isolated-verify-v1-pr20`
+当前真实状态：
+- 验证指令已经准备好；
+- 指令留存在 PR #20 comment：`5843615519`；
+- command: `XIAOU_HOLDING_BRIDGE_SERVER_ISOLATED_VERIFY_V1`；
+- command_id: `holding-bridge-server-isolated-verify-v1-pr20`；
+- **Codex 工作链路当前未打通，因此该指令并未自动派发给 Codex，也没有 Codex 执行或回传**；
+- PR comment 只作为人工交接/审计记录，不能视为任务已发送；
+- 需要由 Owner 手动把该指令交给 Codex，或等待可用执行链路后再运行；
 - production_changed 必须保持 `false`.
 
 必须验证：
