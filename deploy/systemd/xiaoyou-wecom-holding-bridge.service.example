@@ -8,8 +8,10 @@ Type=simple
 User=hermes-youyi
 Group=hermes-youyi
 WorkingDirectory=${XIAOYOU_RELEASE_ROOT}
+# Production renders this protected file locally. It may contain both the
+# non-secret bridge settings and WECOM_CALLBACK_TOKEN (or token-list env).
+# Do not commit the production file.
 EnvironmentFile=/etc/hermes-youyi/wecom-holding-bridge.env
-EnvironmentFile=/etc/hermes-youyi/wecom-callback-secrets.env
 ExecStart=${XIAOYOU_RELEASE_ROOT}/.venv/bin/python ${XIAOYOU_RELEASE_ROOT}/scripts/xiaoyou_wecom_holding_bridge.py serve
 Restart=on-failure
 RestartSec=2
