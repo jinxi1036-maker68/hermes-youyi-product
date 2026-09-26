@@ -120,3 +120,19 @@ PR #17：
 - 强制 overlap regression 通过；
 - current main `02c88bff5790110f6866b01031a7c9c75e0ded58` 上 Bridge + safe-drain regression 24/24 PASS；
 - 代码层判定 PASS，但 production 仍未改变；下一步是服务器隔离验证，而不是直接切流。
+
+
+## Holding Bridge V1 server-isolated verification PASS
+
+2026-09-26：
+- Owner 手动转交 ChatGPT 准备的 Codex 验证任务；
+- Codex 回传 `production_changed=false`；
+- main 保持 `02c88bff5790110f6866b01031a7c9c75e0ded58`，production 保持 `588ea6eecb1833159e886181f3259be6e0befe37`；
+- 当前 Nginx → Cloud Hub → Gateway 链路健康；
+- Python/runtime dependencies、service-identity write boundary、loopback 19091 均 PASS；
+- Holding Bridge targeted suite 16/16 PASS，完整隔离故障语义 PASS；
+- 临时 Bridge → mock upstream 的真实 loopback smoke PASS；
+- 无生产路由、配置、服务、数据或真实企业微信 callback 变更；
+- ChatGPT 判定 `PASS_SERVER_ISOLATED`，证据记录于 PR #20 comment `5843978547`。
+
+下一步进入 controlled production technical deployment/cutover gate 设计，不直接进入 Owner 真人验收。

@@ -1,6 +1,6 @@
 {
   "schema_version": "xiaoyou_evidence_index_v1",
-  "updated_at": "2026-09-26T13:41:08+08:00",
+  "updated_at": "2026-09-26T14:40:09+08:00",
   "repository": "jinxi1036-maker68/hermes-youyi-product",
   "evidence": [
     {
@@ -103,9 +103,20 @@
       "candidate_sha": "cdc046593a14d1a715ae1bbea80fa5f612a89b71",
       "merged_sha": "02c88bff5790110f6866b01031a7c9c75e0ded58",
       "github_actions_run_id": 36221515003,
-      "note": "Holding Bridge V1 is merged with durable stage-before-forward, FORWARD/HOLD/FALLBACK, replay/crash recovery/transport dedupe, and direct-forward replay ownership. Main CI passes 24 Bridge+safe-drain tests including forced overlap. Server isolated verification is still required before production use.",
+      "note": "Holding Bridge V1 is merged with durable stage-before-forward, FORWARD/HOLD/FALLBACK, replay/crash recovery/transport dedupe, and direct-forward replay ownership. Main CI passes 24 Bridge+safe-drain tests including forced overlap. Server-isolated verification subsequently passed under EV-RT-008.",
       "fix_pr": 20,
       "fix_candidate_sha": "264dd0b487c39331965fa025882a8824da814904"
+    },
+    {
+      "id": "EV-RT-008",
+      "area": "Bootstrap Holding Bridge V1 server-isolated verification",
+      "judgment": "PASS_SERVER_ISOLATED",
+      "date": "2026-09-26",
+      "main_sha": "02c88bff5790110f6866b01031a7c9c75e0ded58",
+      "production_sha": "588ea6eecb1833159e886181f3259be6e0befe37",
+      "verification_comment_id": 5843978547,
+      "source": "Owner-relayed Codex server verification; recorded by ChatGPT on PR #20",
+      "note": "production_changed=false. Production chain healthy. Python 3.11.13, aiohttp 3.14.3, httpx 0.28.1 and SQLite 3.26.0 available. Service identity write boundary PASS. Loopback 19091 bind/release PASS. Holding Bridge targeted suite 16/16 PASS; FORWARD/HOLD/FALLBACK, persist-before-ACK, store-failure fail-closed, crash recovery, replay, duplicate control, direct/replay ownership, backlog restart recovery and corrupt-HOLD fail-closed all PASS. Temporary real-loopback smoke Bridge 19091 -> mock upstream 29192 PASS. No production routing/config/service/data changes and no real WeCom callback."
     }
   ]
 }

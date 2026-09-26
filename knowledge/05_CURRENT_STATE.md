@@ -33,7 +33,9 @@ persistent target Home 已 seed，但尚未 finalize 和切 production runtime b
 - 当前 main：`02c88bff5790110f6866b01031a7c9c75e0ded58`；
 - main GitHub Actions：Bridge + safe-drain regression **24/24 PASS**，包含强制 overlap 测试。
 
-因此当前 blocker 已从“实现是否正确”推进为：**在不改变生产路由和现有服务的前提下，完成服务器隔离验证，证明真实服务器运行环境能承载该 Bridge，并确认没有新的 runtime / service-identity / loopback-port / filesystem 边界阻塞。**
+服务器隔离验证现已 PASS：真实服务器运行环境可承载 Holding Bridge，service identity、SQLite durable state、loopback 端口与隔离故障矩阵均已证明，且 production 未发生任何变化。
+
+因此当前已从“server-isolated verification”推进到下一层：**由 ChatGPT 设计并冻结 controlled production technical deployment/cutover gate，再由 Codex 按门禁执行正式部署与技术验证。** 在该门禁 PASS 前，不进行 Owner 企业微信真人验收。
 
 ## Stage 2 最终验收
 

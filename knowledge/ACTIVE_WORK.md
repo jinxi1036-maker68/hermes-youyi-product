@@ -154,43 +154,39 @@ Holding Bridge V1 代码层已 PASS。
 - direct FORWARD in-flight 时拥有 durable row，background replay 不可并发 claim；强制 overlap regression 已通过；
 - completed 后清理 raw path/header/body，只保留 transport tombstone。
 
+## Server isolated verification｜PASS
+
+2026-09-26，Owner 手动转交 ChatGPT 准备的 Codex brief 后，Codex 完成服务器隔离验证；结果由 Owner 原样回传，并由 ChatGPT 记录到 PR #20 comment `5843978547`。
+
+已确认：
+
+- `production_changed=false`；
+- MAIN_SHA 仍为 `02c88bff5790110f6866b01031a7c9c75e0ded58`；
+- PRODUCTION_SHA 仍为 `588ea6eecb1833159e886181f3259be6e0befe37`；
+- 当前 Nginx → Cloud Hub → Gateway 链路健康；
+- Python 3.11.13、aiohttp 3.14.3、httpx 0.28.1、SQLite 3.26.0 可用；
+- service identity 对 Holding Bridge 状态目录写权限 PASS；
+- loopback `19091` 空闲、可 bind，测试后已释放；
+- Holding Bridge 专项测试 **16/16 PASS**；
+- FORWARD / HOLD / FALLBACK / persist-before-ACK / durable-store-failure fail-closed / crash recovery / replay / duplicate control / direct-replay ownership / backlog restart recovery / corrupt-HOLD fail-closed 全部 PASS；
+- 临时 Bridge `19091` → 临时 mock upstream `29192` 的真实 loopback 冒烟 PASS；
+- 未修改 GitHub code、Nginx、production config、HERMES_HOME、selector、production data；未重启生产服务；未发送真实企业微信 callback。
+
+结论：**PASS_SERVER_ISOLATED**。当前已没有服务器隔离层 blocker。
+
 ## 当前下一步
 
-下一步需要执行 **Holding Bridge V1 server isolated verification**，只做服务器事实和隔离验证，不设计架构。
+由 ChatGPT 设计下一道 **controlled production technical deployment/cutover gate**。
 
-当前真实状态：
-- 验证指令已经准备好；
-- 指令留存在 PR #20 comment：`5843615519`；
-- command: `XIAOU_HOLDING_BRIDGE_SERVER_ISOLATED_VERIFY_V1`；
-- command_id: `holding-bridge-server-isolated-verify-v1-pr20`；
-- **Codex 工作链路当前未打通，因此该指令并未自动派发给 Codex，也没有 Codex 执行或回传**；
-- PR comment 只作为人工交接/审计记录，不能视为任务已发送；
-- 需要由 Owner 手动把该指令交给 Codex，或等待可用执行链路后再运行；
-- production_changed 必须保持 `false`.
+这一步必须先冻结：
+- 生产前置条件；
+- Bridge 正式安装/启动边界；
+- callback-only Nginx 切换方式；
+- rollback；
+- 切换后健康与 backlog/receipt 验证；
+- 哪些条件一旦失败立即回滚。
 
-必须验证：
-
-1. 当前 main `02c88...` 在服务器实际 Python/runtime 依赖下可 import / compile / run targeted tests；
-2. 实际 service identity、persistent Home 路径与权限边界满足 SQLite durable store；
-3. 找到一个当前未占用的 loopback listener 候选端口；不得占用或修改 443/19090/8866；
-4. 在隔离临时目录/临时本地端口、仅 synthetic payload + mock/local test upstream 下验证：
-   - FORWARD；
-   - HOLD；
-   - FALLBACK；
-   - persist-before-ACK；
-   - process restart recovery；
-   - replay；
-   - duplicate control；
-   - processed-but-response-lost composition；
-   - durable store failure；
-   - direct/replay overlap；
-5. 不修改 Nginx；
-6. 不 reload/restart/stop/start aa-nginx、Cloud Hub、Gateway；
-7. 不切 production selector / HERMES_HOME；
-8. 不发送真实企业微信 callback；
-9. 不读取或输出 secret / real callback payload。
-
-若出现结构 blocker，STOP 并只回传事实，不得自行改架构或生产。
+只有该技术门禁由 Codex 执行并经 ChatGPT 判定 PASS 后，才轮到 Owner 在企业微信进行真实 Query 验收。
 
 ## Stop Rules
 
