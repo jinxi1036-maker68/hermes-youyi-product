@@ -5,12 +5,12 @@ Wants=network-online.target
 
 [Service]
 Type=simple
-User=hermes-youyi
-Group=hermes-youyi
-WorkingDirectory=${HERMES_RUNTIME_ROOT}
+User=${XIAOYOU_SERVICE_USER}
+Group=${XIAOYOU_SERVICE_GROUP}
+WorkingDirectory=${XIAOYOU_RELEASE_PAYLOAD_ROOT}
 EnvironmentFile=/etc/xiaoyou/runtime.wecom-holding.env
-Environment=PYTHONPATH=${HERMES_RUNTIME_ROOT}/runtime
-ExecStart=${HERMES_RUNTIME_ROOT}/.venv/bin/python ${HERMES_RUNTIME_ROOT}/scripts/xiaoyou_wecom_holding_bridge.py
+Environment=PYTHONPATH=${XIAOYOU_RELEASE_PAYLOAD_ROOT}/runtime
+ExecStart=${HERMES_PYTHON} ${XIAOYOU_RELEASE_PAYLOAD_ROOT}/scripts/xiaoyou_wecom_holding_bridge.py
 Restart=on-failure
 RestartSec=2
 UMask=0077
