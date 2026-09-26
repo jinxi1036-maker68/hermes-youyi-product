@@ -9,7 +9,8 @@ User=${XIAOYOU_SERVICE_USER}
 Group=${XIAOYOU_SERVICE_GROUP}
 WorkingDirectory=${XIAOYOU_RELEASE_PAYLOAD_ROOT}
 EnvironmentFile=/etc/xiaoyou/runtime.wecom-holding.env
-Environment=PYTHONPATH=${XIAOYOU_RELEASE_PAYLOAD_ROOT}/runtime
+# Entrypoint loads holding_bridge.py from the exact staged payload by file path;
+# do not use PYTHONPATH package precedence for this bootstrap boundary.
 ExecStart=${HERMES_PYTHON} ${XIAOYOU_RELEASE_PAYLOAD_ROOT}/scripts/xiaoyou_wecom_holding_bridge.py
 Restart=on-failure
 RestartSec=2
