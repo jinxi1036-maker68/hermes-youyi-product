@@ -1,0 +1,24 @@
+[Unit]
+Description=XiaoYou durable WeCom bootstrap holding bridge
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=hermes-youyi
+Group=hermes-youyi
+WorkingDirectory=${XIAOYOU_RELEASE_ROOT}
+EnvironmentFile=/etc/hermes-youyi/wecom-holding-bridge.env
+EnvironmentFile=/etc/hermes-youyi/wecom-callback-secrets.env
+ExecStart=${XIAOYOU_RELEASE_ROOT}/.venv/bin/python ${XIAOYOU_RELEASE_ROOT}/scripts/xiaoyou_wecom_holding_bridge.py serve
+Restart=on-failure
+RestartSec=2
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+ProtectHome=true
+ReadWritePaths=/var/lib/hermes-youyi/ingress-holding
+
+[Install]
+WantedBy=multi-user.target
