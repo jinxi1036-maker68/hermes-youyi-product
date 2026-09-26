@@ -167,3 +167,14 @@ PR #17：
 - production 保持 `588ea6eecb1833159e886181f3259be6e0befe37` 未改变。
 
 下一步只执行 dedicated state-root provisioning + server re-verification，仍不切生产流量。
+
+
+## Holding state root provisioned; staged-candidate bootstrap gap found
+
+2026-09-26：
+- dedicated Holding state root 服务器 provisioning PASS；
+- 真实 service identity 对 SQLite/WAL/SHM/HOLD marker 写边界 PASS；
+- Gateway Home 与 production routing 均未改变；
+- 随后 production cutover 设计发现：Bridge systemd template 把 candidate code root 与 active runtime/Python root 绑定；
+- 若为启动 Bridge 提前运行现有 release installer，会在 durable ingress 建立之前修改旧 Gateway active code links，重新引入 bootstrap 风险；
+- 因此下一步必须先建立 stage-only candidate + decoupled Bridge execution boundary，不能直接正式切流。

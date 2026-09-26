@@ -1,6 +1,6 @@
 {
   "schema_version": "xiaoyou_evidence_index_v1",
-  "updated_at": "2026-09-26T15:55:47+08:00",
+  "updated_at": "2026-09-26T17:54:00+08:00",
   "repository": "jinxi1036-maker68/hermes-youyi-product",
   "evidence": [
     {
@@ -148,6 +148,16 @@
       "merged_sha": "27d14ade1e5ad8021f148cdfe64ce7d56c980849",
       "github_actions_run_id": 36228249931,
       "note": "Adds a fail-closed deployment-time gate for the dedicated Holding Bridge state root. Root is required only for explicit --apply; the tool never creates parents, rejects overlap with Gateway HERMES_HOME and symlinked path components, verifies parent traversal and strict 0700 service ownership, never recursively chowns/chmods child state, and fails before mutation when existing child state is unsafe. Main CI passes 45/45. Production remains unchanged; server provisioning and verification are still required."
+    },
+    {
+      "id": "EV-RT-012",
+      "area": "Holding Bridge dedicated state-root provisioning on server",
+      "judgment": "PASS_SERVER_PROVISIONED",
+      "date": "2026-09-26",
+      "main_sha": "27d14ade1e5ad8021f148cdfe64ce7d56c980849",
+      "production_sha": "588ea6eecb1833159e886181f3259be6e0befe37",
+      "source": "Owner-relayed Codex server result",
+      "note": "Exact /var/lib/hermes-youyi/wecom-holding provisioning applied. State-root boundary, owner/group/mode 0700, parent traversal, service SQLite/WAL/SHM and HOLD-marker writes all PASS. Gateway Home unchanged and production routing unchanged. production_changed=true only because the dedicated Bridge state root was created/provisioned; no runtime selector/callback/Gateway cutover occurred."
     }
   ]
 }

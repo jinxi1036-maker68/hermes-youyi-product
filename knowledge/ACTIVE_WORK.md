@@ -323,3 +323,38 @@ Codex 可在真实服务器执行一次受控 provisioning：
 5. 不启动正式 Bridge 服务、不改 Nginx、不停 Gateway、不切 HERMES_HOME/selector、不发送真实 callback。
 
 该 provisioning 复验 PASS 后，ChatGPT 才进入 controlled production deployment/cutover gate。
+
+
+## Dedicated Holding state root｜server provisioning PASS
+
+Codex 回传：
+- command_id = `holding-state-root-server-provision-v1-pr22`
+- `production_changed=true`，变化仅限 dedicated state root provisioning；
+- MAIN_SHA = `27d14ade1e5ad8021f148cdfe64ce7d56c980849`
+- PRODUCTION_SHA = `588ea6eecb1833159e886181f3259be6e0befe37`
+- PRECHECK / STATE_ROOT_BOUNDARY / OWNER_GROUP_MODE / PARENT_TRAVERSAL = PASS；
+- service identity SQLite + WAL/SHM = PASS；
+- HOLD marker atomic write = PASS；
+- Gateway Home unchanged = PASS；
+- production routing unchanged = PASS；
+- FINAL_JUDGMENT = PASS。
+
+证据：`EV-RT-012 = PASS_SERVER_PROVISIONED`。
+
+### Production gate design newly exposed bootstrap gap
+
+继续设计正式切换时发现：当前 Bridge systemd example 使用同一个 `HERMES_RUNTIME_ROOT` 同时定位：
+- Python interpreter；
+- PYTHONPATH；
+- Bridge script。
+
+但首次 cutover 的安全顺序要求 **Bridge 必须先于 Gateway code-link/selector 切换上线**。
+
+因此不能为了启动 Bridge 先运行会改 active code links 的 release installer，也不能把 Bridge script 临时复制进 active production tree。
+
+下一步由 ChatGPT 修复：
+1. 增加 Git-governed **stage-only release** 能力：验证并放入 canonical versioned release directory，但绝不修改 active runtime/plugin/script links；
+2. Bridge systemd 边界拆分为“staged candidate payload root”与“已验证 Python interpreter”；
+3. 增加回归证明 stage-only 不改变当前 Gateway active links；
+4. CI PASS 后交 Codex 做服务器隔离复验；
+5. 复验通过后，才允许正式安装/start Bridge service，再进入 callback-only Nginx gate。
