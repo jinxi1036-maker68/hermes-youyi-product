@@ -1,0 +1,90 @@
+# 历史与关键里程碑
+
+> 这里只保存高价值历史，不保存所有聊天过程。
+
+## 早期产品原则形成
+
+- 确立“小U = 数字员工”，不是聊天机器人或固定流程。
+- 确立“模型是唯一业务大脑，程序是能力与安全边界”。
+- 确立 Institution Workspace 是业务事实载体。
+- Agenda 用于持续工作，不等于第二业务脑。
+
+## 自主工作阶段
+
+曾真实证明：
+- due item 可无人触发被发现；
+- Hermes 可选择工具；
+- 受保护写入；
+- Receipt completed / writeback_verified；
+- 主动企业微信只发送一次；
+- 未完成工作可写 successor attention 并在未来重新回来。
+
+但也暴露：
+- restricted tool surface 过窄会只 reschedule 不推进；
+- 中间 tool output 不能被误当成终态；
+- 未完成工作不能静默退出。
+
+## 身份能力封板
+
+2026-09-23：
+- Identity + Session 正式 PASS / sealed；
+- stable tag：`youyi-stable-PASS-identity-authority-2026-09-23`。
+
+## Query 阶段
+
+### “今天未完成任务”
+确立：today = `due_at` 本地日期等于 today；无日期不等于今天。
+
+### Model-first
+普通业务查询不再依赖关键词隐藏 Router 决定工具。
+
+### Query evidence boundary
+确立：
+- task inventory/count/date facts 必须由 task query 支撑；
+- active work context 仅作 continuation evidence。
+
+## Release / Runtime Topology
+
+连续部署失败后，根因从单个权限 bug 收敛为：
+
+**release code 与 persistent Hermes runtime state 混在一起。**
+
+由此建立 Runtime Topology V1：
+- release immutable；
+- persistent Home 外置；
+- service identity preflight；
+- self-contained gate；
+- Core compatibility gate；
+- migration plan/seed/finalize/verify；
+- rollback 保留旧 Home。
+
+## Unix socket blocker
+
+真实 migration plan 曾被 `gateway.loop-tick.<pid>.sock` 阻塞。
+最终确立：
+- Unix socket 是 ephemeral；
+- 记录但不迁；
+- 其它未知 special node 继续 fail-closed。
+
+## Core compatibility blocker
+
+候选曾被仓库本地 `hermes_constants` 测试 shim 覆盖。
+修复：
+- production overlay allowlist；
+- 测试 shim 禁止覆盖 Core；
+- Core compatibility gate；
+- guarded optional import 不误判成 hard dependency。
+
+## Safe drain
+
+PR #17：
+- callback 继续 durable claim + ACK；
+- drain 停止新模型派发；
+- processing race 被封；
+- cross-process recover_pending 验证通过。
+
+## 当前历史终点（2026-09-26）
+
+首次生产切换仍被 bootstrap ingress 阻塞：
+- 当前 Cloud Hub 不是已证明的 durable holding/replay/idempotency 层；
+- 需要受 Git 管理的正式 bootstrap holding 方案。

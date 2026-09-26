@@ -1,0 +1,81 @@
+schema_version: xiaoyou_project_knowledge_v1
+project: xiaoyou-hermes
+repository: jinxi1036-maker68/hermes-youyi-product
+knowledge_branch: project-knowledge
+code_branch: main
+repository_visibility: public
+updated_at: "2026-09-26"
+
+north_star: >
+  Build XiaoYou into a long-running AI digital employee for after-school care institutions:
+  understand the institution, fill fact gaps, receive owner goals, help staff execute,
+  sustain unfinished work, learn from correction, and create verifiable operating value.
+
+current:
+  formal_stage:
+    id: 2
+    name: Query
+    status: active
+    note: "Functionally near-complete; production rollout blocked by first safe Runtime Topology cutover."
+  production_sha: "588ea6eecb1833159e886181f3259be6e0befe37"
+  main_sha: "3e9473d8083533387a9422a68f289793bb6d6585"
+  stable_stage_1_tag: "youyi-stable-PASS-identity-authority-2026-09-23"
+
+current_blocker:
+  id: bootstrap-durable-ingress
+  status: blocked
+  summary: >
+    Current production Gateway does not yet have safe-drain. The existing callback chain has no proven
+    Gateway-independent durable receive+ACK+persist+replay layer for the first topology cutover.
+  callback_chain: "public_https -> aa-nginx:443 -> hermes-cloud-hub:19090 -> gateway:8866"
+
+next_action:
+  summary: >
+    Establish a Git-governed, verifiable bootstrap ingress holding solution before stopping the old Gateway;
+    do not patch unmanaged server-only Cloud Hub code ad hoc.
+  after_that:
+    - finalize persistent Hermes Home migration
+    - switch production Runtime Topology
+    - deploy current Query fixes
+    - run exact owner WeCom Query acceptance
+    - seal Stage 2 and enter Stage 3
+
+sealed_capabilities:
+  - id: 1
+    name: Identity + Session
+    status: pass
+
+formal_roadmap:
+  - "1 Identity + Session"
+  - "2 Query"
+  - "3 Direct Message"
+  - "4 Student Basic Writes"
+  - "5 Student Archive/Delete"
+  - "6 People & Organization"
+  - "7 Student Service Relationships"
+  - "8 Tasks"
+  - "9 Task Progress/Contact Owner"
+  - "10 Agenda Autonomous Work"
+  - "11 Cross-Service Concern"
+  - "12 Progressive Claims/Legacy Governance"
+  - "13 Permission Regression"
+  - "14 Final Response Truth/UX"
+  - "15 Learning"
+  - "16 H5"
+  - "17 Long-term Stability"
+  - "18 Voice/Hardware"
+
+working_roles:
+  owner: "business decisions + final real WeCom acceptance + unavoidable production authorization"
+  chatgpt: "technical lead + GitHub code executor + evidence judgment + knowledge maintainer"
+  codex: "server inspection/verification/deployment/rollback only"
+
+safety:
+  public_safe_only: true
+  never_store:
+    - secrets
+    - tokens
+    - environment contents
+    - real student/parent sensitive data
+    - chat transcripts
+    - production database backups
