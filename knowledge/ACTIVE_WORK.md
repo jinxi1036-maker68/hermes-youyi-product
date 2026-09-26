@@ -158,6 +158,12 @@ Holding Bridge V1 代码层已 PASS。
 
 向 Codex 发出目标导向的 **Holding Bridge V1 server isolated verification**，只做服务器事实和隔离验证，不设计架构。
 
+已发出：
+- command: `XIAOU_HOLDING_BRIDGE_SERVER_ISOLATED_VERIFY_V1`
+- PR #20 comment: `5843615519`
+- command_id: `holding-bridge-server-isolated-verify-v1-pr20`
+- production_changed 必须保持 `false`.
+
 必须验证：
 
 1. 当前 main `02c88...` 在服务器实际 Python/runtime 依赖下可 import / compile / run targeted tests；
