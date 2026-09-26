@@ -92,6 +92,35 @@ The Bridge service must have write access only to its dedicated state root.
 Runtime Home migration/finalize must never own, copy, prune, or reverse-sync
 Bridge backlog/control state.
 
+### Provisioning gate
+
+The service identity must **not** create privileged parent directories under
+`/var/lib`. Provisioning is a separate deployment-time root action.
+
+Use the Git-governed gate in read-only mode first:
+
+```text
+python scripts/xiaoyou_wecom_holding_state_root.py \
+  --state-root /var/lib/hermes-youyi/wecom-holding \
+  --gateway-home /var/lib/hermes-youyi/hermes-home
+```
+
+If the only blocker is that the dedicated state root is absent or has incorrect
+root-directory ownership/mode, the deployment executor may run the same command
+with `--apply` as root. The gate:
+
+- creates only the exact state-root directory; it never creates parents;
+- requires the state root to be disjoint from Gateway `HERMES_HOME`;
+- rejects symlinked parents/state roots;
+- sets only the exact root directory owner/group and mode `0700`;
+- never recursively chowns/chmods existing Bridge state;
+- verifies the service identity can traverse the parent path and read/write the
+  dedicated root;
+- fails if existing child state has unexpected ownership, access or symlinks.
+
+After provisioning, rerun without `--apply` and require `ok=true` before
+starting the Bridge.
+
 ## HOLD control plane
 
 There is no network endpoint that changes HOLD state.
@@ -119,10 +148,12 @@ Before any production change:
 
 1. verify the chosen loopback port is unused;
 2. verify the dedicated Bridge state root is outside Gateway `HERMES_HOME`;
-3. install and start the Git-governed bridge without changing public routing;
-4. prove local FORWARD, HOLD, FALLBACK, restart recovery and duplicate paths;
-5. enter HOLD before the old Gateway cutover window;
-6. change only the exact `/wecom/callback` Nginx locations and use the
+3. run the state-root provisioning gate read-only, provision with explicit
+   root `--apply` only if required, then require read-only verification PASS;
+4. install and start the Git-governed bridge without changing public routing;
+5. prove local FORWARD, HOLD, FALLBACK, restart recovery and duplicate paths;
+6. enter HOLD before the old Gateway cutover window;
+7. change only the exact `/wecom/callback` Nginx locations and use the
    supported graceful reload;
-7. never alter the shared `hermes_hub -> 127.0.0.1:19090` member;
-8. retain symmetric callback-only rollback.
+8. never alter the shared `hermes_hub -> 127.0.0.1:19090` member;
+9. retain symmetric callback-only rollback.
