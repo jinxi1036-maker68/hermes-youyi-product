@@ -1,6 +1,6 @@
 {
   "schema_version": "xiaoyou_evidence_index_v1",
-  "updated_at": "2026-09-26T17:54:00+08:00",
+  "updated_at": "2026-09-26T18:03:05+08:00",
   "repository": "jinxi1036-maker68/hermes-youyi-product",
   "evidence": [
     {
@@ -158,6 +158,17 @@
       "production_sha": "588ea6eecb1833159e886181f3259be6e0befe37",
       "source": "Owner-relayed Codex server result",
       "note": "Exact /var/lib/hermes-youyi/wecom-holding provisioning applied. State-root boundary, owner/group/mode 0700, parent traversal, service SQLite/WAL/SHM and HOLD-marker writes all PASS. Gateway Home unchanged and production routing unchanged. production_changed=true only because the dedicated Bridge state root was created/provisioned; no runtime selector/callback/Gateway cutover occurred."
+    },
+    {
+      "id": "EV-RT-013",
+      "area": "Stage-only candidate + decoupled Holding Bridge runtime",
+      "judgment": "PASS_CODE",
+      "date": "2026-09-26",
+      "pr": 23,
+      "merged_sha": "6090b98a4a9def8ff4d212802e33b7536f45601a",
+      "github_actions_run_id": 36234591266,
+      "verification_comment_id": 5845318547,
+      "note": "Adds verified stage-only release deployment that never changes active Gateway runtime/plugin/script links, packages Bridge deploy templates, and decouples Bridge candidate payload from the existing verified Python interpreter. Staged candidate is mounted read-only; dedicated Holding state remains the only writable Bridge state. Main CI passes 48/48. Production unchanged; server-isolated stage/private-start verification required."
     }
   ]
 }

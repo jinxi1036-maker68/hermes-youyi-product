@@ -358,3 +358,42 @@ Codex 回传：
 3. 增加回归证明 stage-only 不改变当前 Gateway active links；
 4. CI PASS 后交 Codex 做服务器隔离复验；
 5. 复验通过后，才允许正式安装/start Bridge service，再进入 callback-only Nginx gate。
+
+
+## Stage-only candidate + Bridge execution boundary｜code PASS
+
+PR #23 已关闭“为了先启动 Bridge 而提前切 Gateway active links”的 bootstrap 风险。
+
+最终语义：
+- exact-main release 可先 stage 到 canonical versioned `xiaoyou-releases`；
+- stage-only 校验 manifest/hash，但不修改 runtime/plugin/script active links；
+- 已存在 exact verified release 时幂等；
+- symlink/invalid canonical release fail-closed；
+- release package 正式包含 Bridge deploy/config templates；
+- Bridge service 使用 staged candidate payload 作为 code root；
+- Python interpreter 独立指向服务器上已验证的现有 runtime Python；
+- service user/group 必须按 live server facts 显式渲染，不继承 example 猜测；
+- staged candidate code 在 systemd 下只读；
+- dedicated Holding state root 是唯一写边界。
+
+最终：
+- PR #23 merged；
+- main：`6090b98a4a9def8ff4d212802e33b7536f45601a`；
+- main Actions run：`36234591266`；
+- **48/48 PASS**；
+- evidence：`EV-RT-013 = PASS_CODE`；
+- production 未改变。
+
+### 当前唯一下一步
+
+Codex 做服务器隔离复验：
+1. 读取 live production Hermes/model/service facts，不使用历史 CLI/example 默认值；
+2. 从 exact main 构建并验证 release；
+3. stage-only 到 versioned canonical release tree；
+4. 前后证明当前 Gateway active runtime/plugin/script links 完全未变；
+5. 用 staged payload + existing verified Python 渲染 Bridge unit；
+6. 在 `127.0.0.1:19091` 私有启动 Bridge，公共 Nginx callback 仍保持旧链；
+7. 验证 health、local FORWARD/HOLD/FALLBACK、restart recovery；
+8. 不切 Nginx、不停 Gateway、不 finalize Home、不切 selector、不发真实 WeCom callback。
+
+PASS 后，ChatGPT 再进入 callback-only Nginx production gate。

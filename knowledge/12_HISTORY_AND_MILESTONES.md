@@ -178,3 +178,14 @@ PR #17：
 - 随后 production cutover 设计发现：Bridge systemd template 把 candidate code root 与 active runtime/Python root 绑定；
 - 若为启动 Bridge 提前运行现有 release installer，会在 durable ingress 建立之前修改旧 Gateway active code links，重新引入 bootstrap 风险；
 - 因此下一步必须先建立 stage-only candidate + decoupled Bridge execution boundary，不能直接正式切流。
+
+
+## Stage-only Bridge bootstrap code PASS
+
+2026-09-26：
+- production cutover design 发现现有 Bridge unit 把 candidate code 与 active runtime root 绑定，若提前运行 installer 会在 durable ingress 建立前修改 Gateway active links；
+- PR #23 新增 verified stage-only release path，允许 exact candidate 进入 canonical versioned release tree 而不激活；
+- Bridge systemd execution boundary 拆分为 staged candidate payload + existing verified Python；
+- staged code read-only，Holding state 独立可写；
+- main `6090b98a4a9def8ff4d212802e33b7536f45601a` Actions run `36234591266`：48/48 PASS；
+- 下一步仅验证 server stage-only + private Bridge startup，不切 public callback。
