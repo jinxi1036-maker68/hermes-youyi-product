@@ -33,8 +33,8 @@
     "blocker_status": "blocked",
     "blocker_summary": "Holding Bridge V1 code is merged and code-level fault/regression tests pass, including the direct-FORWARD versus replay ownership race. The remaining blocker is server-side isolated verification of runtime compatibility and the real loopback deployment boundary before any production routing change.",
     "next_action": "The server-isolated verification instruction is prepared in PR #20 comment 5843615519, but the Codex execution channel is not connected and no Codex task has been dispatched or executed. The owner must manually hand this instruction to Codex, or execution must wait until that channel is available. Do not infer any Codex execution or verification result from the PR comment itself.",
-    "working_method_id": "WM-005",
-    "working_method_name": "Concurrency-Safe Governed Adaptive Method",
+    "working_method_id": "WM-006",
+    "working_method_name": "Role-Locked Concurrency-Safe Governed Adaptive Method",
     "bootstrap_holding_contract": "ADR-009: transparent-forward / persist-before-ACK / idempotent-replay-complete-after-confirmed-success"
   },
   "sealed_capabilities": [
@@ -121,9 +121,9 @@
     }
   ],
   "roles": {
-    "owner": "Business/product decisions, final real WeCom acceptance, unavoidable production authorization.",
-    "chatgpt": "Technical lead, GitHub code executor, evidence/PASS judgment, route controller, project-knowledge maintainer.",
-    "codex": "Server inspection, isolated verification, deployment, restart/rollback and factual reporting only."
+    "owner": "Product/business decisions, unavoidable production authorization, and final real WeCom/XiaoU acceptance after ChatGPT declares the technical gate ready. May manually relay a ChatGPT-prepared Codex brief only when the execution channel is unavailable.",
+    "chatgpt": "Technical lead and GitHub code executor. Owns architecture, planning, repo edits, tests, PR/evidence judgment, next-step control, and Project Knowledge.",
+    "codex": "Server executor/verifier only. Owns server inspection, isolated/production verification, deployment, authorized restart/rollback, and factual reporting. On code/architecture blockers, STOP and report; do not redesign or take over GitHub code."
   },
   "freshness_policy": {
     "main": "Always compare current GitHub main HEAD to current.main_sha before code work.",

@@ -1,14 +1,16 @@
 {
   "schema_version": "xiaoyou_working_method_v1",
-  "current_method_id": "WM-005",
-  "current_method_name": "Concurrency-Safe Governed Adaptive Method",
+  "current_method_id": "WM-006",
+  "current_method_name": "Role-Locked Concurrency-Safe Governed Adaptive Method",
   "status": "active",
-  "effective_at": "2026-09-26T09:48:00+08:00",
-  "purpose": "Continuously improve how Owner, ChatGPT and Codex build XiaoYou while preserving evidence, stage discipline, safety and project continuity.",
+  "effective_at": "2026-09-26T13:45:00+08:00",
+  "purpose": "Continuously improve how Owner, ChatGPT and Codex build XiaoYou while preserving evidence, stage discipline, safety, project continuity, and non-drifting role ownership.",
   "stable_principles": [
-    "Owner decides product/business direction and performs final real business acceptance when required.",
-    "ChatGPT is technical lead and GitHub code executor; it owns architecture, repo edits, tests, evidence judgment and next-step control.",
-    "Codex is server-side executor/verifier; it inspects, validates, deploys and rolls back but does not independently redesign product architecture or repo code.",
+    "Owner decides product/business direction and performs final real WeCom acceptance only after ChatGPT confirms the production technical gate is ready.",
+    "ChatGPT is the technical lead and GitHub code executor. ChatGPT owns architecture, planning, repo code changes, tests, PR review, evidence/PASS judgment, next-step control and Project Knowledge maintenance.",
+    "Codex is a server-side executor/verifier only. Codex inspects server facts, validates candidates, deploys approved GitHub code, restarts/rolls back approved services, and reports evidence. Codex does not independently redesign architecture or take ownership of repo code changes.",
+    "When Codex finds a code or architecture blocker, Codex must STOP and report facts. ChatGPT decides the fix and makes the GitHub change; Codex then re-verifies or deploys the new approved candidate.",
+    "The Owner is not the default technical relay. The Owner manually passes a Codex brief only when the execution channel is unavailable, and performs real WeCom acceptance when explicitly invited.",
     "One formal capability stage at a time; do not mix unrelated future-stage debt into the current blocker.",
     "Evidence before conclusion: distinguish model self-report, unit tests, isolated integration, production technical facts and real business acceptance.",
     "Freeze acceptance criteria before real testing; fix only blockers and do not move the goalposts during a stage.",
@@ -31,7 +33,7 @@
     {
       "step": 3,
       "name": "Classify responsibility",
-      "action": "Decide whether the next action belongs to Owner, ChatGPT/GitHub, or Codex/server. Do not use the user as a default relay and do not push repo coding to Codex."
+      "action": "Classify the next action strictly by role: ChatGPT owns architecture/planning/GitHub code; Codex owns server inspection/verification/deployment/rollback; Owner owns product decisions and final real WeCom acceptance. Do not shift repo coding or architecture design to Codex."
     },
     {
       "step": 4,
@@ -46,7 +48,7 @@
     {
       "step": 6,
       "name": "Implement in GitHub",
-      "action": "ChatGPT creates the minimal branch/PR/tests and reviews the diff. Separate unrelated issues."
+      "action": "ChatGPT implements the approved solution in GitHub: branch/PR/tests/review. Codex does not author the product solution or substitute unmanaged server patches for repository code."
     },
     {
       "step": 7,
@@ -56,7 +58,7 @@
     {
       "step": 8,
       "name": "Server verification/deployment",
-      "action": "Codex receives a goal-and-boundary-oriented verification/deployment brief. Structural blockers cause STOP, not autonomous redesign."
+      "action": "Codex receives a goal-and-boundary-oriented server verification/deployment brief for the GitHub candidate. It may inspect, validate, deploy, restart or roll back within the brief. If it finds a code/architecture blocker, it STOPs and reports facts; ChatGPT fixes GitHub and reissues the gate."
     },
     {
       "step": 9,
@@ -66,7 +68,7 @@
     {
       "step": 10,
       "name": "Owner acceptance",
-      "action": "Only when the technical gate truly requires real business acceptance, explicitly tell the Owner it is their turn to test."
+      "action": "Only after ChatGPT judges the production technical gate ready, explicitly tell the Owner to perform the real WeCom/XiaoU acceptance test. The Owner does not replace server verification."
     },
     {
       "step": 11,
@@ -91,6 +93,7 @@
   "codex_brief_style": {
     "default": "Goal-oriented",
     "include": [
+      "explicit statement that Codex is verifier/deployer, not architecture or repo-code owner",
       "background",
       "current state",
       "goal",
@@ -100,6 +103,7 @@
       "stop condition"
     ],
     "avoid": [
+      "asking Codex to fix GitHub code when it finds a blocker; it should report the blocker to ChatGPT",
       "prescribing repo implementation when Codex is only the server executor",
       "asking Codex to redesign architecture",
       "unnecessary file/function micromanagement"
@@ -151,7 +155,8 @@
     "knowledge/methods/WM-002-role-separation.md",
     "knowledge/methods/WM-003-evidence-first-release.md",
     "knowledge/methods/WM-004-adaptive-evidence-first.md",
-    "knowledge/methods/WM-005-concurrency-safe-governed-adaptive.md"
+    "knowledge/methods/WM-005-concurrency-safe-governed-adaptive.md",
+    "knowledge/methods/WM-006-role-locked-governed-adaptive.md"
   ],
   "knowledge_write_protocol": {
     "principle": "Project Knowledge writes use optimistic concurrency; never overwrite another window's unseen changes.",
@@ -175,5 +180,57 @@
     },
     "emergency_rule": "A temporary stricter safety stop may be applied immediately when new risk is discovered; permanent method changes still require normal classification and recording.",
     "no_silent_change": true
+  },
+  "role_contract": {
+    "status": "locked",
+    "owner_approved_at": "2026-09-26T13:45:00+08:00",
+    "chatgpt": {
+      "owns": [
+        "architecture and technical planning",
+        "GitHub repository code changes",
+        "test and acceptance design",
+        "pull-request review and merge judgment",
+        "evidence evaluation and PASS/FAIL/BLOCKED judgment",
+        "next-step control",
+        "Project Knowledge maintenance"
+      ],
+      "must_not": [
+        "claim Codex executed a task merely because a PR comment or brief exists",
+        "delegate architecture ownership or repository coding to Codex by default"
+      ]
+    },
+    "codex": {
+      "owns": [
+        "server read-only inspection",
+        "candidate verification in the real server environment",
+        "deployment of approved GitHub code",
+        "approved service restart/start/stop when explicitly authorized",
+        "rollback",
+        "factual evidence reporting"
+      ],
+      "must_not": [
+        "redesign product or system architecture on its own",
+        "take ownership of GitHub product code changes",
+        "apply unmanaged server-only patches as the product solution unless ChatGPT explicitly authorizes a bounded emergency action",
+        "continue past a structural/code blocker instead of reporting it"
+      ],
+      "blocker_rule": "STOP and report server/runtime/code facts to ChatGPT. ChatGPT decides and implements the repository fix, then Codex re-verifies."
+    },
+    "owner": {
+      "owns": [
+        "product/business decisions",
+        "explicit approval for Class B working-method changes",
+        "unavoidable production authorization",
+        "final real WeCom/XiaoU acceptance testing after the technical gate"
+      ],
+      "normal_handoff": "Owner should not have to design or debug the system. When the Codex execution channel is unavailable, Owner may manually paste the exact ChatGPT-prepared Codex brief and return Codex's factual result."
+    },
+    "handoff_sequence": [
+      "ChatGPT plans and modifies GitHub",
+      "ChatGPT defines the server verification/deployment gate",
+      "Codex inspects/verifies/deploys and reports facts",
+      "ChatGPT evaluates evidence and decides the next action",
+      "Only after production technical PASS, Owner performs real WeCom/XiaoU acceptance"
+    ]
   }
 }

@@ -1,100 +1,93 @@
-# 当前工作方式｜WM-005 Concurrency-Safe Governed Adaptive Method
+# 当前工作方式｜WM-006 Role-Locked Concurrency-Safe Governed Adaptive Method
 
 > **机器权威：`knowledge/WORKING_METHOD.json`**  
 > 本文件是当前工作方式的人类可读投影。
 
-## 这版比 WM-004 多解决了什么
+## WM-006 为什么升级
 
-WM-004 让工作方式可以学习和版本化。
+WM-005 已经规定了 Owner / ChatGPT / Codex 的基本分工，但实践中仍出现了两个角色漂移风险：
 
-最终对抗式审查发现，还必须防三件事：
+1. 把“写入 PR comment 的 Codex brief”误认为“Codex 已收到并执行”；
+2. 在给 Codex 的任务中，把本应由 ChatGPT 负责的架构/代码责任交给 Codex。
 
-1. 多个聊天窗口同时更新 Project Knowledge，互相覆盖；
-2. AI 以“优化效率”为名，自行降低关键安全、证据或授权标准；
-3. Public Knowledge 把 credential 直接写进 Markdown/JSON，而不是敏感文件。
+Owner 已于 2026-09-26 明确确认固定工作链路，因此 WM-006 把角色边界升级为显式锁定合同。
 
-WM-005 专门封这三类风险。
+## 不可漂移的三方职责
 
-## 当前默认工作节奏
+### ChatGPT｜技术负责人 + GitHub代码执行者
 
-1. **Orient**  
-   PROJECT_INDEX → Freshness → CURRENT_STATE → ACTIVE_WORK → WORKING_METHOD。
+负责：
+- 整体架构与阶段规划；
+- GitHub 代码修改；
+- 测试和验收方案设计；
+- PR 审查与合并判断；
+- Evidence 的 PASS / FAIL / BLOCKED 判断；
+- 决定下一步技术动作；
+- Project Knowledge 持续更新。
 
-2. **定义唯一当前问题**  
-   写清命题、blocker、non-goals、证据和 STOP 条件。
+**代码或架构有问题时，由 ChatGPT 修 GitHub。**
 
-3. **分清责任**  
-   Owner 管产品/经营与最终业务验收；ChatGPT 管架构和 GitHub；Codex 管服务器事实、验证、部署、回滚。
+### Codex｜服务器执行者 / 验证者
 
-4. **先查再改**  
-   区分产品问题、代码问题、权威问题、Runtime问题、流程问题。
+负责：
+- 服务器只读检查；
+- 在真实服务器环境验证 GitHub candidate；
+- 部署已经批准的 GitHub 代码；
+- 在明确授权范围内 restart / start / stop；
+- rollback；
+- 把真实服务器事实和验证结果回传。
 
-5. **最小通用修复**  
-   不为单个测试写死；不跨 Stage；不顺手混历史债。
+Codex不得默认：
+- 重新设计架构；
+- 接管 GitHub 产品代码；
+- 发现代码问题后自行把服务器临时补丁变成正式产品方案。
 
-6. **候选与基线比较**  
-   必要时做 A/B；只把 candidate-only failure 算候选回归。
+**Codex发现结构/代码 blocker：STOP → 报事实 → ChatGPT修GitHub → Codex复验。**
 
-7. **服务器执行与验证**  
-   Codex拿背景、目标、必须结果、硬边界、证据和STOP条件，不自行设计GitHub方案。
+### Owner｜产品决策 + 最终真实验收
 
-8. **结构失败就停**  
-   不做无新证据的重复生产重试。
+负责：
+- 产品/经营决定；
+- 必要的生产授权；
+- Class B 工作方法变更批准；
+- 在技术门禁通过后，于企业微信真实测试小U。
 
-9. **技术门禁后才真人验收**  
-   确实需要 Owner 时才明确说“现在轮到你实测了”。
+Owner不是默认技术传话人。只有 Codex 执行链路不可用时，Owner才手动粘贴 ChatGPT 已经准备好的 Codex 指令，并把结果带回。
 
-10. **Project Knowledge Sync**  
-    重大状态变化后同步项目知识。
-
-## Knowledge 写入的并发规则
-
-材料性更新前记录 `project-knowledge` HEAD。
-
-真正写入前再读一次：
-
-- HEAD没变：以原HEAD为parent，fast-forward，`force=false`；
-- HEAD变了：STOP，读取另一窗口的变化，语义合并，再提交；
-- **永远不 force push 来解决知识冲突。**
-
-详见 `CONCURRENCY_AND_RECOVERY.md`。
-
-## 工作方法更新的治理
-
-### Class A｜操作优化
-如果不改变：
-- 角色边界；
-- 安全保证；
-- Evidence阈值；
-- production授权；
-- 权限/权威；
-- Stage封板；
-
-ChatGPT可以基于证据做有限验证后升级并记录。
-
-### Class B｜重大规则变化
-只要涉及上述关键边界，**必须获得 Owner 明确批准**后才能成为永久当前方法。
-
-如果发现新风险，可以临时采用更严格 Stop Rule，但永久规则仍要完成正式方法治理。
-
-## Method Learning Loop
+## 固定执行链路
 
 ```text
-发现流程摩擦/重复失败
-→ 判断是不是工作方法问题
-→ Class A / Class B 分类
-→ 候选方法
-→ 有边界验证
-→ 比较速度/正确性/安全/返工/用户负担
-→ Class B 取得 Owner 批准
-→ ACCEPT / REJECT / REVISE
-→ ACCEPT 后升级 WM 版本
-→ 保留旧方法与替换原因
-→ Knowledge Sync
+1. ChatGPT 读 Knowledge + Freshness Gate
+2. ChatGPT 规划 / 设计
+3. ChatGPT 在 GitHub 实现 + 测试 + PR
+4. ChatGPT 给出服务器验证/部署门禁
+5. Codex 检查 / 验证 / 部署 / 回滚
+6. Codex 回传事实
+7. ChatGPT 判断 PASS / FAIL / BLOCKED
+8. 技术门禁 PASS 后，Owner 在企业微信实测小U
+9. ChatGPT 根据真人验收结果封板或继续修复
+10. Knowledge Sync
 ```
 
-## 优化目标
+## 关键防误判规则
 
-不是流程越来越厚，而是：
+- PR comment 中存在 Codex 指令 ≠ Codex 已经收到。
+- Codex 没有执行回传 ≠ 验证已完成。
+- Codex 发现代码问题 ≠ Codex 应该改代码。
+- GitHub CI PASS ≠ 服务器验证 PASS。
+- 服务器验证 PASS ≠ 企业微信真人验收 PASS。
+- 只有对应证据层完成，才能把该层标记为 PASS。
 
-> **更少返工、更少重复解释、更少用户传话、更少盲试，同时保持或提高正确性、证据质量和生产安全。**
+## 其余 WM-005 规则继续有效
+
+WM-006 不降低任何 WM-005 的并发、安全和证据要求：
+
+- Knowledge 乐观并发 / CAS；
+- 禁止 force push 解决知识冲突；
+- Class B 方法变更需要 Owner 明确批准；
+- Freshness Gate；
+- 结构失败 STOP；
+- 无新证据不盲目重复生产尝试；
+- Project Knowledge 必须在重大状态变化后同步。
+
+详见 `knowledge/WORKING_METHOD.json` 和 `knowledge/CONCURRENCY_AND_RECOVERY.md`。
