@@ -1,6 +1,6 @@
 {
   "schema_version": "xiaoyou_evidence_index_v1",
-  "updated_at": "2026-09-26T12:42:00+08:00",
+  "updated_at": "2026-09-26T13:08:55+08:00",
   "repository": "jinxi1036-maker68/hermes-youyi-product",
   "evidence": [
     {
@@ -94,6 +94,16 @@
       "verification_comment_id": 5842404675,
       "production_sha": "588ea6eecb1833159e886181f3259be6e0befe37",
       "note": "Exact /wecom/callback locations can move to a distinct loopback upstream with graceful reload and symmetric rollback; shared hermes_hub must remain unchanged; Nginx provides no durable hold/ACK/replay."
+    },
+    {
+      "id": "EV-RT-007",
+      "area": "Bootstrap Holding Bridge V1",
+      "judgment": "BLOCKED_CODE_REVIEW",
+      "pr": 19,
+      "candidate_sha": "cdc046593a14d1a715ae1bbea80fa5f612a89b71",
+      "merged_sha": "67ea2abfc4225e51dcf2889241c24718feb048c2",
+      "github_actions_run_id": 36219917822,
+      "note": "FORWARD/HOLD/FALLBACK implementation merged and 23 targeted Bridge+safe-drain tests pass, but final review found a direct-forward/background-replay race that can duplicate transport delivery before direct forwarding finishes."
     }
   ]
 }

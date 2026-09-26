@@ -99,3 +99,13 @@ PR #17：
 - Nginx 没有 durable queue、ACK-on-failure 或 replay，19090 不可用时预期 502。
 
 因此 bootstrap blocker 从“入口能否安全切换”收敛为“Git-governed Holding Bridge V1 是否满足 ADR-009 并通过故障矩阵”。
+
+
+## Holding Bridge V1 code merge and concurrency review
+
+2026-09-26：
+- PR #19 将 Git-governed Holding Bridge V1 合并到 main；
+- POST 使用 durable stage before downstream attempt，具备 FORWARD / HOLD / FALLBACK、replay、transport fingerprint dedupe、crash recovery 与 offline HOLD control；
+- GitHub Actions 对 Bridge + safe-drain 回归 23/23 PASS；
+- 最终代码审查随后发现：新 staged row 会立即进入 background replay 的可选集合，可能在 direct FORWARD 等待下游响应时被 replay 同时转发；
+- 因此未提前判定代码 PASS，先关闭该并发窗口并增加 overlap regression。

@@ -32,7 +32,11 @@ persistent target Home 已 seed，但尚未 finalize 和切 production runtime b
 - Nginx 本身没有 durable queue、ACK-on-upstream-failure 或 replay；
 - 现有 Cloud Hub 的 direct-forward 失败不会自动 durable hold，也没有可靠 replay / idempotency。
 
-因此当前唯一 blocker 已从“能否安全切入口”收敛为：实现并证明一个只接管 `/wecom/callback` 的 Git-governed Holding Bridge V1，满足 **receive + ACK + persist + replay + duplicate control**。
+Holding Bridge V1 已通过 PR #19 合并到 main，主线 SHA 为 `67ea2abfc4225e51dcf2889241c24718feb048c2`，GitHub CI 对 Bridge 故障矩阵 + safe-drain 回归为 23/23 PASS。
+
+但合并后的最终代码审查又发现一个未被测试覆盖的并发窗口：POST durable stage 后立即成为可 replay 的 `pending`；正常 direct FORWARD 在 await 下游响应期间，后台 replay loop 可能同时选中同一行再次转发。Gateway 的业务 message-id 去重能够降低业务副作用，但这仍违反“Gateway 正常时不制造重复 transport delivery”的冻结契约。
+
+因此当前 blocker 已进一步收敛为：**关闭 direct FORWARD 与 background replay 的并发竞争窗口，并用强制 overlap 回归证明正常路径只发一次。**
 
 ## Stage 2 最终验收
 

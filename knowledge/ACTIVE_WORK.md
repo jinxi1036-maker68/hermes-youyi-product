@@ -142,13 +142,28 @@ PR #17 audit 回传：`5842404675`。
 - 必须覆盖 FORWARD / HOLD / FALLBACK、crash recovery、duplicate control 与 ADR-009 故障矩阵；
 - 当前不修改生产。
 
+GitHub Actions 已证明：
+- Bridge + safe-drain regression：23/23 PASS；
+- runtime control scripts py_compile PASS。
+
+### 最终代码审查新发现
+
+正常路径存在一个 concurrency race：
+
+1. POST durable stage 为 `pending`；
+2. direct FORWARD 开始 await Cloud Hub；
+3. background replay loop 同时扫描到这条立即到期的 `pending`；
+4. 同一 transport envelope 可能并发转发两次。
+
+业务层 Gateway `WecomInboundReceiptStore` 仍可做 message-id 去重，但 Bridge 冻结契约要求正常路径自身不能制造这种重复转发，所以此处必须先修。
+
 ## 当前下一步
 
-1. 从 GitHub `main` 读取现有 aiohttp / httpx / SQLite 与 Gateway receipt/recovery 实现，只复用现有运行栈和已有语义。
-2. 创建最小候选分支/PR，实现 Holding Bridge V1 与针对性测试。
-3. 候选必须先在代码层证明 ADR-009 全部故障语义。
-4. Candidate PASS 后，才给 Codex 一个只做服务器隔离验证/部署准备的目标与边界说明。
-5. Bootstrap layer 仍未 PASS 前，不进入 production finalize/cutover。
+1. 让新 durable row 在 direct FORWARD 所有权窗口内不可被 replay 选中；若 direct FORWARD 失败，则再显式变为立即可 replay。
+2. 增加强制并发 overlap 测试，证明 direct FORWARD 在下游阻塞期间 background replay 不会发送第二次。
+3. 重跑 Holding Bridge + safe-drain regression。
+4. 代码 PASS 后，才给 Codex 发服务器**隔离验证**任务；不让 Codex 设计架构。
+5. Bootstrap layer 仍未服务器证明前，不进入 production finalize/cutover。
 
 ## Stop Rules
 
