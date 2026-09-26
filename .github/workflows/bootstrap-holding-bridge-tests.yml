@@ -13,7 +13,10 @@ on:
       - scripts/xiaoyou_runtime_home_migration.py
       - scripts/xiaoyou_wecom_holding_mode.py
       - scripts/xiaoyou_wecom_holding_state_root.py
+      - scripts/xiaoyou_release_installer.py
+      - scripts/xiaoyou_release_package.py
       - runtime/tests/plugins/test_wecom_holding_state_root_v1.py
+      - runtime/tests/plugins/test_xiaoyou_release_stage_v1.py
       - deploy/config/runtime.wecom-holding.env.example
       - deploy/systemd/xiaoyou-wecom-holding-bridge.service.example
       - .github/workflows/bootstrap-holding-bridge-tests.yml
@@ -24,9 +27,12 @@ on:
       - runtime/tests/plugins/test_wecom_holding_bridge_v1.py
       - runtime/tests/plugins/test_xiaoyou_runtime_home_migration_v1.py
       - runtime/tests/plugins/test_wecom_holding_state_root_v1.py
+      - runtime/tests/plugins/test_xiaoyou_release_stage_v1.py
       - scripts/xiaoyou_runtime_home_migration.py
       - scripts/xiaoyou_wecom_holding_mode.py
       - scripts/xiaoyou_wecom_holding_state_root.py
+      - scripts/xiaoyou_release_installer.py
+      - scripts/xiaoyou_release_package.py
       - deploy/config/runtime.wecom-holding.env.example
       - deploy/systemd/xiaoyou-wecom-holding-bridge.service.example
       - .github/workflows/bootstrap-holding-bridge-tests.yml
@@ -52,6 +58,8 @@ jobs:
           scripts/xiaoyou_wecom_holding_bridge.py
           scripts/xiaoyou_wecom_holding_mode.py
           scripts/xiaoyou_wecom_holding_state_root.py
+          scripts/xiaoyou_release_installer.py
+          scripts/xiaoyou_release_package.py
       - name: Run Holding Bridge and safe-drain regression
         env:
           PYTHONPATH: runtime
@@ -61,3 +69,4 @@ jobs:
           runtime/tests/plugins/test_wecom_callback_safe_drain_v1.py
           runtime/tests/plugins/test_xiaoyou_runtime_home_migration_v1.py
           runtime/tests/plugins/test_wecom_holding_state_root_v1.py
+          runtime/tests/plugins/test_xiaoyou_release_stage_v1.py

@@ -53,6 +53,188 @@ def _targets(base: Path) -> list[tuple[str, Path, str]]:
     return unique
 
 
+def plan_stage_release(*, release_root: Path, base: Path) -> dict[str, Any]:
+    """Verify a release can be staged without touching active runtime links."""
+
+    verification = verify_release_directory(release_root)
+    if not verification.get("ok"):
+        return {
+            "ok": False,
+            "error": "release_verification_failed",
+            "verification": verification,
+            "applied": False,
+            "active_targets_modified": False,
+        }
+
+    if not base.is_dir():
+        return {
+            "ok": False,
+            "error": "base_missing_or_not_directory",
+            "base": str(base),
+            "applied": False,
+            "active_targets_modified": False,
+        }
+
+    manifest = verification["manifest"]
+    release_id = str(manifest.get("release_id") or "")
+    source_commit = str(verification.get("source_commit") or "")
+    release_parent = base / "xiaoyou-releases"
+    canonical_release = release_parent / release_id
+    canonical_payload = canonical_release / str(
+        manifest.get("payload_root") or "payload"
+    )
+
+    if release_parent.is_symlink():
+        return {
+            "ok": False,
+            "error": "release_parent_symlink_forbidden",
+            "release_parent": str(release_parent),
+            "applied": False,
+            "active_targets_modified": False,
+        }
+
+    already_present = canonical_release.exists() or canonical_release.is_symlink()
+    existing_verification: dict[str, Any] | None = None
+    if canonical_release.is_symlink():
+        return {
+            "ok": False,
+            "error": "canonical_release_symlink_forbidden",
+            "canonical_release": str(canonical_release),
+            "applied": False,
+            "active_targets_modified": False,
+        }
+    if already_present:
+        existing_verification = verify_release_directory(canonical_release)
+        if (
+            not existing_verification.get("ok")
+            or str(existing_verification.get("release_id") or "") != release_id
+            or str(existing_verification.get("source_commit") or "")
+            != source_commit
+        ):
+            return {
+                "ok": False,
+                "error": "existing_canonical_release_invalid",
+                "canonical_release": str(canonical_release),
+                "existing_verification": existing_verification,
+                "applied": False,
+                "active_targets_modified": False,
+            }
+
+    return {
+        "ok": True,
+        "error": "",
+        "release_id": release_id,
+        "source_commit": source_commit,
+        "base": str(base),
+        "release_parent": str(release_parent),
+        "canonical_release": str(canonical_release),
+        "canonical_payload": str(canonical_payload),
+        "already_present": bool(already_present),
+        "applied": False,
+        "staged": bool(already_present),
+        "active_targets_modified": False,
+    }
+
+
+def stage_release(
+    *,
+    release_root: Path,
+    base: Path,
+    apply: bool = False,
+) -> dict[str, Any]:
+    """Stage verified candidate code without switching any active code links."""
+
+    plan = plan_stage_release(release_root=release_root, base=base)
+    if not plan.get("ok") or not apply:
+        return plan
+    if plan.get("already_present"):
+        return {
+            **plan,
+            "ok": True,
+            "staged": True,
+            "applied": False,
+            "already_present": True,
+            "active_targets_modified": False,
+        }
+
+    release_parent = Path(str(plan["release_parent"]))
+    canonical_release = Path(str(plan["canonical_release"]))
+    release_parent.mkdir(mode=0o755, exist_ok=True)
+
+    stamp = datetime.now().strftime("%Y%m%d%H%M%S%f")
+    temporary = release_parent / (
+        f".{plan['release_id']}.stage-{os.getpid()}-{stamp}"
+    )
+    if temporary.exists() or temporary.is_symlink():
+        return {
+            **plan,
+            "ok": False,
+            "error": "stage_temporary_path_collision",
+            "temporary": str(temporary),
+        }
+
+    try:
+        shutil.copytree(release_root, temporary)
+        staged_verification = verify_release_directory(temporary)
+        if (
+            not staged_verification.get("ok")
+            or str(staged_verification.get("release_id") or "")
+            != str(plan["release_id"])
+            or str(staged_verification.get("source_commit") or "")
+            != str(plan["source_commit"])
+        ):
+            shutil.rmtree(temporary, ignore_errors=True)
+            return {
+                **plan,
+                "ok": False,
+                "error": "staged_release_verification_failed",
+                "verification": staged_verification,
+                "temporary": str(temporary),
+            }
+
+        if canonical_release.exists() or canonical_release.is_symlink():
+            shutil.rmtree(temporary, ignore_errors=True)
+            concurrent = plan_stage_release(
+                release_root=release_root,
+                base=base,
+            )
+            return {
+                **concurrent,
+                "concurrent_stage_detected": True,
+            }
+
+        temporary.rename(canonical_release)
+    except Exception as exc:
+        shutil.rmtree(temporary, ignore_errors=True)
+        return {
+            **plan,
+            "ok": False,
+            "error": "stage_failed",
+            "detail": f"{type(exc).__name__}:{exc}",
+            "temporary": str(temporary),
+            "active_targets_modified": False,
+        }
+
+    final_verification = verify_release_directory(canonical_release)
+    final_ok = (
+        final_verification.get("ok")
+        and str(final_verification.get("release_id") or "")
+        == str(plan["release_id"])
+        and str(final_verification.get("source_commit") or "")
+        == str(plan["source_commit"])
+    )
+    return {
+        **plan,
+        "ok": bool(final_ok),
+        "error": "" if final_ok else "canonical_stage_verification_failed",
+        "staged": bool(final_ok),
+        "applied": True,
+        "already_present": False,
+        "canonical_verification": final_verification,
+        "active_targets_modified": False,
+    }
+
+
 def plan_install(*, release_root: Path, base: Path) -> dict[str, Any]:
     verification = verify_release_directory(release_root)
     if not verification.get("ok"):
@@ -166,13 +348,37 @@ def install_release(*, release_root: Path, base: Path, apply: bool = False) -> d
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="Plan or apply a canonical Xiaoyou release install.")
+    parser = argparse.ArgumentParser(
+        description=(
+            "Plan/stage a Xiaoyou release or apply canonical active links."
+        )
+    )
     parser.add_argument("--release-root", type=Path, required=True)
     parser.add_argument("--base", type=Path, default=DEFAULT_BASE)
+    parser.add_argument(
+        "--stage-only",
+        action="store_true",
+        help=(
+            "Stage the verified release under xiaoyou-releases without "
+            "mutating active runtime/plugin/script links."
+        ),
+    )
     parser.add_argument("--apply", action="store_true")
     args = parser.parse_args()
     try:
-        result = install_release(release_root=args.release_root, base=args.base, apply=args.apply)
+        result = (
+            stage_release(
+                release_root=args.release_root,
+                base=args.base,
+                apply=args.apply,
+            )
+            if args.stage_only
+            else install_release(
+                release_root=args.release_root,
+                base=args.base,
+                apply=args.apply,
+            )
+        )
     except (OSError, RuntimeError, ValueError) as exc:
         result = {"ok": False, "error": str(exc), "applied": False}
     print(json.dumps(result, ensure_ascii=False, indent=2))
