@@ -71,6 +71,16 @@ def _permission_bits(path: Path, *, uid: int, gids: set[int]) -> int:
     return mode & stat.S_IRWXO
 
 
+def _traversal_paths(path: Path) -> list[Path]:
+    resolved = path.resolve(strict=False)
+    current = Path(resolved.anchor)
+    rows = [current]
+    for part in resolved.parts[1:]:
+        current = current / part
+        rows.append(current)
+    return rows
+
+
 def _boundary_errors(*, state_root: Path, gateway_home: Path) -> list[str]:
     errors: list[str] = []
     if not state_root.is_absolute():
@@ -156,6 +166,21 @@ def inspect_state_root(
         _permission_bits(state_root, uid=uid, gids=gids) & 0b111
     ) == 0b111
 
+    traversal: list[dict[str, Any]] = []
+    traversal_ok = True
+    for path in _traversal_paths(state_root.parent):
+        traversable = (
+            _permission_bits(path, uid=uid, gids=gids) & 0b001
+        ) == 0b001
+        traversal.append({
+            "path": str(path),
+            "mode": f"{stat.S_IMODE(path.stat().st_mode):04o}",
+            "owner_uid": path.stat().st_uid,
+            "group_gid": path.stat().st_gid,
+            "traversable": traversable,
+        })
+        traversal_ok = traversal_ok and traversable
+
     entry_errors: list[str] = []
     entry_count = 0
     for item in sorted(state_root.rglob("*")):
@@ -188,6 +213,8 @@ def inspect_state_root(
         errors.append("state_root_mode_mismatch")
     if not access_ok:
         errors.append("state_root_service_access_failed")
+    if not traversal_ok:
+        errors.append("state_root_parent_not_traversable_by_service")
 
     ok = not errors
     return {
@@ -207,6 +234,8 @@ def inspect_state_root(
         "group_ok": group_ok,
         "mode_ok": mode_ok,
         "service_access_ok": access_ok,
+        "parent_traversal_ok": traversal_ok,
+        "parent_traversal": traversal,
         "entry_count": entry_count,
         "entry_errors": entry_errors,
         "secret_content_inspected": False,
