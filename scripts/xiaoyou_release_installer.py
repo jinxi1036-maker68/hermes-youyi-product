@@ -33,16 +33,30 @@ def _relative_files(path: Path) -> set[str]:
 def _targets(base: Path) -> list[tuple[str, Path, str]]:
     targets: list[tuple[str, Path, str]] = [
         ("tuoguan_runtime", base / "runtime/plugins/tuoguan_core", "runtime/plugins/tuoguan_core"),
+        ("agenda_service_runtime", base / "runtime/plugins/agenda_service_work", "runtime/plugins/agenda_service_work"),
         ("wecom_runtime", base / "runtime/plugins/platforms/wecom", "runtime/plugins/platforms/wecom"),
+        ("reply_recovery_runtime", base / "runtime/plugins/reply_recovery", "runtime/plugins/reply_recovery"),
+        ("robot_poc_runtime", base / "runtime/plugins/robot_poc", "runtime/plugins/robot_poc"),
         ("scripts", base / "scripts", "scripts"),
     ]
     for root_name in ("lib", "lib64"):
         for package_dir in sorted((base / ".venv" / root_name).glob("python*/site-packages/plugins")):
             targets.append((f"tuoguan_{root_name}_{package_dir.parent.parent.name}", package_dir / "tuoguan_core", "runtime/plugins/tuoguan_core"))
+            targets.append((f"agenda_service_{root_name}_{package_dir.parent.parent.name}", package_dir / "agenda_service_work", "runtime/plugins/agenda_service_work"))
             targets.append((f"wecom_{root_name}_{package_dir.parent.parent.name}", package_dir / "platforms/wecom", "runtime/plugins/platforms/wecom"))
-    hermes_wecom = base / "hermes-agent/plugins/platforms/wecom"
-    if hermes_wecom.exists() or hermes_wecom.parent.exists():
-        targets.append(("wecom_hermes_source", hermes_wecom, "runtime/plugins/platforms/wecom"))
+            targets.append((f"reply_recovery_{root_name}_{package_dir.parent.parent.name}", package_dir / "reply_recovery", "runtime/plugins/reply_recovery"))
+            targets.append((f"robot_poc_{root_name}_{package_dir.parent.parent.name}", package_dir / "robot_poc", "runtime/plugins/robot_poc"))
+    hermes_plugins = base / "hermes-agent/plugins"
+    if hermes_plugins.exists():
+        targets.extend(
+            (
+                ("tuoguan_hermes_source", hermes_plugins / "tuoguan_core", "runtime/plugins/tuoguan_core"),
+                ("agenda_service_hermes_source", hermes_plugins / "agenda_service_work", "runtime/plugins/agenda_service_work"),
+                ("wecom_hermes_source", hermes_plugins / "platforms/wecom", "runtime/plugins/platforms/wecom"),
+                ("reply_recovery_hermes_source", hermes_plugins / "reply_recovery", "runtime/plugins/reply_recovery"),
+                ("robot_poc_hermes_source", hermes_plugins / "robot_poc", "runtime/plugins/robot_poc"),
+            )
+        )
     unique: list[tuple[str, Path, str]] = []
     seen: set[str] = set()
     for label, target, source in targets:
