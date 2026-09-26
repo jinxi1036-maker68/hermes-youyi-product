@@ -88,3 +88,14 @@ PR #17：
 首次生产切换仍被 bootstrap ingress 阻塞：
 - 当前 Cloud Hub 不是已证明的 durable holding/replay/idempotency 层；
 - 需要受 Git 管理的正式 bootstrap holding 方案。
+
+
+## Nginx bootstrap callback-only switchover
+
+2026-09-26 只读审计确认：
+- 80/443 的 exact `/wecom/callback` 当前走共享 `hermes_hub -> 127.0.0.1:19090`；
+- 共享 upstream 同时服务 health 和 `/api/v1`，不能整体替换；
+- callback location 可单独指向新的 loopback upstream，并通过 aa-nginx graceful reload 平滑切换和对称回切；
+- Nginx 没有 durable queue、ACK-on-failure 或 replay，19090 不可用时预期 502。
+
+因此 bootstrap blocker 从“入口能否安全切换”收敛为“Git-governed Holding Bridge V1 是否满足 ADR-009 并通过故障矩阵”。

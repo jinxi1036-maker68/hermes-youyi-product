@@ -111,43 +111,44 @@ public HTTPS
 - 一旦发给 Gateway 就立即标记完成；
 - 只验证 happy path，不验证 crash / timeout / duplicate path。
 
+## 最新只读事实：Nginx bootstrap switchover audit PASS
+
+PR #17 audit 回传：`5842404675`。
+
+已确认：
+
+- aa-nginx `1.22.1`，正式 reload 为 `aa_nginx -s reload`，支持 graceful worker replacement；
+- 80/443 都有 exact `location = /wecom/callback`；
+- 两个 callback location 当前都走共享 `hermes_hub -> 127.0.0.1:19090`；
+- `hermes_hub` 同时被 callback、health、`/api/v1` 使用，因此 **不得修改共享 upstream member**；
+- callback 可改为独立 loopback target 后 graceful reload，且可对称回切；
+- callback 是普通短 HTTP GET/POST，请求 URI/query/body 可透明转发，上游 response status/body 原样返回；
+- Nginx 没有 durable buffer、失败 ACK、queue 或 replay；19090 不可用时预期是普通 upstream 502；
+- production SHA 仍为 `588ea6eecb1833159e886181f3259be6e0befe37`，当前链路健康。
+
 ## 当前执行中
 
-已向 Codex 发出只读审计：
+由 ChatGPT 直接在 GitHub 实现 **Holding Bridge V1**。不再继续 Nginx 审计，也不让 Codex 设计 repo 架构。
 
-- command: `XIAOU_NGINX_BOOTSTRAP_SWITCHOVER_AUDIT_V1`
-- PR #17 comment: `5842332487`
-- 目标：确认 aa-nginx 当前 callback location、真实 upstream、graceful reload / local upstream swap / rollback 是否可行。
-- 本轮严格只读：不改配置、不 reload、不 restart、不创建 bridge。
+实现边界：
 
-**当前状态：等待审计结果。**
-
-审计回来后：
-- 若本地 upstream graceful swap 可行，由 ChatGPT 基于事实直接设计 Git-governed holding bridge；
-- 若存在结构 blocker，先处理该 blocker，不猜配置、不进入生产变更。
+- 只接管 POST `/wecom/callback` 的 durable holding 语义；
+- GET 企业微信验证透明转发，不入队；
+- 正常路径保持透明转发；
+- Gateway drain / paused / downstream failure 时，必须 durable commit 成功后才能 ACK；
+- Bridge 只做 transport-level fingerprint 去重，不解密业务消息、不做业务判断；
+- 业务 message-id 级幂等继续由 Gateway 的 `WecomInboundReceiptStore` 负责；
+- replay 只有在下游确认成功后才 completed；
+- 必须覆盖 FORWARD / HOLD / FALLBACK、crash recovery、duplicate control 与 ADR-009 故障矩阵；
+- 当前不修改生产。
 
 ## 当前下一步
 
-恢复主线后：
-
-1. **先做 aa-nginx callback location 的只读审计**：
-   - 当前 /wecom/callback location；
-   - upstream 指向；
-   - 是否支持在 Gateway 在线期间通过 graceful reload 无中断切换到受控 bridge；
-   - 不 reload、不改配置。
-
-2. 基于真实 Nginx 事实，由 ChatGPT 在 GitHub 设计一个受治理的 bootstrap holding layer。
-
-3. 该 layer 必须先证明：
-   - durable receive；
-   - ACK；
-   - persist；
-   - replay；
-   - duplicate control；
-   - Gateway 正常时透明转发；
-   - Gateway 切换期间不丢 callback。
-
-4. 只有 bootstrap layer PASS 后，才重新进入 Runtime Topology production finalize/cutover。
+1. 从 GitHub `main` 读取现有 aiohttp / httpx / SQLite 与 Gateway receipt/recovery 实现，只复用现有运行栈和已有语义。
+2. 创建最小候选分支/PR，实现 Holding Bridge V1 与针对性测试。
+3. 候选必须先在代码层证明 ADR-009 全部故障语义。
+4. Candidate PASS 后，才给 Codex 一个只做服务器隔离验证/部署准备的目标与边界说明。
+5. Bootstrap layer 仍未 PASS 前，不进入 production finalize/cutover。
 
 ## Stop Rules
 

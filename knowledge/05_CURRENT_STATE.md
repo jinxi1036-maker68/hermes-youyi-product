@@ -23,14 +23,16 @@ persistent target Home 已 seed，但尚未 finalize 和切 production runtime b
 
 ## 当前阻塞的本质
 
-第一次切换存在 bootstrap 悖论：
+第一次切换的 bootstrap 悖论仍存在，但 Nginx 切换边界已经只读审计清楚：
 
 - 新代码已经有 safe-drain；
 - 旧 production Gateway 还没有 safe-drain；
-- 不能为了“先装 drain”而裸重启旧 Gateway；
-- 现有 Cloud Hub 虽有 fallback SQLite queue，但 direct-forward 失败不会自动 durable hold，也没有可靠 replay / idempotency，因此不能作为已证明的安全 bootstrap layer。
+- aa-nginx 的 `/wecom/callback` 可单独 graceful reload 到新的 loopback upstream，并可对称回切；
+- 共享 `hermes_hub -> 127.0.0.1:19090` 同时承载 callback、health 和 `/api/v1`，不能通过修改共享 upstream 来做切换；
+- Nginx 本身没有 durable queue、ACK-on-upstream-failure 或 replay；
+- 现有 Cloud Hub 的 direct-forward 失败不会自动 durable hold，也没有可靠 replay / idempotency。
 
-因此当前需要的是一个由事实驱动、受 Git 治理、可以证明 **receive + ACK + persist + replay + duplicate control** 的首次切换方案。
+因此当前唯一 blocker 已从“能否安全切入口”收敛为：实现并证明一个只接管 `/wecom/callback` 的 Git-governed Holding Bridge V1，满足 **receive + ACK + persist + replay + duplicate control**。
 
 ## Stage 2 最终验收
 

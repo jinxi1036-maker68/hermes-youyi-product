@@ -31,8 +31,8 @@
     "active_work_item_id": "WI-2026-09-bootstrap-durable-ingress",
     "blocker_id": "bootstrap-durable-ingress",
     "blocker_status": "blocked",
-    "blocker_summary": "The current production Gateway does not have safe-drain, and no Gateway-independent durable receive+ACK+persist+replay layer has yet been proven for the first Runtime Topology cutover.",
-    "next_action": "Await Codex read-only Nginx bootstrap switchover audit XIAOU_NGINX_BOOTSTRAP_SWITCHOVER_AUDIT_V1 (PR #17 comment 5842332487). After facts return, ChatGPT designs the Git-governed bootstrap holding layer; no production changes before that.",
+    "blocker_summary": "Nginx callback-only graceful switchover is proven feasible, but the Git-governed Holding Bridge V1 has not yet been implemented and proven against the frozen durable ingress contract.",
+    "next_action": "ChatGPT implements Holding Bridge V1 in GitHub from current main, proves FORWARD/HOLD/FALLBACK, persist-before-ACK, replay, crash recovery, transport-fingerprint duplicate control and the required fault matrix; no production change before candidate PASS.",
     "working_method_id": "WM-005",
     "working_method_name": "Concurrency-Safe Governed Adaptive Method",
     "bootstrap_holding_contract": "ADR-009: transparent-forward / persist-before-ACK / idempotent-replay-complete-after-confirmed-success"
