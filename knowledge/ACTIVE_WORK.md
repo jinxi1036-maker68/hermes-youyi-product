@@ -536,3 +536,39 @@ Codex 回传：
 10. 生产技术 PASS 后才轮到 Owner 企业微信真人 Query 验收。
 
 任一关键步骤失败必须优先保持 Bridge HOLD，并按冻结回滚边界恢复旧 Gateway/Home/selector。
+
+
+## Pre-cutover full Gateway candidate gate｜required before HOLD
+
+在 callback-only cutover PASS 后重新核对 release contract，确认当前已 staged 的 exact-main Xiaoyou release 是 **allowlisted business overlay**，不是完整 Hermes runtime。
+
+Runtime Topology V1 的正式 Gateway 规则仍要求：
+- candidate Python / venv 来自 candidate；
+- console / `hermes_cli` 来自 candidate；
+- clean Hermes Core 来自 candidate；
+- Xiaoyou / WeCom plugin 叠加当前 exact-main allowlisted payload；
+- 不得解析到旧 release。
+
+PR #16 的真实服务器验证曾证明该 assembly 方法可行，但当时对应旧 candidate SHA；不能把历史 PASS 自动继承给当前 `bcb9c801...`。
+
+因此在 Bridge HOLD / old Gateway stop **之前**，必须先在服务器离线组装并认证当前完整 candidate：
+1. 读取 live Hermes Core/version/model/service identity 事实；
+2. 从 current main 构建/验证 Xiaoyou overlay release；
+3. 以 clean Hermes Core/venv 为基底组装完整 versioned candidate，不复用旧 release console/venv；
+4. overlay 只允许 manifest allowlist；
+5. Core Compatibility PASS；
+6. Release Self-contained PASS；
+7. candidate service-identity import/preflight PASS；
+8. Core Plugin Doctor / WeCom Plugin Doctor PASS；
+9. Runtime Topology / Persistent Home Gate PASS；
+10. old release path leak = 0。
+
+本门禁期间：
+- Bridge 保持 FORWARD；
+- public callback 继续经过 Bridge；
+- old Gateway 保持 active；
+- 不 finalize Home；
+- 不切 active links/selector/systemd；
+- 不做真人业务验收。
+
+这样真正进入 HOLD 停机窗口后只剩 finalize + activate + start + verify + resume，避免在 callback backlog 累积期间现场组装 candidate。

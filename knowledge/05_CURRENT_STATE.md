@@ -54,9 +54,13 @@ callback-only Nginx cutover 已正式 PASS：
 - Cloud Hub 与旧 Gateway 继续健康；
 - synthetic GET 验证通过，无 rollback。
 
-因此 bootstrap durable ingress 已真实建立在公网 callback 前面。下一道门禁可以安全进入 **Gateway/Home/selector 首次生产切换**：Bridge 先 HOLD，再停旧 Gateway，finalize persistent Home，激活/启动新 Gateway，验证后 resume Bridge 并 replay backlog。
+因此 bootstrap durable ingress 已真实建立在公网 callback 前面。
 
-在该生产技术门禁 PASS 前，不进行 Owner 企业微信真人验收。
+但正式停旧 Gateway 前还必须完成 **full Gateway candidate pre-cutover certification**。当前 staged Xiaoyou release 是 allowlisted overlay；正式新 Gateway 仍要求完整 self-contained candidate（自己的 Python/venv、Hermes Core、console、hermes_cli + current Xiaoyou/WeCom payload），并证明没有旧 release path leak。
+
+该 candidate 在旧 Gateway 仍在线、Bridge 仍 FORWARD 时先组装和认证。只有这一关 PASS，下一道门禁才是 Bridge HOLD → stop old Gateway → finalize persistent Home → activate/start new Gateway → verify → resume/replay。
+
+在整个生产技术门禁 PASS 前，不进行 Owner 企业微信真人验收。
 
 ## Stage 2 最终验收
 

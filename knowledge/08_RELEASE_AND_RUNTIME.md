@@ -198,3 +198,27 @@ public callback -> Holding Bridge
 - 不需要回滚 Nginx callback 到旧链，除非 Bridge 自身失效。
 
 Owner 真人 Query 只在整个技术门禁 PASS 后执行。
+
+
+## 10. Full Gateway candidate must be ready before HOLD
+
+Holding Bridge 进入 HOLD 后，新的真实 callback 会积累在 durable backlog，因此不能在 HOLD 窗口内才开始组装完整 Gateway candidate。
+
+在 HOLD 前必须完成：
+
+- resolve live Hermes Core/version/model/service identity；
+- current-main Xiaoyou release manifest/hash verify；
+- clean Hermes Core/venv base；
+- allowlisted Xiaoyou production overlay only；
+- candidate owns its Python/venv/console/`hermes_cli`/Core/plugin paths；
+- Core Compatibility Gate PASS；
+- Release Self-contained Gate PASS；
+- service-identity candidate preflight PASS；
+- Core + WeCom Plugin Doctor PASS；
+- Runtime Topology PASS；
+- Persistent Home Gate PASS；
+- no sibling/old-release path leaks。
+
+历史 candidate 的 PASS 只证明 assembly 方法，不可替代 current-main candidate 认证。
+
+该门禁期间 old Gateway 必须保持 active，Bridge 必须保持 FORWARD，public callback 已经通过 Bridge，但不得 HOLD、finalize、active-link switch 或 Gateway restart。
