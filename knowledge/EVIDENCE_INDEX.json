@@ -1,6 +1,6 @@
 {
   "schema_version": "xiaoyou_evidence_index_v1",
-  "updated_at": "2026-09-26T13:08:55+08:00",
+  "updated_at": "2026-09-26T13:41:08+08:00",
   "repository": "jinxi1036-maker68/hermes-youyi-product",
   "evidence": [
     {
@@ -98,12 +98,14 @@
     {
       "id": "EV-RT-007",
       "area": "Bootstrap Holding Bridge V1",
-      "judgment": "BLOCKED_CODE_REVIEW",
+      "judgment": "PASS_CODE",
       "pr": 19,
       "candidate_sha": "cdc046593a14d1a715ae1bbea80fa5f612a89b71",
-      "merged_sha": "67ea2abfc4225e51dcf2889241c24718feb048c2",
-      "github_actions_run_id": 36219917822,
-      "note": "FORWARD/HOLD/FALLBACK implementation merged and 23 targeted Bridge+safe-drain tests pass, but final review found a direct-forward/background-replay race that can duplicate transport delivery before direct forwarding finishes."
+      "merged_sha": "02c88bff5790110f6866b01031a7c9c75e0ded58",
+      "github_actions_run_id": 36221515003,
+      "note": "Holding Bridge V1 is merged with durable stage-before-forward, FORWARD/HOLD/FALLBACK, replay/crash recovery/transport dedupe, and direct-forward replay ownership. Main CI passes 24 Bridge+safe-drain tests including forced overlap. Server isolated verification is still required before production use.",
+      "fix_pr": 20,
+      "fix_candidate_sha": "264dd0b487c39331965fa025882a8824da814904"
     }
   ]
 }

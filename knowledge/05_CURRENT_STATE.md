@@ -23,20 +23,17 @@ persistent target Home 已 seed，但尚未 finalize 和切 production runtime b
 
 ## 当前阻塞的本质
 
-第一次切换的 bootstrap 悖论仍存在，但 Nginx 切换边界已经只读审计清楚：
+第一次切换的入口与代码语义已经收敛：
 
-- 新代码已经有 safe-drain；
-- 旧 production Gateway 还没有 safe-drain；
-- aa-nginx 的 `/wecom/callback` 可单独 graceful reload 到新的 loopback upstream，并可对称回切；
-- 共享 `hermes_hub -> 127.0.0.1:19090` 同时承载 callback、health 和 `/api/v1`，不能通过修改共享 upstream 来做切换；
-- Nginx 本身没有 durable queue、ACK-on-upstream-failure 或 replay；
-- 现有 Cloud Hub 的 direct-forward 失败不会自动 durable hold，也没有可靠 replay / idempotency。
+- aa-nginx 的 exact `/wecom/callback` 可以单独 graceful reload 到新的 loopback target，并可对称回切；
+- 共享 `hermes_hub -> 127.0.0.1:19090` 不能修改；
+- Holding Bridge V1 已通过 PR #19 合并；
+- 最终代码审查发现 direct FORWARD / background replay 竞争窗口；
+- PR #20 已用 durable direct ownership + replay release/recovery 关闭该窗口；
+- 当前 main：`02c88bff5790110f6866b01031a7c9c75e0ded58`；
+- main GitHub Actions：Bridge + safe-drain regression **24/24 PASS**，包含强制 overlap 测试。
 
-Holding Bridge V1 已通过 PR #19 合并到 main，主线 SHA 为 `67ea2abfc4225e51dcf2889241c24718feb048c2`，GitHub CI 对 Bridge 故障矩阵 + safe-drain 回归为 23/23 PASS。
-
-但合并后的最终代码审查又发现一个未被测试覆盖的并发窗口：POST durable stage 后立即成为可 replay 的 `pending`；正常 direct FORWARD 在 await 下游响应期间，后台 replay loop 可能同时选中同一行再次转发。Gateway 的业务 message-id 去重能够降低业务副作用，但这仍违反“Gateway 正常时不制造重复 transport delivery”的冻结契约。
-
-因此当前 blocker 已进一步收敛为：**关闭 direct FORWARD 与 background replay 的并发竞争窗口，并用强制 overlap 回归证明正常路径只发一次。**
+因此当前 blocker 已从“实现是否正确”推进为：**在不改变生产路由和现有服务的前提下，完成服务器隔离验证，证明真实服务器运行环境能承载该 Bridge，并确认没有新的 runtime / service-identity / loopback-port / filesystem 边界阻塞。**
 
 ## Stage 2 最终验收
 

@@ -128,42 +128,59 @@ PR #17 audit 回传：`5842404675`。
 
 ## 当前执行中
 
-由 ChatGPT 直接在 GitHub 实现 **Holding Bridge V1**。不再继续 Nginx 审计，也不让 Codex 设计 repo 架构。
+Holding Bridge V1 代码层已 PASS。
 
-实现边界：
+最终代码状态：
 
-- 只接管 POST `/wecom/callback` 的 durable holding 语义；
-- GET 企业微信验证透明转发，不入队；
-- 正常路径保持透明转发；
-- Gateway drain / paused / downstream failure 时，必须 durable commit 成功后才能 ACK；
-- Bridge 只做 transport-level fingerprint 去重，不解密业务消息、不做业务判断；
-- 业务 message-id 级幂等继续由 Gateway 的 `WecomInboundReceiptStore` 负责；
-- replay 只有在下游确认成功后才 completed；
-- 必须覆盖 FORWARD / HOLD / FALLBACK、crash recovery、duplicate control 与 ADR-009 故障矩阵；
-- 当前不修改生产。
-
-GitHub Actions 已证明：
-- Bridge + safe-drain regression：23/23 PASS；
+- PR #19：Holding Bridge V1 核心实现；
+- PR #20：关闭 direct FORWARD / background replay concurrency race；
+- current main：`02c88bff5790110f6866b01031a7c9c75e0ded58`；
+- main CI run：`36221515003`；
+- Bridge + safe-drain regression：**24/24 PASS**；
 - runtime control scripts py_compile PASS。
 
-### 最终代码审查新发现
+已证明的代码语义：
 
-正常路径存在一个 concurrency race：
-
-1. POST durable stage 为 `pending`；
-2. direct FORWARD 开始 await Cloud Hub；
-3. background replay loop 同时扫描到这条立即到期的 `pending`；
-4. 同一 transport envelope 可能并发转发两次。
-
-业务层 Gateway `WecomInboundReceiptStore` 仍可做 message-id 去重，但 Bridge 冻结契约要求正常路径自身不能制造这种重复转发，所以此处必须先修。
+- GET `/wecom/callback` 只透明转发、不入队；
+- POST 在任何 downstream attempt 前 durable stage；
+- FORWARD 正常透传；
+- HOLD 在 durable commit 后 ACK，且不下发；
+- FALLBACK 在 transport timeout/error 或 transient upstream failure 时保留 durable pending 后 ACK；
+- durable store 失败不转发、不伪造成功 ACK；
+- replay 仅在 downstream 2xx 后 completed；
+- process restart 恢复 unfinished direct/replaying rows；
+- transport fingerprint duplicate control；
+- Gateway 已处理但 response lost 时，由 Gateway `WecomInboundReceiptStore` 的业务 message-id 去重保证业务效果一次；
+- direct FORWARD in-flight 时拥有 durable row，background replay 不可并发 claim；强制 overlap regression 已通过；
+- completed 后清理 raw path/header/body，只保留 transport tombstone。
 
 ## 当前下一步
 
-1. 让新 durable row 在 direct FORWARD 所有权窗口内不可被 replay 选中；若 direct FORWARD 失败，则再显式变为立即可 replay。
-2. 增加强制并发 overlap 测试，证明 direct FORWARD 在下游阻塞期间 background replay 不会发送第二次。
-3. 重跑 Holding Bridge + safe-drain regression。
-4. 代码 PASS 后，才给 Codex 发服务器**隔离验证**任务；不让 Codex 设计架构。
-5. Bootstrap layer 仍未服务器证明前，不进入 production finalize/cutover。
+向 Codex 发出目标导向的 **Holding Bridge V1 server isolated verification**，只做服务器事实和隔离验证，不设计架构。
+
+必须验证：
+
+1. 当前 main `02c88...` 在服务器实际 Python/runtime 依赖下可 import / compile / run targeted tests；
+2. 实际 service identity、persistent Home 路径与权限边界满足 SQLite durable store；
+3. 找到一个当前未占用的 loopback listener 候选端口；不得占用或修改 443/19090/8866；
+4. 在隔离临时目录/临时本地端口、仅 synthetic payload + mock/local test upstream 下验证：
+   - FORWARD；
+   - HOLD；
+   - FALLBACK；
+   - persist-before-ACK；
+   - process restart recovery；
+   - replay；
+   - duplicate control；
+   - processed-but-response-lost composition；
+   - durable store failure；
+   - direct/replay overlap；
+5. 不修改 Nginx；
+6. 不 reload/restart/stop/start aa-nginx、Cloud Hub、Gateway；
+7. 不切 production selector / HERMES_HOME；
+8. 不发送真实企业微信 callback；
+9. 不读取或输出 secret / real callback payload。
+
+若出现结构 blocker，STOP 并只回传事实，不得自行改架构或生产。
 
 ## Stop Rules
 

@@ -109,3 +109,14 @@ PR #17：
 - GitHub Actions 对 Bridge + safe-drain 回归 23/23 PASS；
 - 最终代码审查随后发现：新 staged row 会立即进入 background replay 的可选集合，可能在 direct FORWARD 等待下游响应时被 replay 同时转发；
 - 因此未提前判定代码 PASS，先关闭该并发窗口并增加 overlap regression。
+
+
+## Holding Bridge V1 code PASS
+
+2026-09-26：
+- PR #19 合并 Git-governed Holding Bridge V1；
+- 最终审查发现 direct FORWARD / background replay 竞争窗口；
+- PR #20 引入 durable direct ownership + explicit replay release/recovery，关闭正常路径并发双发；
+- 强制 overlap regression 通过；
+- current main `02c88bff5790110f6866b01031a7c9c75e0ded58` 上 Bridge + safe-drain regression 24/24 PASS；
+- 代码层判定 PASS，但 production 仍未改变；下一步是服务器隔离验证，而不是直接切流。
