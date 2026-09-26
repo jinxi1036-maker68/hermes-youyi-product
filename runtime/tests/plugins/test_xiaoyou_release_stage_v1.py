@@ -1,6 +1,9 @@
 from __future__ import annotations
 
+import os
 from pathlib import Path
+import subprocess
+import sys
 
 
 ROOT = Path(__file__).resolve().parents[3]
@@ -143,10 +146,7 @@ def test_bridge_systemd_template_uses_staged_candidate_code_boundary():
     assert "User=${XIAOYOU_SERVICE_USER}" in unit
     assert "Group=${XIAOYOU_SERVICE_GROUP}" in unit
     assert "WorkingDirectory=${XIAOYOU_RELEASE_PAYLOAD_ROOT}" in unit
-    assert (
-        "Environment=PYTHONPATH=${XIAOYOU_RELEASE_PAYLOAD_ROOT}/runtime"
-        in unit
-    )
+    assert "Environment=PYTHONPATH=" not in unit
     assert (
         "ExecStart=${HERMES_PYTHON} "
         "${XIAOYOU_RELEASE_PAYLOAD_ROOT}/scripts/"
@@ -155,3 +155,45 @@ def test_bridge_systemd_template_uses_staged_candidate_code_boundary():
     )
     assert "${HERMES_RUNTIME_ROOT}/scripts" not in unit
     assert "${HERMES_RUNTIME_ROOT}/.venv/bin/python" not in unit
+
+
+def test_bridge_entrypoint_ignores_conflicting_legacy_plugins_package(tmp_path):
+    legacy = tmp_path / "legacy"
+    wecom = legacy / "plugins" / "platforms" / "wecom"
+    wecom.mkdir(parents=True)
+    for path in (
+        legacy / "plugins" / "__init__.py",
+        legacy / "plugins" / "platforms" / "__init__.py",
+        wecom / "__init__.py",
+    ):
+        path.write_text("# legacy Hermes package\n", encoding="utf-8")
+
+    env = dict(os.environ)
+    env["PYTHONPATH"] = str(legacy)
+    completed = subprocess.run(
+        [
+            sys.executable,
+            str(ROOT / "scripts/xiaoyou_wecom_holding_bridge.py"),
+            "--help",
+        ],
+        cwd=ROOT,
+        env=env,
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        check=False,
+    )
+
+    assert completed.returncode == 0, completed.stdout
+    assert "usage:" in completed.stdout.lower()
+
+
+def test_bridge_entrypoint_loads_exact_candidate_file():
+    from scripts import xiaoyou_wecom_holding_bridge as entrypoint
+
+    module = entrypoint._load_candidate_bridge_module()
+
+    assert Path(module.__file__).resolve() == (
+        ROOT
+        / "runtime/plugins/platforms/wecom/holding_bridge.py"
+    ).resolve()
