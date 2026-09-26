@@ -1,0 +1,13 @@
+# Callback-only bootstrap switchover template.
+#
+# Apply the same exact location to BOTH current HTTP:80 and HTTPS:443 server
+# blocks. Preserve the existing callback directives and change only proxy_pass.
+#
+# DO NOT change the shared "hermes_hub" upstream: it also serves /health and
+# /api/v1 and must remain pointed at 127.0.0.1:19090.
+#
+# Replace HOLDING_PORT only after the local bridge listener is verified.
+
+location = /wecom/callback {
+    proxy_pass http://127.0.0.1:HOLDING_PORT;
+}

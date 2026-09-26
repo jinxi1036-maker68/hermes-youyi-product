@@ -211,3 +211,32 @@ def test_release_package_excludes_local_hermes_core_shims(tmp_path):
     assert "runtime/hermes_constants.py" not in packaged
     assert manifest["production_overlay_policy"] == "allowlisted_xiaoyou_payload_only_no_core_shadow"
     assert "runtime/hermes_constants.py" in manifest["production_forbidden_overlay_paths"]
+
+
+def test_release_package_contains_wecom_bootstrap_holding_assets(tmp_path):
+    from scripts.xiaoyou_release_package import build_release
+
+    result = build_release(
+        root=ROOT,
+        output_dir=tmp_path,
+        hermes_version="0.21.0",
+        model="agnes-2.5-flash",
+        require_clean=False,
+        source_commit="b" * 40,
+    )
+
+    release_root = Path(result["release_root"])
+    manifest = json.loads((release_root / "release_manifest.json").read_text(encoding="utf-8"))
+    packaged = {row["path"] for row in manifest["files"]}
+
+    required = {
+        "scripts/xiaoyou_wecom_holding_bridge.py",
+        "deploy/config/wecom-holding-bridge.env.example",
+        "deploy/systemd/xiaoyou-wecom-holding-bridge.service.example",
+        "deploy/nginx/wecom-callback-holding.location.example",
+        "work/commercialization/maintenance_package_v0/wecom_bootstrap_holding_bridge_v1.md",
+    }
+
+    assert required <= packaged
+    assert manifest["contains_business_data"] is False
+    assert manifest["contains_credentials"] is False

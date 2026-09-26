@@ -21,6 +21,10 @@ PAYLOAD_ROOTS = (
     "runtime/plugins/platforms/wecom",
     "scripts",
     "systemd",
+    "deploy/config/wecom-holding-bridge.env.example",
+    "deploy/systemd/xiaoyou-wecom-holding-bridge.service.example",
+    "deploy/nginx/wecom-callback-holding.location.example",
+    "work/commercialization/maintenance_package_v0/wecom_bootstrap_holding_bridge_v1.md",
     "work/commercialization/xiaoyou_runtime_constitution_v1.md",
     "work/commercialization/xiaoyou_reliability_scenarios_v1.json",
 )
