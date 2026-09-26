@@ -334,7 +334,7 @@ def test_store_failure_never_forwards_or_fakes_success_ack(tmp_path):
     calls = 0
 
     class BrokenStore:
-        def persist_pending(self, _held):
+        def persist_pending(self, _held, **_kwargs):
             raise sqlite3.OperationalError("disk full")
 
     def handler(_request):
