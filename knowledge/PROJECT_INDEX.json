@@ -1,6 +1,6 @@
 {
   "schema_version": "xiaoyou_project_knowledge_v2",
-  "knowledge_revision": 4,
+  "knowledge_revision": 5,
   "project": "xiaoyou-hermes",
   "repository": "jinxi1036-maker68/hermes-youyi-product",
   "knowledge_branch": "project-knowledge",
@@ -34,7 +34,8 @@
     "blocker_summary": "The current production Gateway does not have safe-drain, and no Gateway-independent durable receive+ACK+persist+replay layer has yet been proven for the first Runtime Topology cutover.",
     "next_action": "After Knowledge V2 is established, resume the production-cutover work with a read-only Nginx ingress switchover audit, then design the Git-governed bootstrap holding layer from verified facts.",
     "working_method_id": "WM-005",
-    "working_method_name": "Concurrency-Safe Governed Adaptive Method"
+    "working_method_name": "Concurrency-Safe Governed Adaptive Method",
+    "bootstrap_holding_contract": "ADR-009: transparent-forward / persist-before-ACK / idempotent-replay-complete-after-confirmed-success"
   },
   "sealed_capabilities": [
     {

@@ -61,6 +61,56 @@ public HTTPS
 3. **直接在服务器 /opt/hermes-cloud-hub/hub.py 上临时打补丁**  
    原因：游离代码、无 Git 治理、变更归属不清，不符合正式产品发布制度。
 
+## Bootstrap Holding 冻结验收契约
+
+这是 Owner 已确认的正式契约。后续设计、实现、Codex验证和生产切换不得降低为“普通反向代理 + 尽量重试”。
+
+### 1. Gateway 正常
+
+- callback 透明转发至 Gateway `8866`；
+- 不改变正常业务语义；
+- 不制造重复处理；
+- holding 层不能成为第二业务脑。
+
+### 2. Gateway drain / 暂停 / 不可用
+
+- callback 必须**先可靠持久化**；
+- 只有 durable commit 成功后，才能向企业微信返回成功 ACK；
+- 如果持久化失败，不得伪造成功 ACK；
+- Gateway 不可用期间不得因为直转发失败而丢弃 callback；
+- holding 状态必须可跨进程/服务重启恢复。
+
+### 3. Gateway 恢复
+
+- 按 callback 的**稳定消息唯一标识**进行幂等 replay；
+- 同一业务消息不得因为重试产生重复模型/业务执行；
+- replay 失败必须保持待处理状态，可继续安全重试；
+- **只有 Gateway 已确认该消息处理成功后**，holding 层才允许将该消息标记 completed；
+- “已经发起重投递”不等于“完成”。
+
+### 必须证明的故障语义
+
+正式 PASS 至少要覆盖：
+
+- Gateway 在线正常转发；
+- Gateway 在 callback 到达前不可用；
+- Gateway 在转发过程中失败/超时；
+- durable persist 成功后 holding 自身重启；
+- Gateway 恢复后的 replay；
+- replay 重复触发；
+- Gateway 已处理但上游响应丢失/超时导致的重复重投递；
+- durable store 写失败；
+- backlog 在切换前后不丢、不静默跳过。
+
+### 明确不接受
+
+- 失败后只返回 502/503 依赖上游“也许会重试”；
+- 先 ACK 再异步落盘；
+- 只做内存队列；
+- replay 没有稳定 message id / idempotency；
+- 一旦发给 Gateway 就立即标记完成；
+- 只验证 happy path，不验证 crash / timeout / duplicate path。
+
 ## 当前下一步
 
 恢复主线后：
