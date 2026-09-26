@@ -17,6 +17,8 @@ UMask=0077
 NoNewPrivileges=true
 PrivateTmp=true
 ProtectSystem=full
+# Provision and verify this directory with
+# scripts/xiaoyou_wecom_holding_state_root.py before enabling the service.
 # This path must match XIAOYOU_WECOM_HOLDING_STATE_ROOT after template substitution.
 # Do not grant write access to Gateway HERMES_HOME for bootstrap holding state.
 ReadWritePaths=${XIAOYOU_WECOM_HOLDING_STATE_ROOT}
