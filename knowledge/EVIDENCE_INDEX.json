@@ -1,6 +1,6 @@
 {
   "schema_version": "xiaoyou_evidence_index_v1",
-  "updated_at": "2026-09-26T20:12:00+08:00",
+  "updated_at": "2026-09-26T21:18:00+08:00",
   "repository": "jinxi1036-maker68/hermes-youyi-product",
   "evidence": [
     {
@@ -221,6 +221,17 @@
       "production_sha": "588ea6eecb1833159e886181f3259be6e0befe37",
       "source": "Owner-relayed Codex server result",
       "note": "production_changed=true due to isolated complete candidate assembly/certification. CLEAN_CANDIDATE_ASSEMBLY, CORE_COMPAT_GATE, SELF_CONTAINED_GATE, CANDIDATE_PREFLIGHT, CORE_PLUGIN_DOCTOR, WECOM_PLUGIN_DOCTOR, RUNTIME_TOPOLOGY_GATE and PERSISTENT_HOME_GATE all PASS. OLD_RELEASE_PATH_LEAKS=0. Public callback remained through Holding Bridge in FORWARD and old Gateway remained unchanged/active. This certifies the current-main complete Gateway candidate before the HOLD window."
+    },
+    {
+      "id": "EV-RT-019",
+      "area": "First Runtime Topology production cutover attempt",
+      "judgment": "BLOCKED_STARTUP_ROLLED_BACK",
+      "date": "2026-09-26",
+      "main_sha": "bcb9c801d84dbcbfe35cc3cab8cf9657bc4e0a10",
+      "old_production_sha": "588ea6eecb1833159e886181f3259be6e0befe37",
+      "restored_production_sha": "588ea6eecb1833159e886181f3259be6e0befe37",
+      "source": "Owner-relayed Codex production cutover result",
+      "note": "PRE_HOLD_GATE, Bridge HOLD, old Gateway drain/quiesce/stop, Home finalize/verify and new Gateway binding all PASS. New Gateway start failed because 19092 did not listen within 75 seconds, although 8866 listened and no ImportError/ModuleNotFoundError/Traceback was detected. Technical gate therefore failed before drain resume/recovery. Rollback was required and PASS: old production restored, Bridge resumed, Bridge backlog returned to zero. Current blocker is read-only diagnosis of the 19092 listener ownership/startup boundary."
     }
   ]
 }

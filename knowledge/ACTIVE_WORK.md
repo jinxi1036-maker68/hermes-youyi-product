@@ -620,3 +620,33 @@ Codex 回传：
 - old Gateway 稳定后再解除 Bridge HOLD；
 - 不把 new persistent Home 反向覆盖 old Home；
 - Bridge 自身正常时不回滚 callback Nginx。
+
+
+## First Runtime Topology production cutover｜BLOCKED, rollback PASS
+
+Codex 回传：
+- production_changed=true；
+- MAIN_SHA = `bcb9c801d84dbcbfe35cc3cab8cf9657bc4e0a10`；
+- OLD_PRODUCTION_SHA = `588ea6eecb1833159e886181f3259be6e0befe37`；
+- PRE_HOLD / Bridge HOLD / old Gateway drain / quiesce / stop = PASS；
+- HOME_FINALIZE / HOME_VERIFY = PASS；
+- NEW_GATEWAY_BINDING = PASS；
+- NEW_GATEWAY_START = FAIL；
+- new Gateway 失败窗口内 `8866` 已监听，但 `19092` 在 75 秒内未监听；
+- 未发现 ImportError / ModuleNotFoundError / Traceback；
+- Gateway drain resume / receipt recovery 未进入；
+- rollback required = YES；
+- rollback = PASS；
+- Bridge resume = PASS；
+- Bridge backlog zero = PASS；
+- NEW_PRODUCTION_SHA 最终仍为旧稳定 `588ea6e...`。
+
+证据：`EV-RT-019 = BLOCKED_STARTUP_ROLLED_BACK`。
+
+判断：
+- durable ingress / HOLD / finalize / rollback 机制已经被真实生产故障路径证明可用；
+- 当前不是“candidate 完全无法运行”：8866 已起来；
+- 第一个真实 blocker 收敛为 **19092 listener startup responsibility/binding mismatch**；
+- 仓库内没有 19092 常量或显式 listener 定义，因此不能先假设是 Xiaoyou 业务代码 bug；
+- 下一步必须先只读确认回滚后正常旧生产中 19092 的 PID、父进程、systemd/socket unit、启动命令与配置来源，再和失败的新 Gateway binding 做差分；
+- 未查清前不得再次 HOLD / stop / finalize / cutover。

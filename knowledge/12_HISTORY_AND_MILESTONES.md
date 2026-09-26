@@ -244,3 +244,16 @@ PR #17：
 - evidence `EV-RT-018 = PASS_SERVER_FULL_CANDIDATE`。
 
 至此真正 HOLD 前的 candidate 风险已经清空。最终 cutover 采用双层暂停：Bridge HOLD 保护公网 ingress，Gateway drain marker 随 finalize 进入新 Home，使新 Gateway 在 technical verification 完成前也不派发业务。
+
+
+## First Runtime Topology cutover failed safely and rolled back
+
+2026-09-26：
+- first full production cutover entered Bridge HOLD, drained/quiesced old Gateway, stopped it, finalized persistent Home and created the new Gateway binding successfully；
+- new Gateway exposed 8866 but failed to expose 19092 within 75 seconds；
+- no ImportError, ModuleNotFoundError or Traceback was observed；
+- technical gate failed before Gateway drain resume / receipt recovery；
+- rollback restored old production SHA `588ea6e...` successfully；
+- Bridge resumed and Holding backlog returned to zero；
+- this production fault path proves the Holding Bridge / rollback design prevented the failed Gateway activation from leaving callback backlog stranded；
+- next work is read-only ownership/startup diagnosis for 19092, not another cutover attempt.

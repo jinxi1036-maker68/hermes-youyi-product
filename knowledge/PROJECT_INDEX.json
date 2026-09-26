@@ -25,14 +25,14 @@
       "sealed": false
     },
     "production_sha": "588ea6eecb1833159e886181f3259be6e0befe37",
-    "production_last_verified_at": "2026-09-26T20:12:00+08:00",
+    "production_last_verified_at": "2026-09-26T21:18:00+08:00",
     "main_sha": "bcb9c801d84dbcbfe35cc3cab8cf9657bc4e0a10",
     "main_last_verified_at": "2026-09-26T18:17:30+08:00",
     "active_work_item_id": "WI-2026-09-bootstrap-durable-ingress",
     "blocker_id": "bootstrap-durable-ingress",
-    "blocker_status": "cleared_for_next_gate",
-    "blocker_summary": "Full current-main Gateway candidate pre-cutover certification PASS while old Gateway remained active and public callback stayed protected by Holding Bridge FORWARD. Complete candidate owns Python/venv/console/hermes_cli/Core/XiaoU/WeCom paths, all compatibility/self-contained/preflight/plugin/runtime-home gates pass, and old-release path leaks are zero.",
-    "next_action": "Execute the bounded first Runtime Topology production cutover: reconfirm the exact certified candidate and rollback facts; enter Bridge HOLD; create/validate the Gateway drain marker on the old source Home and wait callback processing=0 stable; stop old Gateway; finalize persistent Home; start the exact certified candidate on a separate new Gateway unit/runtime binding with old unit/env preserved for rollback; verify new Gateway while both Bridge HOLD and Gateway drain remain active; resume Gateway drain first and recover old receipt backlog; only after stable health resume Bridge and drain/replay Bridge backlog to zero. On any critical failure keep Bridge HOLD and restore/start the untouched old Gateway binding.",
+    "blocker_status": "blocked",
+    "blocker_summary": "First Runtime Topology production cutover reached new Gateway start but failed because 19092 did not listen within 75 seconds while 8866 did listen and no ImportError/ModuleNotFoundError/Traceback was observed. Rollback succeeded: old Gateway production SHA 588ea6e... was restored, Bridge resumed, Bridge backlog returned to zero. The next task is read-only differential diagnosis of the 19092 listener ownership/startup responsibility before any retry.",
+    "next_action": "Codex must perform read-only differential diagnosis on the restored production: identify the exact PID/process/systemd/socket/unit/config responsibility for live 19092 and 8866, compare old production effective unit/process tree/listener ownership with the failed new Gateway unit/runtime binding and its preserved journal/config artifacts, and determine the first factual mismatch. Do not restart/stop services or retry cutover. ChatGPT will decide whether the fix belongs in GitHub, deployment binding, or service topology.",
     "working_method_id": "WM-006",
     "working_method_name": "Role-Locked Concurrency-Safe Governed Adaptive Method",
     "bootstrap_holding_contract": "ADR-009: transparent-forward / persist-before-ACK / idempotent-replay-complete-after-confirmed-success"
