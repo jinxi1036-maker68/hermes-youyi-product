@@ -30,7 +30,6 @@ import os
 from pathlib import Path
 import pwd
 import sqlite3
-import stat
 import time
 from typing import Any, Iterable
 from urllib.parse import urlsplit
@@ -513,6 +512,44 @@ class HoldingStore:
         finally:
             connection.close()
 
+
+    @staticmethod
+    def read_counts(path: Path) -> dict[str, int]:
+        """Read queue counts without creating or mutating the spool."""
+        path = Path(path)
+        empty = {
+            "total_count": 0,
+            "pending_count": 0,
+            "delivering_count": 0,
+            "completed_count": 0,
+        }
+        if not path.exists():
+            return empty
+        uri = f"file:{path.resolve()}?mode=ro"
+        connection = sqlite3.connect(uri, uri=True, timeout=2.0)
+        connection.row_factory = sqlite3.Row
+        try:
+            row = connection.execute(
+                """
+                SELECT
+                    COUNT(*) AS total_count,
+                    SUM(CASE WHEN status='pending' THEN 1 ELSE 0 END) AS pending_count,
+                    SUM(CASE WHEN status='delivering' THEN 1 ELSE 0 END) AS delivering_count,
+                    SUM(CASE WHEN status='completed' THEN 1 ELSE 0 END) AS completed_count
+                  FROM callback_holding
+                """
+            ).fetchone()
+            if row is None:
+                return empty
+            return {
+                "total_count": int(row["total_count"] or 0),
+                "pending_count": int(row["pending_count"] or 0),
+                "delivering_count": int(row["delivering_count"] or 0),
+                "completed_count": int(row["completed_count"] or 0),
+            }
+        finally:
+            connection.close()
+
     def prune_completed(self, *, older_than_epoch: float) -> int:
         cutoff = datetime.fromtimestamp(float(older_than_epoch), tz=timezone.utc).isoformat(
             timespec="milliseconds"
@@ -930,12 +967,11 @@ def _control(args: argparse.Namespace) -> int:
                 "mode": HoldingModeGate(mode_file).snapshot(),
             }
         elif args.action == "offline-status":
-            store = HoldingStore(db_path)
             result = {
                 "ok": True,
                 "action": "offline-status",
                 "mode": HoldingModeGate(mode_file).snapshot(),
-                "queue": store.counts(),
+                "queue": HoldingStore.read_counts(db_path),
             }
         elif args.action in {"wait-held", "wait-empty"}:
             condition = "held" if args.action == "wait-held" else "empty"
