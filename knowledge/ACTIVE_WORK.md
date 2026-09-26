@@ -261,3 +261,27 @@ PR #21 已修复 production-gate design review 发现的 state collision：
 6. 不改 Nginx、不切 callback、不停 Gateway、不切 Home/selector、不发送真实 callback。
 
 复验 PASS 后，由 ChatGPT 再冻结 controlled production deployment/cutover gate。
+
+
+## Server re-verification after PR #21｜BLOCKED on provisioning only
+
+Codex 回传：
+
+- `production_changed=false`
+- MAIN_SHA = `37a16b94ecb8ed62930ab8c353660780f8712359`
+- PRODUCTION_SHA = `588ea6eecb1833159e886181f3259be6e0befe37`
+- STATE_ROOT_BOUNDARY = FAIL
+- SERVICE_WRITE_BOUNDARY = FAIL
+- FINALIZE_COMPOSITION = PASS
+- TARGETED_TESTS = PASS
+- blocker：`/var/lib/hermes-youyi/wecom-holding` 不存在，父目录 root:root 0755，服务用户无法自行创建该 state root。
+
+判断：
+
+- 这不是 ADR-009 / Holding Bridge 语义失败；
+- PR #21 的“Bridge state 独立于 Gateway Home”方向正确；
+- 当前唯一缺口是部署阶段没有一个正式的、Git-governed 的 state-root provisioning gate；
+- 不允许让服务用户提升权限或自行创建 `/var/lib/hermes-youyi` 下的新目录；
+- 正确边界是：部署期 root 仅创建/修正 dedicated Bridge state root 的 owner/group/mode；运行期 Bridge 继续以 service identity 写入该目录。
+
+下一步：ChatGPT 直接在 GitHub 增加 fail-closed provisioning/verification 工具和测试；production 保持不变。

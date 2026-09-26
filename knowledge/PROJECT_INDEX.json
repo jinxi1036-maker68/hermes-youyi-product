@@ -31,8 +31,8 @@
     "active_work_item_id": "WI-2026-09-bootstrap-durable-ingress",
     "blocker_id": "bootstrap-durable-ingress",
     "blocker_status": "blocked",
-    "blocker_summary": "The Holding Bridge / runtime-home finalize state collision is fixed in PR #21 and code-level composition regression passes on main. The remaining blocker is server-side re-verification that the revised dedicated Bridge state root is truly outside Gateway HERMES_HOME, writable by the real service identity, and unaffected by runtime-home finalize before production cutover.",
-    "next_action": "Owner manually relays ChatGPT's short Codex re-verification brief. Codex only verifies the revised dedicated Holding Bridge state-root boundary and finalize composition on the real server with production_changed=false. If PASS, ChatGPT freezes the controlled production deployment/cutover gate; do not cut production or perform Owner WeCom acceptance yet.",
+    "blocker_summary": "Server re-verification of PR #21 found the dedicated Bridge state-root boundary is semantically correct but not provisioned on the live server: /var/lib/hermes-youyi/wecom-holding does not exist and its parent is root:root 0755, so the service identity cannot create it. Finalize composition and targeted tests PASS; provisioning/ownership is the only blocker.",
+    "next_action": "ChatGPT must add a Git-governed fail-closed provisioning/verification gate for the dedicated Holding Bridge state root. Root may minimally create/chown/chmod that one directory during deployment; runtime Bridge writes remain service-identity only. Merge only after CI PASS, then Codex re-verifies provisioning with production_changed=false.",
     "working_method_id": "WM-006",
     "working_method_name": "Role-Locked Concurrency-Safe Governed Adaptive Method",
     "bootstrap_holding_contract": "ADR-009: transparent-forward / persist-before-ACK / idempotent-replay-complete-after-confirmed-success"
