@@ -81,6 +81,61 @@ def _traversal_paths(path: Path) -> list[Path]:
     return rows
 
 
+def _service_traversal(
+    path: Path,
+    *,
+    uid: int,
+    gids: set[int],
+) -> tuple[bool, list[dict[str, Any]]]:
+    rows: list[dict[str, Any]] = []
+    ok = True
+    for item in _traversal_paths(path):
+        traversable = (
+            _permission_bits(item, uid=uid, gids=gids) & 0b001
+        ) == 0b001
+        rows.append({
+            "path": str(item),
+            "mode": f"{stat.S_IMODE(item.stat().st_mode):04o}",
+            "owner_uid": item.stat().st_uid,
+            "group_gid": item.stat().st_gid,
+            "traversable": traversable,
+        })
+        ok = ok and traversable
+    return ok, rows
+
+
+def _entry_errors(
+    state_root: Path,
+    *,
+    uid: int,
+    gid: int,
+    gids: set[int],
+) -> tuple[list[str], int]:
+    errors: list[str] = []
+    count = 0
+    for item in sorted(state_root.rglob("*")):
+        count += 1
+        if item.is_symlink():
+            errors.append(
+                f"state_entry_symlink_forbidden:{item.relative_to(state_root)}"
+            )
+            continue
+        meta = item.stat()
+        if meta.st_uid != uid or meta.st_gid != gid:
+            errors.append(
+                f"state_entry_identity_mismatch:{item.relative_to(state_root)}"
+            )
+            continue
+        required = 0b111 if item.is_dir() else 0b110
+        if (
+            _permission_bits(item, uid=uid, gids=gids) & required
+        ) != required:
+            errors.append(
+                f"state_entry_service_access_failed:{item.relative_to(state_root)}"
+            )
+    return errors, count
+
+
 def _boundary_errors(*, state_root: Path, gateway_home: Path) -> list[str]:
     errors: list[str] = []
     if not state_root.is_absolute():
@@ -166,43 +221,17 @@ def inspect_state_root(
         _permission_bits(state_root, uid=uid, gids=gids) & 0b111
     ) == 0b111
 
-    traversal: list[dict[str, Any]] = []
-    traversal_ok = True
-    for path in _traversal_paths(state_root.parent):
-        traversable = (
-            _permission_bits(path, uid=uid, gids=gids) & 0b001
-        ) == 0b001
-        traversal.append({
-            "path": str(path),
-            "mode": f"{stat.S_IMODE(path.stat().st_mode):04o}",
-            "owner_uid": path.stat().st_uid,
-            "group_gid": path.stat().st_gid,
-            "traversable": traversable,
-        })
-        traversal_ok = traversal_ok and traversable
-
-    entry_errors: list[str] = []
-    entry_count = 0
-    for item in sorted(state_root.rglob("*")):
-        entry_count += 1
-        if item.is_symlink():
-            entry_errors.append(
-                f"state_entry_symlink_forbidden:{item.relative_to(state_root)}"
-            )
-            continue
-        meta = item.stat()
-        if meta.st_uid != uid or meta.st_gid != gid:
-            entry_errors.append(
-                f"state_entry_identity_mismatch:{item.relative_to(state_root)}"
-            )
-            continue
-        required = 0b111 if item.is_dir() else 0b110
-        if (
-            _permission_bits(item, uid=uid, gids=gids) & required
-        ) != required:
-            entry_errors.append(
-                f"state_entry_service_access_failed:{item.relative_to(state_root)}"
-            )
+    traversal_ok, traversal = _service_traversal(
+        state_root.parent,
+        uid=uid,
+        gids=gids,
+    )
+    entry_errors, entry_count = _entry_errors(
+        state_root,
+        uid=uid,
+        gid=gid,
+        gids=gids,
+    )
 
     errors.extend(entry_errors)
     if not owner_ok:
@@ -270,7 +299,37 @@ def provision_state_root(
             "current_uid": os.geteuid(),
         }
 
-    uid, gid, _gids = _identity(service_user, service_group)
+    uid, gid, gids = _identity(service_user, service_group)
+
+    traversal_ok, traversal = _service_traversal(
+        state_root.parent,
+        uid=uid,
+        gids=gids,
+    )
+    if not traversal_ok:
+        return {
+            "ok": False,
+            "error": "holding_state_root_parent_access_failed",
+            "errors": ["state_root_parent_not_traversable_by_service"],
+            "parent_traversal": traversal,
+            "applied": False,
+        }
+
+    if state_root.exists():
+        existing_errors, _entry_count = _entry_errors(
+            state_root,
+            uid=uid,
+            gid=gid,
+            gids=gids,
+        )
+        if existing_errors:
+            return {
+                "ok": False,
+                "error": "holding_state_root_existing_state_unsafe",
+                "errors": existing_errors,
+                "applied": False,
+                "recursive_owner_change": False,
+            }
 
     created = False
     if not state_root.exists():
@@ -279,7 +338,7 @@ def provision_state_root(
         created = True
 
     # Only mutate the exact root directory. Never recursively chown/chmod
-    # existing Bridge state; unexpected child ownership must fail verification.
+    # existing Bridge state; unexpected child ownership already failed above.
     meta = state_root.stat()
     if meta.st_uid != uid or meta.st_gid != gid:
         os.chown(state_root, uid, gid)
