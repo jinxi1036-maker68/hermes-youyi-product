@@ -121,6 +121,37 @@ with `--apply` as root. The gate:
 After provisioning, rerun without `--apply` and require `ok=true` before
 starting the Bridge.
 
+### Stage-only candidate boundary
+
+The first cutover has an ordering requirement: the Holding Bridge must be
+running before any active Gateway code links are switched.
+
+Therefore the candidate release must first be **staged without activation**:
+
+```text
+python scripts/xiaoyou_release_installer.py \
+  --release-root <verified-release-root> \
+  --base /opt/hermes-youyi-current \
+  --stage-only \
+  --apply
+```
+
+Stage-only:
+- verifies the release manifest and file hashes;
+- copies the release into the canonical versioned `xiaoyou-releases` tree;
+- never changes active runtime/plugin/script links;
+- is idempotent when the exact verified release is already present;
+- rejects symlinked or invalid existing canonical release paths.
+
+The Bridge systemd template deliberately separates:
+- `XIAOYOU_RELEASE_PAYLOAD_ROOT`: exact staged candidate payload;
+- `HERMES_PYTHON`: already-verified existing Python interpreter;
+- `XIAOYOU_SERVICE_USER/GROUP`: live service identity.
+
+This lets the Bridge run exact candidate code before Gateway activation without
+copying scripts into the active production tree or switching current Gateway
+code links.
+
 ## HOLD control plane
 
 There is no network endpoint that changes HOLD state.
@@ -150,10 +181,13 @@ Before any production change:
 2. verify the dedicated Bridge state root is outside Gateway `HERMES_HOME`;
 3. run the state-root provisioning gate read-only, provision with explicit
    root `--apply` only if required, then require read-only verification PASS;
-4. install and start the Git-governed bridge without changing public routing;
-5. prove local FORWARD, HOLD, FALLBACK, restart recovery and duplicate paths;
-6. enter HOLD before the old Gateway cutover window;
-7. change only the exact `/wecom/callback` Nginx locations and use the
+4. build/verify the exact candidate release and stage it with `--stage-only`;
+5. prove stage-only did not change current Gateway active links;
+6. render/install the Bridge unit using the staged candidate payload plus the
+   already-verified existing Python interpreter;
+7. start the Bridge without changing public routing and prove local
+   FORWARD/HOLD/FALLBACK/restart/duplicate paths;
+8. only then change the exact `/wecom/callback` Nginx locations using the
    supported graceful reload;
-8. never alter the shared `hermes_hub -> 127.0.0.1:19090` member;
-9. retain symmetric callback-only rollback.
+9. never alter the shared `hermes_hub -> 127.0.0.1:19090` member;
+10. retain symmetric callback-only rollback.
