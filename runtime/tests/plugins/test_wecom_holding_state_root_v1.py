@@ -146,29 +146,24 @@ def test_state_root_symlink_is_rejected(tmp_path, monkeypatch):
     assert "state_root_symlink_forbidden" in result["errors"]
 
 
-def test_existing_child_identity_mismatch_is_not_recursively_repaired(
+def test_unsafe_existing_child_blocks_before_root_mutation(
     tmp_path,
     monkeypatch,
 ):
     from scripts import xiaoyou_wecom_holding_state_root as gate
 
-    uid, gid = _identity(monkeypatch, gate)
+    _identity(monkeypatch, gate)
     parent = tmp_path / "var"
     parent.mkdir(mode=0o755)
     state = parent / "wecom-holding"
     state.mkdir(mode=0o700)
+    outside = tmp_path / "outside.db"
+    outside.write_bytes(b"x")
     child = state / "existing.db"
-    child.write_bytes(b"x")
+    child.symlink_to(outside)
     monkeypatch.setattr(gate.os, "geteuid", lambda: 0)
 
     original_root = state.stat()
-    original_child = child.stat()
-    monkeypatch.setattr(
-        gate,
-        "_identity",
-        lambda _user, _group: (uid + 1000, gid + 1000, {gid + 1000}),
-    )
-
     chown_calls = []
     chmod_calls = []
     monkeypatch.setattr(
@@ -193,17 +188,15 @@ def test_existing_child_identity_mismatch_is_not_recursively_repaired(
 
     assert result["ok"] is False
     assert result["applied"] is False
+    assert result["error"] == "holding_state_root_existing_state_unsafe"
     assert any(
-        item.startswith("state_entry_identity_mismatch:existing.db")
+        item.startswith("state_entry_symlink_forbidden:existing.db")
         for item in result["errors"]
     )
     assert chown_calls == []
     assert chmod_calls == []
     assert state.stat().st_uid == original_root.st_uid
     assert state.stat().st_gid == original_root.st_gid
-    assert child.stat().st_uid == original_child.st_uid
-    assert child.stat().st_gid == original_child.st_gid
-
 
 def test_untraversable_parent_blocks_before_creation(tmp_path, monkeypatch):
     from scripts import xiaoyou_wecom_holding_state_root as gate
