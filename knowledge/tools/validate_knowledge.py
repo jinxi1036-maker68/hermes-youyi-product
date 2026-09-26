@@ -10,7 +10,6 @@ import json
 import os
 from pathlib import Path
 import re
-import sys
 
 SHA40 = re.compile(r"^[0-9a-f]{40}$")
 INLINE_SHA40 = re.compile(r"\b[0-9a-f]{40}\b")
@@ -22,6 +21,8 @@ REQUIRED = [
     "knowledge/ACTIVE_WORK.md",
     "knowledge/EVIDENCE_INDEX.json",
     "knowledge/FRESHNESS_PROTOCOL.md",
+    "knowledge/WORKING_METHOD.json",
+    "knowledge/CURRENT_WORKING_METHOD.md",
     "knowledge/04_CAPABILITY_MAP.md",
     "knowledge/DOMAIN_MODEL.md",
     "knowledge/REJECTED_APPROACHES.md",
@@ -39,12 +40,19 @@ def fail(errors: list[str], message: str) -> None:
     errors.append(message)
 
 
+def load_json(path: Path, label: str, errors: list[str]) -> dict:
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except Exception as exc:
+        fail(errors, f"{label}_invalid_json:{type(exc).__name__}")
+        return {}
+
+
 def main() -> int:
     script = Path(__file__).resolve()
     root = script.parents[2]
     errors: list[str] = []
 
-    # Pure current-tree rule.
     top = sorted(p.name for p in root.iterdir() if not p.name.startswith("."))
     unexpected = [name for name in top if name not in {"README.md", "knowledge"}]
     if unexpected:
@@ -56,25 +64,19 @@ def main() -> int:
 
     index_path = root / "knowledge/PROJECT_INDEX.json"
     evidence_path = root / "knowledge/EVIDENCE_INDEX.json"
-    if not index_path.is_file() or not evidence_path.is_file():
-        for error in errors:
-            print(error)
+    method_path = root / "knowledge/WORKING_METHOD.json"
+    if not all(p.is_file() for p in (index_path, evidence_path, method_path)):
+        print(json.dumps({"ok": False, "errors": errors}, ensure_ascii=False, indent=2))
         return 1
 
-    try:
-        index = json.loads(index_path.read_text(encoding="utf-8"))
-    except Exception as exc:
-        fail(errors, f"project_index_invalid_json:{type(exc).__name__}")
-        index = {}
-
-    try:
-        evidence = json.loads(evidence_path.read_text(encoding="utf-8"))
-    except Exception as exc:
-        fail(errors, f"evidence_index_invalid_json:{type(exc).__name__}")
-        evidence = {}
+    index = load_json(index_path, "project_index", errors)
+    evidence = load_json(evidence_path, "evidence_index", errors)
+    method = load_json(method_path, "working_method", errors)
 
     if index.get("schema_version") != "xiaoyou_project_knowledge_v2":
         fail(errors, "wrong_schema_version")
+    if int(index.get("knowledge_revision") or 0) < 3:
+        fail(errors, "knowledge_revision_missing_working_method_layer")
 
     current = index.get("current") or {}
     for field in ("main_sha", "production_sha"):
@@ -105,7 +107,24 @@ def main() -> int:
         if not evidence_id or evidence_id not in evidence_ids:
             fail(errors, f"sealed_capability_missing_evidence:{capability.get('id')}")
 
-    # START/Handoff must not freeze current SHAs.
+    # Working Method authority and lineage.
+    if method.get("schema_version") != "xiaoyou_working_method_v1":
+        fail(errors, "wrong_working_method_schema")
+    index_method_id = str(current.get("working_method_id") or "")
+    method_id = str(method.get("current_method_id") or "")
+    if not index_method_id or index_method_id != method_id:
+        fail(errors, f"working_method_id_mismatch:index={index_method_id}:method={method_id}")
+    history = [str(x) for x in (method.get("history") or [])]
+    if not history:
+        fail(errors, "working_method_history_empty")
+    for rel in history:
+        if not (root / rel).is_file():
+            fail(errors, f"missing_working_method_history:{rel}")
+    current_method_doc = root / "knowledge/CURRENT_WORKING_METHOD.md"
+    if current_method_doc.is_file() and method_id not in current_method_doc.read_text(encoding="utf-8"):
+        fail(errors, "current_working_method_projection_mismatch")
+
+    # Static entry files must not freeze dynamic SHAs.
     for rel in (
         "knowledge/00_START_HERE.md",
         "knowledge/handoff/NEXT_WINDOW_BOOTSTRAP.md",
@@ -120,14 +139,12 @@ def main() -> int:
         if "PROJECT_INDEX.json" not in content or "动态事实唯一权威" not in content:
             fail(errors, "current_state_missing_canonical_authority_notice")
 
-    # Obvious sensitive-file guard.
     for path in root.rglob("*"):
         if not path.is_file():
             continue
         if path.name in FORBIDDEN_FILENAMES or path.suffix.lower() in FORBIDDEN_SUFFIXES:
             fail(errors, f"forbidden_sensitive_filename:{path.relative_to(root)}")
 
-    # Optional live-main freshness check supplied by the executor.
     live_main = str(os.getenv("XIAOYOU_LIVE_MAIN_SHA") or "").strip().lower()
     if live_main:
         if not SHA40.fullmatch(live_main):
@@ -144,6 +161,8 @@ def main() -> int:
         "schema_version": index.get("schema_version"),
         "knowledge_revision": index.get("knowledge_revision"),
         "active_work_item_id": active_id,
+        "working_method_id": method_id,
+        "working_method_history_count": len(history),
         "sealed_evidence_count": len(index.get("sealed_capabilities") or []),
         "evidence_count": len(evidence_ids),
         "live_main_checked": bool(live_main),

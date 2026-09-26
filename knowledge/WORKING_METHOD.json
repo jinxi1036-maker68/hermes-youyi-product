@@ -1,0 +1,153 @@
+{
+  "schema_version": "xiaoyou_working_method_v1",
+  "current_method_id": "WM-004",
+  "current_method_name": "Adaptive Evidence-First Project Method",
+  "status": "active",
+  "effective_at": "2026-09-26T09:48:00+08:00",
+  "purpose": "Continuously improve how Owner, ChatGPT and Codex build XiaoYou while preserving evidence, stage discipline, safety and project continuity.",
+  "stable_principles": [
+    "Owner decides product/business direction and performs final real business acceptance when required.",
+    "ChatGPT is technical lead and GitHub code executor; it owns architecture, repo edits, tests, evidence judgment and next-step control.",
+    "Codex is server-side executor/verifier; it inspects, validates, deploys and rolls back but does not independently redesign product architecture or repo code.",
+    "One formal capability stage at a time; do not mix unrelated future-stage debt into the current blocker.",
+    "Evidence before conclusion: distinguish model self-report, unit tests, isolated integration, production technical facts and real business acceptance.",
+    "Freeze acceptance criteria before real testing; fix only blockers and do not move the goalposts during a stage.",
+    "Live facts outrank remembered facts; run the appropriate Freshness Gate before code or production work.",
+    "Use the smallest general fix that addresses the root cause; do not patch for one prompt or one test case.",
+    "Stop after structural failure instead of blind retry loops; establish root-cause evidence before another production attempt.",
+    "A major work item is not done until Project Knowledge is synchronized."
+  ],
+  "current_workflow": [
+    {
+      "step": 1,
+      "name": "Orient",
+      "action": "Read PROJECT_INDEX, Freshness Gate, CURRENT_STATE, ACTIVE_WORK and this Working Method before implementation."
+    },
+    {
+      "step": 2,
+      "name": "Define the single problem",
+      "action": "State the current-stage proposition, exact blocker, non-goals, evidence needed and stop conditions."
+    },
+    {
+      "step": 3,
+      "name": "Classify responsibility",
+      "action": "Decide whether the next action belongs to Owner, ChatGPT/GitHub, or Codex/server. Do not use the user as a default relay and do not push repo coding to Codex."
+    },
+    {
+      "step": 4,
+      "name": "Inspect before change",
+      "action": "Trace the relevant code/data/runtime path and distinguish root cause from symptom. For production facts, use read-only server evidence when repository evidence is insufficient."
+    },
+    {
+      "step": 5,
+      "name": "Design the smallest general fix",
+      "action": "Preserve model-first architecture, authority boundaries, permissions, stage boundaries and rollbackability."
+    },
+    {
+      "step": 6,
+      "name": "Implement in GitHub",
+      "action": "ChatGPT creates the minimal branch/PR/tests and reviews the diff. Separate unrelated issues."
+    },
+    {
+      "step": 7,
+      "name": "Verify candidate",
+      "action": "Run targeted tests plus baseline A/B where relevant. Candidate-only failures determine regressions; an existing baseline failure is not silently reclassified."
+    },
+    {
+      "step": 8,
+      "name": "Server verification/deployment",
+      "action": "Codex receives a goal-and-boundary-oriented verification/deployment brief. Structural blockers cause STOP, not autonomous redesign."
+    },
+    {
+      "step": 9,
+      "name": "Production technical gate",
+      "action": "Verify actual deployed version, runtime topology, health, authority boundaries and rollback state before real business testing."
+    },
+    {
+      "step": 10,
+      "name": "Owner acceptance",
+      "action": "Only when the technical gate truly requires real business acceptance, explicitly tell the Owner it is their turn to test."
+    },
+    {
+      "step": 11,
+      "name": "Seal or iterate",
+      "action": "PASS seals the capability with evidence; FAIL fixes only the blocker; BLOCKED resolves the external/structural dependency first."
+    },
+    {
+      "step": 12,
+      "name": "Knowledge sync",
+      "action": "Update PROJECT_INDEX, CURRENT_STATE, ACTIVE_WORK, Evidence, capability/ADR/history and Working Method when the method itself changed."
+    }
+  ],
+  "stop_rules": [
+    "Do not repeatedly redeploy after multiple unexplained production failures.",
+    "Do not stop/restart production services without a proven safe path and rollback for the current risk.",
+    "Do not change business acceptance criteria simply to make a candidate pass.",
+    "Do not let a server-only unmanaged patch become the product solution without Git governance.",
+    "Do not claim PASS before the required evidence layer is complete.",
+    "Do not reopen a sealed capability for non-blocking cosmetic issues.",
+    "Do not let current-work urgency bypass Project Knowledge freshness when live facts may have changed."
+  ],
+  "codex_brief_style": {
+    "default": "Goal-oriented",
+    "include": [
+      "background",
+      "current state",
+      "goal",
+      "required outcomes",
+      "hard boundaries",
+      "acceptance evidence",
+      "stop condition"
+    ],
+    "avoid": [
+      "prescribing repo implementation when Codex is only the server executor",
+      "asking Codex to redesign architecture",
+      "unnecessary file/function micromanagement"
+    ],
+    "exception": "Precise paths/commands may be specified when server execution safety requires an exact controlled action."
+  },
+  "method_learning_loop": {
+    "principle": "The working method may evolve, but only through evidence-backed process learning.",
+    "triggers": [
+      "The same class of failure repeats.",
+      "A handoff repeatedly loses context or creates contradictory work.",
+      "Responsibility between Owner/ChatGPT/Codex is ambiguous.",
+      "A deployment/check process creates avoidable risk or repeated false blockers.",
+      "A new tool/capability enables a materially safer or faster workflow.",
+      "The current method creates unnecessary latency, duplication or manual relay.",
+      "A new project phase requires a different execution pattern."
+    ],
+    "process": [
+      "Observe and record the workflow problem.",
+      "Separate a process problem from a product/code problem.",
+      "Propose a candidate method change and expected benefit.",
+      "Test the candidate on a bounded work item when practical.",
+      "Evaluate evidence: speed, correctness, safety, rework, handoff quality and cognitive load.",
+      "Accept, reject or revise the candidate.",
+      "If accepted, increment method version, update current method, append a history record and update validator/index.",
+      "Never erase the old method; preserve why it was replaced."
+    ],
+    "forbidden_shortcuts": [
+      "Do not change the method just because one outcome is inconvenient.",
+      "Do not weaken safety/evidence standards merely to move faster.",
+      "Do not convert one successful improvisation directly into a permanent rule without enough evidence.",
+      "Do not silently change roles or workflow in a new chat window."
+    ]
+  },
+  "success_metrics": [
+    "Fewer repeated mistakes and reopened decisions.",
+    "Lower user relay burden.",
+    "Faster path from real blocker to verified fix.",
+    "Fewer unrelated changes per stage.",
+    "Fewer production retries without new evidence.",
+    "Higher continuity across chat windows.",
+    "Clearer PASS/FAIL/BLOCKED judgments.",
+    "Knowledge and code remain synchronized."
+  ],
+  "history": [
+    "knowledge/methods/WM-001-chat-handoff-era.md",
+    "knowledge/methods/WM-002-role-separation.md",
+    "knowledge/methods/WM-003-evidence-first-release.md",
+    "knowledge/methods/WM-004-adaptive-evidence-first.md"
+  ]
+}

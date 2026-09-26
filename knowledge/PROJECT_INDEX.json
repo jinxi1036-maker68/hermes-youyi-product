@@ -1,6 +1,6 @@
 {
   "schema_version": "xiaoyou_project_knowledge_v2",
-  "knowledge_revision": 2,
+  "knowledge_revision": 3,
   "project": "xiaoyou-hermes",
   "repository": "jinxi1036-maker68/hermes-youyi-product",
   "knowledge_branch": "project-knowledge",
@@ -13,7 +13,8 @@
     "active_work": "knowledge/ACTIVE_WORK.md",
     "evidence": "knowledge/EVIDENCE_INDEX.json",
     "code": "main branch",
-    "deployed_runtime": "production server"
+    "deployed_runtime": "production server",
+    "working_method": "knowledge/WORKING_METHOD.json"
   },
   "current": {
     "formal_stage": {
@@ -30,7 +31,9 @@
     "blocker_id": "bootstrap-durable-ingress",
     "blocker_status": "blocked",
     "blocker_summary": "The current production Gateway does not have safe-drain, and no Gateway-independent durable receive+ACK+persist+replay layer has yet been proven for the first Runtime Topology cutover.",
-    "next_action": "After Knowledge V2 is established, resume the production-cutover work with a read-only Nginx ingress switchover audit, then design the Git-governed bootstrap holding layer from verified facts."
+    "next_action": "After Knowledge V2 is established, resume the production-cutover work with a read-only Nginx ingress switchover audit, then design the Git-governed bootstrap holding layer from verified facts.",
+    "working_method_id": "WM-004",
+    "working_method_name": "Adaptive Evidence-First Project Method"
   },
   "sealed_capabilities": [
     {

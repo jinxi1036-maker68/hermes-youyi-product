@@ -24,7 +24,7 @@
     },
     "knowledge_revision": {
       "type": "integer",
-      "minimum": 2
+      "minimum": 3
     },
     "project": {
       "type": "string",
@@ -59,7 +59,8 @@
         "active_work",
         "evidence",
         "code",
-        "deployed_runtime"
+        "deployed_runtime",
+        "working_method"
       ]
     },
     "current": {
@@ -74,7 +75,8 @@
         "blocker_id",
         "blocker_status",
         "blocker_summary",
-        "next_action"
+        "next_action",
+        "working_method_id"
       ],
       "properties": {
         "formal_stage": {
@@ -111,6 +113,10 @@
           "minLength": 1
         },
         "next_action": {
+          "type": "string",
+          "minLength": 1
+        },
+        "working_method_id": {
           "type": "string",
           "minLength": 1
         }
