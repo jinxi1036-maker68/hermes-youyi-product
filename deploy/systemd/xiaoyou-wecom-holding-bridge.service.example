@@ -1,0 +1,25 @@
+[Unit]
+Description=XiaoYou WeCom Bootstrap Holding Bridge
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=hermes-youyi
+Group=hermes-youyi
+WorkingDirectory=${HERMES_RUNTIME_ROOT}
+EnvironmentFile=/etc/xiaoyou/runtime.wecom-holding.env
+Environment=PYTHONPATH=${HERMES_RUNTIME_ROOT}/runtime
+ExecStart=${HERMES_RUNTIME_ROOT}/.venv/bin/python ${HERMES_RUNTIME_ROOT}/scripts/xiaoyou_wecom_holding_bridge.py
+Restart=on-failure
+RestartSec=2
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+ReadWritePaths=${HERMES_PERSISTENT_HOME}
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
