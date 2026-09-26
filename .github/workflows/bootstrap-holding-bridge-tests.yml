@@ -9,6 +9,11 @@ on:
       - runtime/plugins/platforms/wecom/holding_bridge.py
       - runtime/plugins/platforms/wecom/inbound_receipts.py
       - runtime/tests/plugins/test_wecom_holding_bridge_v1.py
+      - runtime/tests/plugins/test_xiaoyou_runtime_home_migration_v1.py
+      - scripts/xiaoyou_runtime_home_migration.py
+      - scripts/xiaoyou_wecom_holding_mode.py
+      - deploy/config/runtime.wecom-holding.env.example
+      - deploy/systemd/xiaoyou-wecom-holding-bridge.service.example
       - .github/workflows/bootstrap-holding-bridge-tests.yml
   pull_request:
     paths:
@@ -44,3 +49,4 @@ jobs:
           python -m pytest -q
           runtime/tests/plugins/test_wecom_holding_bridge_v1.py
           runtime/tests/plugins/test_wecom_callback_safe_drain_v1.py
+          runtime/tests/plugins/test_xiaoyou_runtime_home_migration_v1.py

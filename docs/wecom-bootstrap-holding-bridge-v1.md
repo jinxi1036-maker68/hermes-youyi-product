@@ -66,6 +66,32 @@ Completed transport rows retain only the fingerprint/status/timestamps; the
 raw path, headers and encrypted body are cleared after confirmed downstream
 success.
 
+## Durable state boundary
+
+Holding Bridge durability is deliberately separate from Gateway
+`HERMES_HOME`.
+
+For the first Runtime Topology cutover the Gateway persistent Home still needs
+a final migration/finalize after the old Gateway has stopped. That finalize
+prunes target-only Gateway Home files. Therefore a live holding SQLite database
+or HOLD marker under `HERMES_HOME/state` could be deleted during the exact
+window it is protecting.
+
+The production template uses a version-neutral sibling state root:
+
+```text
+/var/lib/hermes-youyi/hermes-home     # Gateway persistent Home
+/var/lib/hermes-youyi/wecom-holding  # Holding Bridge durable state
+```
+
+`XIAOYOU_WECOM_HOLDING_STATE_ROOT` is authoritative when configured. If it is
+not configured but `HERMES_HOME` is available, the Bridge derives the sibling
+`wecom-holding` directory rather than writing inside Gateway Home.
+
+The Bridge service must have write access only to its dedicated state root.
+Runtime Home migration/finalize must never own, copy, prune, or reverse-sync
+Bridge backlog/control state.
+
 ## HOLD control plane
 
 There is no network endpoint that changes HOLD state.
@@ -87,7 +113,8 @@ This implementation does not modify Nginx or production.
 Before any production change:
 
 1. verify the chosen loopback port is unused;
-2. install and start the Git-governed bridge without changing public routing;
+2. verify the dedicated Bridge state root is outside Gateway `HERMES_HOME`;
+3. install and start the Git-governed bridge without changing public routing;
 3. prove local FORWARD, HOLD, FALLBACK, restart recovery and duplicate paths;
 4. enter HOLD before the old Gateway cutover window;
 5. change only the exact \`/wecom/callback\` Nginx locations and use the

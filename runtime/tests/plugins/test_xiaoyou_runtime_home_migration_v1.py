@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import os
 from pathlib import Path
 import sqlite3
@@ -284,3 +285,75 @@ def test_runtime_home_inventory_still_blocks_unknown_special_node(tmp_path):
 
     assert result["ok"] is False
     assert "unsupported_runtime_home_node:state/unexpected.pipe" in result["errors"]
+
+
+
+def test_runtime_home_finalize_cannot_prune_external_holding_state(
+    tmp_path,
+    monkeypatch,
+):
+    from plugins.platforms.wecom import holding_bridge as hb
+    from scripts import xiaoyou_runtime_home_migration as migration
+
+    release = _release(tmp_path)
+    source = _source_home(tmp_path)
+    target = tmp_path / "persistent-hermes-home"
+    monkeypatch.setattr(migration, "_service_uid", lambda _user: os.geteuid())
+
+    seed = migration.migrate_runtime_home(
+        mode="seed",
+        release_root=release,
+        source_home=source,
+        target_home=target,
+        service_user="svc",
+    )
+    assert seed["ok"] is True
+
+    monkeypatch.setenv("HERMES_HOME", str(target))
+    monkeypatch.delenv("XIAOYOU_WECOM_HOLDING_STATE_ROOT", raising=False)
+    monkeypatch.delenv("XIAOYOU_WECOM_HOLDING_DB", raising=False)
+    monkeypatch.delenv("XIAOYOU_WECOM_HOLDING_MODE_FILE", raising=False)
+
+    bridge = hb.build_bridge_from_env()
+    expected_root = target.parent / hb.DEFAULT_STATE_DIR_NAME
+    assert bridge.store.path.parent == expected_root
+    assert expected_root != target
+    assert not expected_root.is_relative_to(target)
+
+    held = hb.make_held_request(
+        method="POST",
+        raw_path=(
+            "/wecom/callback?msg_signature=sig"
+            "&timestamp=100&nonce=n"
+        ),
+        headers={"Content-Type": "text/xml"},
+        body=b"<xml><Encrypt>held</Encrypt></xml>",
+    )
+    staged = bridge.store.persist_pending(held)
+    assert staged["created"] is True
+    bridge.mode_gate.path.parent.mkdir(parents=True, exist_ok=True)
+    bridge.mode_gate.path.write_text(
+        json.dumps(
+            {
+                "schema_version": hb.MODE_SCHEMA_VERSION,
+                "state": hb.HOLD_STATE,
+            }
+        ),
+        encoding="utf-8",
+    )
+    db_before = bridge.store.path.read_bytes()
+    mode_before = bridge.mode_gate.path.read_bytes()
+
+    final = migration.migrate_runtime_home(
+        mode="finalize",
+        release_root=release,
+        source_home=source,
+        target_home=target,
+        service_user="svc",
+        gateway_stopped_confirmed=True,
+    )
+
+    assert final["ok"] is True
+    assert bridge.store.path.read_bytes() == db_before
+    assert bridge.mode_gate.path.read_bytes() == mode_before
+    assert hb.HoldingStore(bridge.store.path).counts()["pending"] == 1

@@ -845,3 +845,32 @@ def test_missing_wecom_transport_fields_are_rejected_without_ack(
         "pending": 0,
         "completed": 0,
     }
+
+
+
+def test_default_state_root_is_sibling_of_gateway_home(tmp_path, monkeypatch):
+    gateway_home = tmp_path / "hermes-home"
+    monkeypatch.setenv("HERMES_HOME", str(gateway_home))
+    monkeypatch.delenv("XIAOYOU_WECOM_HOLDING_STATE_ROOT", raising=False)
+
+    state_root = hb._default_state_root()
+
+    assert state_root == tmp_path / hb.DEFAULT_STATE_DIR_NAME
+    assert state_root != gateway_home / "state"
+
+
+def test_explicit_state_root_overrides_gateway_home(tmp_path, monkeypatch):
+    gateway_home = tmp_path / "hermes-home"
+    holding_root = tmp_path / "bridge-durable-state"
+    monkeypatch.setenv("HERMES_HOME", str(gateway_home))
+    monkeypatch.setenv(
+        "XIAOYOU_WECOM_HOLDING_STATE_ROOT",
+        str(holding_root),
+    )
+
+    bridge = hb.build_bridge_from_env()
+
+    assert bridge.store.path == holding_root / "wecom_callback_holding.sqlite3"
+    assert bridge.mode_gate.path == (
+        holding_root / "wecom_callback_holding_mode.json"
+    )

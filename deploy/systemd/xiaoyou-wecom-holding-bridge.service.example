@@ -17,7 +17,9 @@ UMask=0077
 NoNewPrivileges=true
 PrivateTmp=true
 ProtectSystem=full
-ReadWritePaths=${HERMES_PERSISTENT_HOME}
+# This path must match XIAOYOU_WECOM_HOLDING_STATE_ROOT after template substitution.
+# Do not grant write access to Gateway HERMES_HOME for bootstrap holding state.
+ReadWritePaths=${XIAOYOU_WECOM_HOLDING_STATE_ROOT}
 StandardOutput=journal
 StandardError=journal
 
