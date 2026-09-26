@@ -25,14 +25,14 @@
       "sealed": false
     },
     "production_sha": "588ea6eecb1833159e886181f3259be6e0befe37",
-    "production_last_verified_at": "2026-09-26T20:03:00+08:00",
+    "production_last_verified_at": "2026-09-26T20:12:00+08:00",
     "main_sha": "bcb9c801d84dbcbfe35cc3cab8cf9657bc4e0a10",
     "main_last_verified_at": "2026-09-26T18:17:30+08:00",
     "active_work_item_id": "WI-2026-09-bootstrap-durable-ingress",
     "blocker_id": "bootstrap-durable-ingress",
     "blocker_status": "cleared_for_next_gate",
-    "blocker_summary": "Public callback durable ingress is now live through Holding Bridge. Before any Gateway stop, the exact current main must still be assembled into a complete self-contained Gateway candidate (clean Hermes Core/venv + current XiaoU allowlisted payload) and pass Core compatibility, self-contained, service-identity preflight, persistent Home and no-old-release-leak gates while the old Gateway remains online.",
-    "next_action": "Run a pre-cutover full Gateway candidate assembly/certification gate on the server with production routing unchanged: resolve live Hermes Core/model/service facts, build the exact-main XiaoU overlay, assemble a clean complete candidate runtime with its own Python/venv/console/hermes_cli plus the allowlisted XiaoU payload, and require Core Compatibility, Release Self-contained, candidate preflight, Core/WeCom Plugin Doctors, Runtime Topology and Persistent Home gates PASS. Do not enter Bridge HOLD or stop Gateway yet. Only after this PASS may the HOLD/finalize/activate/start/resume cutover gate execute.",
+    "blocker_summary": "Full current-main Gateway candidate pre-cutover certification PASS while old Gateway remained active and public callback stayed protected by Holding Bridge FORWARD. Complete candidate owns Python/venv/console/hermes_cli/Core/XiaoU/WeCom paths, all compatibility/self-contained/preflight/plugin/runtime-home gates pass, and old-release path leaks are zero.",
+    "next_action": "Execute the bounded first Runtime Topology production cutover: reconfirm the exact certified candidate and rollback facts; enter Bridge HOLD; create/validate the Gateway drain marker on the old source Home and wait callback processing=0 stable; stop old Gateway; finalize persistent Home; start the exact certified candidate on a separate new Gateway unit/runtime binding with old unit/env preserved for rollback; verify new Gateway while both Bridge HOLD and Gateway drain remain active; resume Gateway drain first and recover old receipt backlog; only after stable health resume Bridge and drain/replay Bridge backlog to zero. On any critical failure keep Bridge HOLD and restore/start the untouched old Gateway binding.",
     "working_method_id": "WM-006",
     "working_method_name": "Role-Locked Concurrency-Safe Governed Adaptive Method",
     "bootstrap_holding_contract": "ADR-009: transparent-forward / persist-before-ACK / idempotent-replay-complete-after-confirmed-success"

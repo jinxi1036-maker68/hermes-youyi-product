@@ -1,6 +1,6 @@
 {
   "schema_version": "xiaoyou_evidence_index_v1",
-  "updated_at": "2026-09-26T20:03:00+08:00",
+  "updated_at": "2026-09-26T20:12:00+08:00",
   "repository": "jinxi1036-maker68/hermes-youyi-product",
   "evidence": [
     {
@@ -211,6 +211,16 @@
       "production_sha": "588ea6eecb1833159e886181f3259be6e0befe37",
       "source": "Owner-relayed Codex production cutover result",
       "note": "production_changed=true. Preconditions PASS; formal Bridge healthy/FORWARD/pending=0. Only the two exact /wecom/callback proxy_pass targets on ports 80/443 changed to 127.0.0.1:19091; Nginx diff scope/config test/graceful reload/effective config all PASS. Shared hermes_hub -> 19090 unchanged. Synthetic GET on 80/443 PASS; Bridge and Cloud Hub/Gateway postchecks PASS; rollback not required. Gateway production SHA/Home/selector remain unchanged."
+    },
+    {
+      "id": "EV-RT-018",
+      "area": "Full current-main Gateway candidate pre-cutover certification",
+      "judgment": "PASS_SERVER_FULL_CANDIDATE",
+      "date": "2026-09-26",
+      "main_sha": "bcb9c801d84dbcbfe35cc3cab8cf9657bc4e0a10",
+      "production_sha": "588ea6eecb1833159e886181f3259be6e0befe37",
+      "source": "Owner-relayed Codex server result",
+      "note": "production_changed=true due to isolated complete candidate assembly/certification. CLEAN_CANDIDATE_ASSEMBLY, CORE_COMPAT_GATE, SELF_CONTAINED_GATE, CANDIDATE_PREFLIGHT, CORE_PLUGIN_DOCTOR, WECOM_PLUGIN_DOCTOR, RUNTIME_TOPOLOGY_GATE and PERSISTENT_HOME_GATE all PASS. OLD_RELEASE_PATH_LEAKS=0. Public callback remained through Holding Bridge in FORWARD and old Gateway remained unchanged/active. This certifies the current-main complete Gateway candidate before the HOLD window."
     }
   ]
 }

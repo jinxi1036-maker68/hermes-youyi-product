@@ -572,3 +572,51 @@ PR #16 的真实服务器验证曾证明该 assembly 方法可行，但当时对
 - 不做真人业务验收。
 
 这样真正进入 HOLD 停机窗口后只剩 finalize + activate + start + verify + resume，避免在 callback backlog 累积期间现场组装 candidate。
+
+
+## Full current-main Gateway candidate｜server PASS
+
+Codex 回传：
+- `production_changed=true`，变化为隔离完整 candidate 组装/认证；
+- MAIN_SHA = `bcb9c801d84dbcbfe35cc3cab8cf9657bc4e0a10`；
+- PRODUCTION_SHA = `588ea6eecb1833159e886181f3259be6e0befe37`；
+- CLEAN_CANDIDATE_ASSEMBLY = PASS；
+- CORE_COMPAT_GATE = PASS；
+- SELF_CONTAINED_GATE = PASS；
+- CANDIDATE_PREFLIGHT = PASS；
+- CORE_PLUGIN_DOCTOR / WECOM_PLUGIN_DOCTOR = PASS；
+- RUNTIME_TOPOLOGY_GATE / PERSISTENT_HOME_GATE = PASS；
+- OLD_RELEASE_PATH_LEAKS = 0；
+- PUBLIC_CALLBACK_BRIDGE_FORWARD = PASS；
+- OLD_GATEWAY_UNCHANGED = PASS；
+- blocker = none。
+
+证据：`EV-RT-018 = PASS_SERVER_FULL_CANDIDATE`。
+
+这意味着首次停机窗口前的技术准备已经完成：新 Gateway 不需要在 HOLD/backlog 累积期间临时组装。
+
+### 最终 cutover 顺序进一步冻结
+
+1. fresh precheck：Bridge/public callback、old Gateway、candidate、rollback facts；
+2. Bridge 进入 HOLD；
+3. 在 old source Home 建立 Gateway drain marker；
+4. Bridge HOLD 已阻止新 callback 下发，此时用 drain receipt 视图等待 `processing_count=0` 稳定窗口；
+5. 停旧 Gateway；
+6. finalize persistent Home，drain marker 随 Home 一起进入新拓扑；
+7. old Gateway unit/env/source Home 保持原样，不覆盖，作为 rollback；
+8. 使用 exact 已认证 candidate 的同一 runtime binding 启动独立的新 Gateway unit；
+9. Bridge 仍 HOLD + 新 Gateway drain 仍 active，先做 health/import/port/home/self-contained/receipt 技术检查；
+10. 新 Gateway 技术 PASS 后，先解除 Gateway drain，让旧 receipt backlog recover；
+11. wait 到 Gateway receipt processing 稳定；
+12. 再解除 Bridge HOLD；
+13. Bridge replay/drain pending 到 0；
+14. 最终 Gateway/Bridge/Cloud Hub/Nginx 技术检查；
+15. ChatGPT 判定 production technical PASS 后，才允许 Owner 真人 Query。
+
+失败策略：
+- 任一关键项失败优先保持 Bridge HOLD；
+- 停 candidate Gateway；
+- 恢复/启动 untouched old Gateway unit + old Home/runtime binding；
+- old Gateway 稳定后再解除 Bridge HOLD；
+- 不把 new persistent Home 反向覆盖 old Home；
+- Bridge 自身正常时不回滚 callback Nginx。

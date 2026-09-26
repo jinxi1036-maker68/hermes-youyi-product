@@ -222,3 +222,22 @@ Holding Bridge 进入 HOLD 后，新的真实 callback 会积累在 durable back
 历史 candidate 的 PASS 只证明 assembly 方法，不可替代 current-main candidate 认证。
 
 该门禁期间 old Gateway 必须保持 active，Bridge 必须保持 FORWARD，public callback 已经通过 Bridge，但不得 HOLD、finalize、active-link switch 或 Gateway restart。
+
+
+## 11. Double-pause first-cutover sequence
+
+首次正式 Gateway 切换采用两层暂停：
+
+1. **Bridge HOLD**：阻止新的公网 callback 下发，同时 durable persist + ACK；
+2. **Gateway drain marker**：在 old source Home 建立，并由 finalize 带入 persistent Home。
+
+作用：
+- Bridge HOLD 解决旧 Gateway 不具备 safe-drain 的 bootstrap ingress 问题；
+- drain receipt status 用于 HOLD 后等待已进入旧 Gateway 的 callback processing 归零；
+- 新 Gateway 启动后继续看到 drain marker，因此 technical verification 阶段不会提前派发 receipt 业务；
+- 新 Gateway technical PASS 后先 resume Gateway drain，处理旧 receipt backlog；
+- receipt processing 稳定后才 resume Bridge，让 Holding backlog replay。
+
+旧 Gateway unit、旧环境绑定、旧 source Home 必须保持 untouched rollback point。推荐新 Gateway 使用独立新 unit/runtime binding，不覆盖旧 unit；如果实际服务器结构不允许，必须在进入 HOLD 前证明等价可逆 rollback。
+
+若 exact certified candidate 位于临时/易失路径，或无法证明启动 binding 与 precutover certification 完全一致，则在进入 HOLD 前 STOP。

@@ -231,3 +231,16 @@ PR #17：
 - evidence `EV-RT-017 = PASS_PRODUCTION_INGRESS_CUTOVER`。
 
 这标志着首次 Runtime Topology 切换终于具备真实公网 durable ingress 保护。下一步才允许 Bridge HOLD 后切 Gateway/Home/selector。
+
+
+## Full current-main Gateway candidate certified before HOLD
+
+2026-09-26：
+- exact main `bcb9c801...` 完整 Gateway candidate 在 old Gateway 在线期间完成组装/认证；
+- clean Core/venv、Python、console、hermes_cli、XiaoU/WeCom 都自包含于 candidate；
+- Core compatibility、self-contained、candidate preflight、Core/WeCom doctor、Runtime Topology、Persistent Home 全部 PASS；
+- old-release path leaks = 0；
+- public callback 继续由 Bridge FORWARD 保护，old Gateway 未变化；
+- evidence `EV-RT-018 = PASS_SERVER_FULL_CANDIDATE`。
+
+至此真正 HOLD 前的 candidate 风险已经清空。最终 cutover 采用双层暂停：Bridge HOLD 保护公网 ingress，Gateway drain marker 随 finalize 进入新 Home，使新 Gateway 在 technical verification 完成前也不派发业务。
