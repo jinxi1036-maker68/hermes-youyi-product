@@ -232,5 +232,14 @@
       "ChatGPT evaluates evidence and decides the next action",
       "Only after production technical PASS, Owner performs real WeCom/XiaoU acceptance"
     ]
+  },
+  "current_exception": {
+    "id": "WM-006-EXC-19092-001",
+    "approved_by": "owner",
+    "approved_at": "2026-09-26",
+    "scope": "Current Stage 2 blocker only: new Gateway 19092 startup failure",
+    "temporary_role_override": "Codex may own end-to-end diagnosis and resolution, including GitHub code changes if required, instead of stopping at code/architecture blockers.",
+    "exit_condition": "Exception ends when 19092/new-Gateway startup blocker is resolved and verified, or Codex returns a final blocking condition that cannot be resolved within this scope.",
+    "note": "This is an explicit owner-authorized one-off exception and does not replace WM-006 globally."
   }
 }

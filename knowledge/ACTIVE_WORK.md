@@ -650,3 +650,17 @@ Codex 回传：
 - 仓库内没有 19092 常量或显式 listener 定义，因此不能先假设是 Xiaoyou 业务代码 bug；
 - 下一步必须先只读确认回滚后正常旧生产中 19092 的 PID、父进程、systemd/socket unit、启动命令与配置来源，再和失败的新 Gateway binding 做差分；
 - 未查清前不得再次 HOLD / stop / finalize / cutover。
+
+
+## Owner-authorized one-off Codex ownership exception
+
+Owner explicitly changed the role boundary for the current blocker only:
+
+- scope: new Gateway / 19092 startup failure blocking Stage 2 final production cutover；
+- Codex now owns this issue end-to-end；
+- Codex may diagnose, modify server deployment/unit/binding, and if genuinely required modify GitHub code and validate it；
+- ChatGPT will not continue decomposing this blocker into relay-sized sub-tasks；
+- ChatGPT's role for this exception is final evidence/result review only；
+- this does **not** globally replace WM-006; the exception ends when this blocker is resolved/verified or Codex reports a final irreducible blocker.
+
+exception id: `WM-006-EXC-19092-001`.
