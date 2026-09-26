@@ -1,6 +1,6 @@
 {
   "schema_version": "xiaoyou_evidence_index_v1",
-  "updated_at": "2026-09-26T18:08:00+08:00",
+  "updated_at": "2026-09-26T18:17:30+08:00",
   "repository": "jinxi1036-maker68/hermes-youyi-product",
   "evidence": [
     {
@@ -179,6 +179,17 @@
       "production_sha": "588ea6eecb1833159e886181f3259be6e0befe37",
       "source": "Owner-relayed Codex server result",
       "note": "Release verification PASS, active Gateway links unchanged PASS, public routing unchanged PASS. Formal staged Bridge startup blocked because PYTHONPATH import of plugins.platforms.wecom resolves to legacy Hermes 1.2.18, where holding_bridge is absent. Production unchanged. Fix must be Git-governed and Bridge-local, not a global plugins package shadow or server patch."
+    },
+    {
+      "id": "EV-RT-015",
+      "area": "Staged Holding Bridge exact-module import boundary",
+      "judgment": "PASS_CODE",
+      "date": "2026-09-26",
+      "pr": 24,
+      "merged_sha": "bcb9c801d84dbcbfe35cc3cab8cf9657bc4e0a10",
+      "github_actions_run_id": 36235332961,
+      "verification_comment_id": 5845410889,
+      "note": "Fixes live-server blocker where formal staged Bridge resolved plugins.platforms.wecom to legacy Hermes 1.2.18. Bridge entrypoint now loads exact staged holding_bridge.py by file path and verifies module origin; systemd unit no longer relies on PYTHONPATH package precedence. Regression reproduces conflicting legacy plugins package. Main CI passes 50/50. Production unchanged; server re-verification required."
     }
   ]
 }

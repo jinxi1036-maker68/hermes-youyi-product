@@ -419,3 +419,36 @@ Codex 回传：
 - 正确修复应只作用于 Bridge：entrypoint 直接加载 staged payload 中 exact `holding_bridge.py`，unit 不再依赖 PYTHONPATH 决定该模块来源。
 
 下一步由 ChatGPT 修 GitHub，Codex 不自行 patch 服务器。
+
+
+## Staged Bridge legacy plugin shadow｜code PASS
+
+PR #24 已关闭服务器复验发现的 import blocker：
+
+- formal Bridge entrypoint 不再 import `plugins.platforms.wecom.holding_bridge`；
+- 改为从 staged payload 的 exact `holding_bridge.py` 文件路径直接加载；
+- 加载后校验 module origin 必须等于 staged candidate 文件；
+- Bridge systemd unit 移除 `PYTHONPATH` package precedence 依赖；
+- 没有新增顶层 `plugins/__init__.py`，因此不改变/不 shadow 整体 Hermes plugin package；
+- 新回归真实模拟 legacy `plugins.platforms.wecom` 已存在且优先级更高，Bridge CLI 仍从 staged candidate 正常启动。
+
+最终：
+- PR #24 merged；
+- main：`bcb9c801d84dbcbfe35cc3cab8cf9657bc4e0a10`；
+- main Actions run：`36235332961`；
+- **50/50 PASS**；
+- evidence：`EV-RT-015 = PASS_CODE`；
+- production 未改变。
+
+### 当前下一步
+
+Codex 只需重跑上一轮 stage/private Bridge server verification：
+1. exact main = `bcb9c801...`；
+2. release verify；
+3. stage-only；
+4. active Gateway links unchanged；
+5. formal unit private start on 19091；
+6. health/FORWARD/HOLD/FALLBACK/restart recovery；
+7. public Nginx callback 仍保持旧链。
+
+PASS 后进入 callback-only Nginx production gate。

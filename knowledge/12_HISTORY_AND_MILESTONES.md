@@ -189,3 +189,16 @@ PR #17：
 - staged code read-only，Holding state 独立可写；
 - main `6090b98a4a9def8ff4d212802e33b7536f45601a` Actions run `36234591266`：48/48 PASS；
 - 下一步仅验证 server stage-only + private Bridge startup，不切 public callback。
+
+
+## Staged Bridge legacy package shadow fixed
+
+2026-09-26：
+- server stage/private-start verification on main `6090b98...` found legacy Hermes 1.2.18 `plugins.platforms.wecom` shadowed staged Bridge import；
+- release verification and active Gateway link isolation were already PASS；
+- PR #24 changed only the Bridge bootstrap import boundary: exact staged file-path load + origin verification, no global plugins package shadow；
+- formal unit no longer depends on PYTHONPATH precedence；
+- regression explicitly injects conflicting legacy plugins package；
+- main `bcb9c801d84dbcbfe35cc3cab8cf9657bc4e0a10` Actions run `36235332961`: 50/50 PASS；
+- production unchanged；
+- next step is server re-verification, not Nginx cutover yet.
