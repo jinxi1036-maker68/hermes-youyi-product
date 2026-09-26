@@ -152,3 +152,18 @@ PR #17：
 - production 未改变。
 
 下一步只复验服务器上的新 state-root 边界，不直接生产切换。
+
+
+## Holding Bridge dedicated state-root provisioning gate
+
+2026-09-26：
+- PR #21 后服务器复验发现 dedicated state root 尚不存在，服务身份不能在 root-owned `/var/lib/hermes-youyi` 下自行创建；
+- 该问题被收敛为部署 provisioning 缺口，而非 Holding Bridge 语义/ADR-009 失败；
+- PR #22 新增 Git-governed fail-closed provisioning/verification gate；
+- root 权限仅限显式 `--apply`，且只允许 exact state-root directory；
+- 不递归创建 parent、不递归 chown/chmod、不触碰 Gateway Home；
+- symlink、路径重叠、父路径不可遍历、existing child state 异常均 fail-before-mutation；
+- main `27d14ade1e5ad8021f148cdfe64ce7d56c980849` Actions run `36228249931`：45/45 PASS；
+- production 保持 `588ea6eecb1833159e886181f3259be6e0befe37` 未改变。
+
+下一步只执行 dedicated state-root provisioning + server re-verification，仍不切生产流量。

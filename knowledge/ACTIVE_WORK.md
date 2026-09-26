@@ -285,3 +285,41 @@ Codex 回传：
 - 正确边界是：部署期 root 仅创建/修正 dedicated Bridge state root 的 owner/group/mode；运行期 Bridge 继续以 service identity 写入该目录。
 
 下一步：ChatGPT 直接在 GitHub 增加 fail-closed provisioning/verification 工具和测试；production 保持不变。
+
+
+## Holding Bridge state-root provisioning gate｜code PASS
+
+针对服务器 blocker“`/var/lib/hermes-youyi/wecom-holding` 不存在且服务用户不能在 root-owned parent 下自行创建”，PR #22 已建立正式 provisioning gate。
+
+最终语义：
+
+- 默认 read-only verify；
+- 只有显式 `--apply` 且执行身份为 root 时才允许 provisioning；
+- 只创建/修正 exact dedicated state root；
+- 不创建父目录；
+- state root 必须与 Gateway `HERMES_HOME` 完全分离；
+- parent/state root 出现 symlink 直接 fail；
+- 创建前验证真实 service identity 对父路径有 traverse 权限；
+- root directory 固定 service owner/group + `0700`；
+- existing child state 出现 owner/access/symlink 异常时，在任何 root chown/chmod 前直接 fail；
+- 永不递归 chown/chmod Bridge backlog；
+- runtime Bridge 仍以非特权 service identity 运行。
+
+最终：
+- PR #22 merged；
+- main：`27d14ade1e5ad8021f148cdfe64ce7d56c980849`；
+- main Actions run：`36228249931`；
+- **45/45 PASS**；
+- evidence：`EV-RT-011 = PASS_CODE`；
+- production 未改变。
+
+### 当前唯一下一步
+
+Codex 可在真实服务器执行一次受控 provisioning：
+1. 先 read-only 运行 gate，确认 blocker 仍只是 state root missing；
+2. 用 root 显式 `--apply` 创建 exact `/var/lib/hermes-youyi/wecom-holding`；
+3. 立即 read-only 复验；
+4. 以真实 service identity 做最小 synthetic SQLite/WAL/SHM + HOLD marker 写入/清理测试；
+5. 不启动正式 Bridge 服务、不改 Nginx、不停 Gateway、不切 HERMES_HOME/selector、不发送真实 callback。
+
+该 provisioning 复验 PASS 后，ChatGPT 才进入 controlled production deployment/cutover gate。
