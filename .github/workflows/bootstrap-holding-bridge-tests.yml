@@ -1,0 +1,37 @@
+name: Bootstrap Holding Bridge Tests
+
+on:
+  push:
+    branches:
+      - main
+      - feat/bootstrap-holding-bridge-v1
+    paths:
+      - runtime/plugins/platforms/wecom/holding_bridge.py
+      - runtime/plugins/platforms/wecom/inbound_receipts.py
+      - runtime/tests/plugins/test_wecom_holding_bridge_v1.py
+      - .github/workflows/bootstrap-holding-bridge-tests.yml
+  pull_request:
+    paths:
+      - runtime/plugins/platforms/wecom/holding_bridge.py
+      - runtime/plugins/platforms/wecom/inbound_receipts.py
+      - runtime/tests/plugins/test_wecom_holding_bridge_v1.py
+      - .github/workflows/bootstrap-holding-bridge-tests.yml
+
+permissions:
+  contents: read
+
+jobs:
+  holding-bridge:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install targeted test dependencies
+        run: python -m pip install -r requirements-test.txt
+      - name: Run Holding Bridge fault matrix
+        env:
+          PYTHONPATH: runtime
+        run: python -m pytest -q runtime/tests/plugins/test_wecom_holding_bridge_v1.py
