@@ -216,3 +216,18 @@ PR #17：
 - production_changed=true 仅反映 staged release + private Bridge 正式服务存在；Gateway production SHA、Home、selector、public callback 未切；
 - evidence `EV-RT-016 = PASS_SERVER_PRIVATE_BRIDGE`；
 - 下一步进入单独 callback-only Nginx cutover gate。
+
+
+## Public callback now protected by Holding Bridge
+
+2026-09-26：
+- callback-only Nginx production cutover PASS；
+- 两个 exact `/wecom/callback` location（80/443）已从 shared `hermes_hub` 改为 `127.0.0.1:19091`；
+- shared `hermes_hub -> 127.0.0.1:19090` 保持不变；
+- config diff scope、aa-nginx config test、graceful reload、effective config、synthetic GET 均 PASS；
+- Bridge healthy/FORWARD/pending=0，Cloud Hub/Gateway healthy；
+- rollback 未触发；
+- Gateway production SHA、Home、selector 尚未变化；
+- evidence `EV-RT-017 = PASS_PRODUCTION_INGRESS_CUTOVER`。
+
+这标志着首次 Runtime Topology 切换终于具备真实公网 durable ingress 保护。下一步才允许 Bridge HOLD 后切 Gateway/Home/selector。

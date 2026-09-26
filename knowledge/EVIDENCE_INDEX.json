@@ -1,6 +1,6 @@
 {
   "schema_version": "xiaoyou_evidence_index_v1",
-  "updated_at": "2026-09-26T18:22:00+08:00",
+  "updated_at": "2026-09-26T20:03:00+08:00",
   "repository": "jinxi1036-maker68/hermes-youyi-product",
   "evidence": [
     {
@@ -201,6 +201,16 @@
       "verification_comment_id": 5845498378,
       "source": "Owner-relayed Codex server result",
       "note": "production_changed=true due to exact-main release staging plus formal private Bridge install/start. RELEASE_VERIFY, STAGE_ONLY, ACTIVE_GATEWAY_LINKS_UNCHANGED, BRIDGE_UNIT_BOUNDARY, BRIDGE_PRIVATE_START, BRIDGE_HEALTH, LOCAL_FORWARD, LOCAL_HOLD, LOCAL_FALLBACK and RESTART_RECOVERY all PASS. PUBLIC_ROUTING_UNCHANGED PASS. Gateway production SHA, active links, Home and selector remain unchanged. Next gate is callback-only Nginx switchover with symmetric rollback."
+    },
+    {
+      "id": "EV-RT-017",
+      "area": "Callback-only Nginx production cutover to Holding Bridge",
+      "judgment": "PASS_PRODUCTION_INGRESS_CUTOVER",
+      "date": "2026-09-26",
+      "main_sha": "bcb9c801d84dbcbfe35cc3cab8cf9657bc4e0a10",
+      "production_sha": "588ea6eecb1833159e886181f3259be6e0befe37",
+      "source": "Owner-relayed Codex production cutover result",
+      "note": "production_changed=true. Preconditions PASS; formal Bridge healthy/FORWARD/pending=0. Only the two exact /wecom/callback proxy_pass targets on ports 80/443 changed to 127.0.0.1:19091; Nginx diff scope/config test/graceful reload/effective config all PASS. Shared hermes_hub -> 19090 unchanged. Synthetic GET on 80/443 PASS; Bridge and Cloud Hub/Gateway postchecks PASS; rollback not required. Gateway production SHA/Home/selector remain unchanged."
     }
   ]
 }

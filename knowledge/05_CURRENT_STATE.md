@@ -47,9 +47,16 @@ Holding Bridge 的服务器边界已经连续通过：
 
 当前 public callback 仍然没有切流，Gateway production SHA 仍是旧稳定版本。
 
-因此下一道独立门禁是 **callback-only Nginx cutover**：只把 80/443 的 exact `/wecom/callback` 从旧 `hermes_hub -> 19090` 路径切到 `127.0.0.1:19091` Holding Bridge，并保留对称 rollback。该门禁绝不同时停 Gateway、finalize Home 或切 selector。
+callback-only Nginx cutover 已正式 PASS：
+- 80/443 exact `/wecom/callback` 当前都先进入 `127.0.0.1:19091` Holding Bridge；
+- shared `hermes_hub -> 19090` 未变；
+- Bridge healthy / FORWARD / pending=0；
+- Cloud Hub 与旧 Gateway 继续健康；
+- synthetic GET 验证通过，无 rollback。
 
-callback-only gate PASS 后，才进入 Gateway/Home/selector 的正式生产切换；在后者技术 PASS 前，不进行 Owner 企业微信真人验收。
+因此 bootstrap durable ingress 已真实建立在公网 callback 前面。下一道门禁可以安全进入 **Gateway/Home/selector 首次生产切换**：Bridge 先 HOLD，再停旧 Gateway，finalize persistent Home，激活/启动新 Gateway，验证后 resume Bridge 并 replay backlog。
+
+在该生产技术门禁 PASS 前，不进行 Owner 企业微信真人验收。
 
 ## Stage 2 最终验收
 

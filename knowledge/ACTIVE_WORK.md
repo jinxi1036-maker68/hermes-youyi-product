@@ -498,3 +498,41 @@ Codex 对 main `bcb9c801d84dbcbfe35cc3cab8cf9657bc4e0a10` 复验结果：
 - Owner 真人 Query 验收。
 
 callback-only gate PASS 后，才进入 Gateway/Home/selector 正式切换。
+
+
+## Callback-only Nginx cutover｜PRODUCTION PASS
+
+Codex 回传：
+- `production_changed=true`；
+- MAIN_SHA = `bcb9c801d84dbcbfe35cc3cab8cf9657bc4e0a10`；
+- Gateway PRODUCTION_SHA 仍为 `588ea6eecb1833159e886181f3259be6e0befe37`；
+- PRECHECK / Bridge health / FORWARD pending=0 = PASS；
+- Nginx diff scope / config test / graceful reload = PASS；
+- 80/443 两个 exact callback location 均已实际指向 Bridge = PASS；
+- shared `hermes_hub -> 127.0.0.1:19090` unchanged = PASS；
+- synthetic GET 80/443 = PASS；
+- Bridge / Cloud Hub / Gateway postcheck = PASS；
+- rollback not required。
+
+结果：
+- **公网企业微信 callback 现在正式先进入 Holding Bridge**；
+- shared health / `/api/v1` 等非 callback 路由没有变化；
+- 旧 Gateway 仍在线、仍是 production 业务执行者；
+- Gateway Home / selector 仍未切；
+- evidence：`EV-RT-017 = PASS_PRODUCTION_INGRESS_CUTOVER`。
+
+### 当前下一步
+
+进入首次真正 Gateway Runtime Topology 切换：
+1. Bridge/public callback 再检查；
+2. Bridge 进入 HOLD 并证明 active；
+3. HOLD 生效后才允许停止旧 Gateway；
+4. finalize persistent Runtime Home；
+5. 激活 exact staged main release 和 production runtime binding；
+6. 启动新 Gateway；
+7. technical gates 全部 PASS；
+8. resume Bridge；
+9. backlog replay/drain 到 0；
+10. 生产技术 PASS 后才轮到 Owner 企业微信真人 Query 验收。
+
+任一关键步骤失败必须优先保持 Bridge HOLD，并按冻结回滚边界恢复旧 Gateway/Home/selector。

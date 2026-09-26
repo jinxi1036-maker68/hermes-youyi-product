@@ -154,3 +154,47 @@ Private Bridge PASS 后，公网入口切换必须单独成门禁，不得和 Ga
 - 再次 `aa_nginx -t`；
 - graceful reload；
 - 确认 public callback 回到旧链后 STOP。
+
+
+## 9. Gateway/Home/selector first production cutover gate
+
+只有 `EV-RT-017` callback-only cutover PASS 后才允许进入。
+
+冻结顺序：
+
+```text
+public callback -> Holding Bridge
+        |
+        +-- verify healthy/FORWARD/pending=0
+        |
+        +-- enter HOLD
+        |
+        +-- prove HOLD active
+        |
+        +-- stop old Gateway
+        |
+        +-- finalize persistent Runtime Home
+        |
+        +-- activate exact staged release/runtime binding
+        |
+        +-- start new Gateway
+        |
+        +-- technical verify
+        |
+        +-- resume Bridge
+        |
+        +-- replay/drain backlog to zero
+```
+
+关键原则：
+- HOLD 必须先于旧 Gateway stop；
+- HOLD 期间 callback 先 durable persist 再 ACK，不下发；
+- finalize 只能在旧 Gateway 已停止后执行；
+- candidate/runtime binding 必须使用真实生产 service identity、Hermes/model/runtime facts，不可套 example 默认值；
+- 新 Gateway 技术 PASS 前不得 resume Bridge；
+- resume 后必须证明 backlog 可重放并归零；
+- 任一关键失败优先保持 Bridge HOLD，避免新 callback 进入不确定 Gateway；
+- rollback 必须恢复旧 release/runtime binding + 旧 Home，并启动旧 Gateway；Bridge 仍作为公网 durable ingress 保护层；
+- 不需要回滚 Nginx callback 到旧链，除非 Bridge 自身失效。
+
+Owner 真人 Query 只在整个技术门禁 PASS 后执行。
