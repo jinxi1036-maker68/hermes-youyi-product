@@ -16,7 +16,8 @@
     "roadmap",
     "roles",
     "freshness_policy",
-    "safety"
+    "safety",
+    "governance"
   ],
   "properties": {
     "schema_version": {
@@ -24,7 +25,7 @@
     },
     "knowledge_revision": {
       "type": "integer",
-      "minimum": 3
+      "minimum": 4
     },
     "project": {
       "type": "string",
@@ -60,7 +61,8 @@
         "evidence",
         "code",
         "deployed_runtime",
-        "working_method"
+        "working_method",
+        "knowledge_concurrency"
       ]
     },
     "current": {
@@ -145,6 +147,15 @@
       "required": [
         "public_safe_only",
         "never_store"
+      ]
+    },
+    "governance": {
+      "type": "object",
+      "required": [
+        "knowledge_write_mode",
+        "force_push_allowed",
+        "project_knowledge_branch_protected",
+        "material_working_method_changes_require_owner_approval"
       ]
     }
   }

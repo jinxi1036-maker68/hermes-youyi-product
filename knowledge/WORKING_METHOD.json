@@ -1,7 +1,7 @@
 {
   "schema_version": "xiaoyou_working_method_v1",
-  "current_method_id": "WM-004",
-  "current_method_name": "Adaptive Evidence-First Project Method",
+  "current_method_id": "WM-005",
+  "current_method_name": "Concurrency-Safe Governed Adaptive Method",
   "status": "active",
   "effective_at": "2026-09-26T09:48:00+08:00",
   "purpose": "Continuously improve how Owner, ChatGPT and Codex build XiaoYou while preserving evidence, stage discipline, safety and project continuity.",
@@ -120,9 +120,11 @@
     "process": [
       "Observe and record the workflow problem.",
       "Separate a process problem from a product/code problem.",
+      "Classify the proposed method change as Class A operational or Class B material.",
       "Propose a candidate method change and expected benefit.",
       "Test the candidate on a bounded work item when practical.",
       "Evaluate evidence: speed, correctness, safety, rework, handoff quality and cognitive load.",
+      "For Class B material changes, obtain explicit Owner approval before activation.",
       "Accept, reject or revise the candidate.",
       "If accepted, increment method version, update current method, append a history record and update validator/index.",
       "Never erase the old method; preserve why it was replaced."
@@ -148,6 +150,30 @@
     "knowledge/methods/WM-001-chat-handoff-era.md",
     "knowledge/methods/WM-002-role-separation.md",
     "knowledge/methods/WM-003-evidence-first-release.md",
-    "knowledge/methods/WM-004-adaptive-evidence-first.md"
-  ]
+    "knowledge/methods/WM-004-adaptive-evidence-first.md",
+    "knowledge/methods/WM-005-concurrency-safe-governed-adaptive.md"
+  ],
+  "knowledge_write_protocol": {
+    "principle": "Project Knowledge writes use optimistic concurrency; never overwrite another window's unseen changes.",
+    "steps": [
+      "Read and record project-knowledge HEAD before preparing a material knowledge update.",
+      "Immediately before writing, fetch project-knowledge HEAD again.",
+      "If HEAD is unchanged, create a commit whose parent is the recorded HEAD and update the ref with force=false.",
+      "If HEAD changed, STOP the write, read the intervening knowledge changes, reconcile semantics, re-run consistency checks, then create a new fast-forward commit.",
+      "Never force-update project-knowledge to resolve a concurrent edit."
+    ],
+    "conflict_rule": "A write conflict is evidence that another window changed project state. Re-read before proceeding; do not treat it as a mechanical Git problem."
+  },
+  "method_change_governance": {
+    "class_a_operational": {
+      "description": "Efficiency/refinement changes that do not weaken roles, safety, evidence thresholds, authorization, authority boundaries, stage sealing or production rollback requirements.",
+      "approval": "ChatGPT may accept after evidence-backed bounded validation and must version/log the change."
+    },
+    "class_b_material": {
+      "description": "Changes to role boundaries, safety guarantees, evidence thresholds, production write/stop authorization, permission/authority semantics, stage order/sealing, or removal of a major guardrail.",
+      "approval": "Requires explicit Owner approval before becoming the active permanent Working Method."
+    },
+    "emergency_rule": "A temporary stricter safety stop may be applied immediately when new risk is discovered; permanent method changes still require normal classification and recording.",
+    "no_silent_change": true
+  }
 }

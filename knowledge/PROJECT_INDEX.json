@@ -1,6 +1,6 @@
 {
   "schema_version": "xiaoyou_project_knowledge_v2",
-  "knowledge_revision": 3,
+  "knowledge_revision": 4,
   "project": "xiaoyou-hermes",
   "repository": "jinxi1036-maker68/hermes-youyi-product",
   "knowledge_branch": "project-knowledge",
@@ -14,7 +14,8 @@
     "evidence": "knowledge/EVIDENCE_INDEX.json",
     "code": "main branch",
     "deployed_runtime": "production server",
-    "working_method": "knowledge/WORKING_METHOD.json"
+    "working_method": "knowledge/WORKING_METHOD.json",
+    "knowledge_concurrency": "knowledge/CONCURRENCY_AND_RECOVERY.md"
   },
   "current": {
     "formal_stage": {
@@ -32,8 +33,8 @@
     "blocker_status": "blocked",
     "blocker_summary": "The current production Gateway does not have safe-drain, and no Gateway-independent durable receive+ACK+persist+replay layer has yet been proven for the first Runtime Topology cutover.",
     "next_action": "After Knowledge V2 is established, resume the production-cutover work with a read-only Nginx ingress switchover audit, then design the Git-governed bootstrap holding layer from verified facts.",
-    "working_method_id": "WM-004",
-    "working_method_name": "Adaptive Evidence-First Project Method"
+    "working_method_id": "WM-005",
+    "working_method_name": "Concurrency-Safe Governed Adaptive Method"
   },
   "sealed_capabilities": [
     {
@@ -139,5 +140,12 @@
       "production database backups",
       "authentication headers"
     ]
+  },
+  "governance": {
+    "knowledge_write_mode": "fast_forward_only_optimistic_concurrency",
+    "force_push_allowed": false,
+    "project_knowledge_branch_protected": false,
+    "residual_risk": "Platform-level branch protection is not currently enabled; process-level CAS and Git history are the active safeguards.",
+    "material_working_method_changes_require_owner_approval": true
   }
 }
