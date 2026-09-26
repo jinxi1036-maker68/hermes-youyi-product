@@ -253,8 +253,23 @@ def test_retryable_gateway_http_status_falls_back_to_spool(tmp_path):
     assert store.counts()["pending_count"] == 1
 
 
-def test_non_retryable_gateway_response_is_returned_not_spooled(tmp_path):
+def test_authentic_callback_rejected_by_gateway_is_durably_held(tmp_path):
     body, query = _signed_callback()
+    client = FakeClient([FakeResponse(400, b"gateway callback error")])
+    bridge, store, _mode = _bridge(tmp_path, client=client)
+
+    response = asyncio.run(
+        bridge.handle_callback(FakeRequest(body=body, query=query))
+    )
+
+    assert response.status == 200
+    assert _response_text(response) == "success"
+    assert store.counts()["pending_count"] == 1
+
+
+def test_untrusted_callback_keeps_gateway_error_and_is_not_spooled(tmp_path):
+    body, query = _signed_callback()
+    query["msg_signature"] = "invalid"
     client = FakeClient([FakeResponse(400, b"invalid callback")])
     bridge, store, _mode = _bridge(tmp_path, client=client)
 
