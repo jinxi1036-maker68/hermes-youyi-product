@@ -96,13 +96,18 @@ Bridge backlog/control state.
 
 There is no network endpoint that changes HOLD state.
 
-Use \`scripts/xiaoyou_wecom_holding_mode.py\` under the service identity:
+Use `scripts/xiaoyou_wecom_holding_mode.py` under the service identity and
+point it at the same dedicated state root as the Bridge:
 
-\`\`\`text
+```text
 hold    atomically create the HOLD marker
 status  read current state only
 resume  remove the marker and allow forwarding/replay
-\`\`\`
+```
+
+For production control, prefer explicit
+`--state-root /var/lib/hermes-youyi/wecom-holding` (or the matching
+environment setting) so control and service cannot drift onto Gateway Home.
 
 An unreadable or invalid marker fails closed to HOLD.
 
@@ -115,9 +120,9 @@ Before any production change:
 1. verify the chosen loopback port is unused;
 2. verify the dedicated Bridge state root is outside Gateway `HERMES_HOME`;
 3. install and start the Git-governed bridge without changing public routing;
-3. prove local FORWARD, HOLD, FALLBACK, restart recovery and duplicate paths;
-4. enter HOLD before the old Gateway cutover window;
-5. change only the exact \`/wecom/callback\` Nginx locations and use the
+4. prove local FORWARD, HOLD, FALLBACK, restart recovery and duplicate paths;
+5. enter HOLD before the old Gateway cutover window;
+6. change only the exact `/wecom/callback` Nginx locations and use the
    supported graceful reload;
-6. never alter the shared \`hermes_hub -> 127.0.0.1:19090\` member;
-7. retain symmetric callback-only rollback.
+7. never alter the shared `hermes_hub -> 127.0.0.1:19090` member;
+8. retain symmetric callback-only rollback.
