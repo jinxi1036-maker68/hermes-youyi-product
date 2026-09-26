@@ -397,3 +397,25 @@ Codex 做服务器隔离复验：
 8. 不切 Nginx、不停 Gateway、不 finalize Home、不切 selector、不发真实 WeCom callback。
 
 PASS 后，ChatGPT 再进入 callback-only Nginx production gate。
+
+
+## Stage/private Bridge server verification｜BLOCKED on Python package shadow
+
+Codex 回传：
+- production_changed=false；
+- MAIN_SHA = `6090b98a4a9def8ff4d212802e33b7536f45601a`；
+- PRODUCTION_SHA = `588ea6eecb1833159e886181f3259be6e0befe37`；
+- RELEASE_VERIFY = PASS；
+- ACTIVE_GATEWAY_LINKS_UNCHANGED = PASS；
+- PUBLIC_ROUTING_UNCHANGED = PASS；
+- STAGE_ONLY / BRIDGE_UNIT_BOUNDARY / private start / health / local semantics = FAIL；
+- first blocker：staged payload 的 import 仍解析到 legacy Hermes 1.2.18 的 `plugins.platforms.wecom`，formal unit 的 PYTHONPATH 边界无法取得 staged `holding_bridge`。
+
+判断：
+- stage-only“没有改 Gateway active links”这条核心安全语义已被真实服务器证明；
+- blocker 不在 release hash/staging，也不在 Holding state/root；
+- 根因是 Bridge formal entrypoint 仍依赖全局 `plugins` package import precedence；
+- 不应通过给 staged runtime 新增顶层 `plugins/__init__.py` 来全局 shadow Hermes plugins，这会扩大影响面；
+- 正确修复应只作用于 Bridge：entrypoint 直接加载 staged payload 中 exact `holding_bridge.py`，unit 不再依赖 PYTHONPATH 决定该模块来源。
+
+下一步由 ChatGPT 修 GitHub，Codex 不自行 patch 服务器。

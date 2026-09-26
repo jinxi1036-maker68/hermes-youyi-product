@@ -1,6 +1,6 @@
 {
   "schema_version": "xiaoyou_evidence_index_v1",
-  "updated_at": "2026-09-26T18:03:05+08:00",
+  "updated_at": "2026-09-26T18:08:00+08:00",
   "repository": "jinxi1036-maker68/hermes-youyi-product",
   "evidence": [
     {
@@ -169,6 +169,16 @@
       "github_actions_run_id": 36234591266,
       "verification_comment_id": 5845318547,
       "note": "Adds verified stage-only release deployment that never changes active Gateway runtime/plugin/script links, packages Bridge deploy templates, and decouples Bridge candidate payload from the existing verified Python interpreter. Staged candidate is mounted read-only; dedicated Holding state remains the only writable Bridge state. Main CI passes 48/48. Production unchanged; server-isolated stage/private-start verification required."
+    },
+    {
+      "id": "EV-RT-014",
+      "area": "Stage-only/private Holding Bridge server verification",
+      "judgment": "BLOCKED_IMPORT_BOUNDARY",
+      "date": "2026-09-26",
+      "main_sha": "6090b98a4a9def8ff4d212802e33b7536f45601a",
+      "production_sha": "588ea6eecb1833159e886181f3259be6e0befe37",
+      "source": "Owner-relayed Codex server result",
+      "note": "Release verification PASS, active Gateway links unchanged PASS, public routing unchanged PASS. Formal staged Bridge startup blocked because PYTHONPATH import of plugins.platforms.wecom resolves to legacy Hermes 1.2.18, where holding_bridge is absent. Production unchanged. Fix must be Git-governed and Bridge-local, not a global plugins package shadow or server patch."
     }
   ]
 }
