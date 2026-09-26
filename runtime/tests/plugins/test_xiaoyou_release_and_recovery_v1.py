@@ -26,6 +26,8 @@ def test_release_package_is_versioned_and_tamper_evident(tmp_path):
     assert verification["manifest"]["contains_business_data"] is False
     assert verification["manifest"]["contains_credentials"] is False
     assert (release_root / "payload/runtime/plugins/platforms/wecom/http_policy.py").is_file()
+    for plugin in ("agenda_service_work", "reply_recovery", "robot_poc"):
+        assert (release_root / f"payload/runtime/plugins/{plugin}/plugin.yaml").is_file()
     cache = release_root / "payload/scripts/__pycache__/generated.cpython-311.pyc"
     cache.parent.mkdir(parents=True, exist_ok=True)
     cache.write_bytes(b"runtime cache")
@@ -43,6 +45,14 @@ def test_wecom_plugin_doctor_loads_packaged_transport_policy():
     report = doctor_plugin(ROOT / "runtime/plugins/platforms/wecom")
 
     assert report.ok, report.format_text()
+
+
+def test_release_owned_support_plugins_pass_doctor():
+    from hermes_cli.plugin_dev import doctor_plugin
+
+    for plugin in ("agenda_service_work", "reply_recovery", "robot_poc"):
+        report = doctor_plugin(ROOT / f"runtime/plugins/{plugin}")
+        assert report.ok, report.format_text()
 
 
 def test_release_installer_blocks_unknown_production_modules(tmp_path):
@@ -186,6 +196,15 @@ def test_release_installer_never_targets_persistent_home(tmp_path):
     for _label, target, _source in targets:
         relative = target.relative_to(base)
         assert "home-proddata" not in relative.parts
+
+    source_relatives = {source for _label, _target, source in targets}
+    assert {
+        "runtime/plugins/tuoguan_core",
+        "runtime/plugins/agenda_service_work",
+        "runtime/plugins/platforms/wecom",
+        "runtime/plugins/reply_recovery",
+        "runtime/plugins/robot_poc",
+    }.issubset(source_relatives)
 
 
 def test_release_package_excludes_local_hermes_core_shims(tmp_path):

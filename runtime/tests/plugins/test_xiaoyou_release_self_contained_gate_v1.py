@@ -34,7 +34,10 @@ def test_release_self_containment_passes_when_runtime_origins_are_candidate_loca
         "modules": {
             "hermes_cli": {"found": True, "origin": str(site / "hermes_cli/__init__.py"), "locations": []},
             "plugins.tuoguan_core": {"found": True, "origin": str(site / "plugins/tuoguan_core/__init__.py"), "locations": []},
+            "plugins.agenda_service_work": {"found": True, "origin": str(site / "plugins/agenda_service_work/__init__.py"), "locations": []},
             "plugins.platforms.wecom": {"found": True, "origin": str(site / "plugins/platforms/wecom/__init__.py"), "locations": []},
+            "plugins.reply_recovery": {"found": True, "origin": str(site / "plugins/reply_recovery/__init__.py"), "locations": []},
+            "plugins.robot_poc": {"found": True, "origin": str(site / "plugins/robot_poc/__init__.py"), "locations": []},
         },
     }
 
@@ -71,7 +74,10 @@ def test_release_self_containment_rejects_module_from_old_release(tmp_path, monk
         "modules": {
             "hermes_cli": {"found": True, "origin": str(old_site / "hermes_cli/__init__.py"), "locations": []},
             "plugins.tuoguan_core": {"found": True, "origin": str(site / "plugins/tuoguan_core/__init__.py"), "locations": []},
+            "plugins.agenda_service_work": {"found": True, "origin": str(site / "plugins/agenda_service_work/__init__.py"), "locations": []},
             "plugins.platforms.wecom": {"found": True, "origin": str(site / "plugins/platforms/wecom/__init__.py"), "locations": []},
+            "plugins.reply_recovery": {"found": True, "origin": str(site / "plugins/reply_recovery/__init__.py"), "locations": []},
+            "plugins.robot_poc": {"found": True, "origin": str(site / "plugins/robot_poc/__init__.py"), "locations": []},
         },
     }
 
