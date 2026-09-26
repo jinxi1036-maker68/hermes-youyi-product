@@ -136,3 +136,19 @@ PR #17：
 - ChatGPT 判定 `PASS_SERVER_ISOLATED`，证据记录于 PR #20 comment `5843978547`。
 
 下一步进入 controlled production technical deployment/cutover gate 设计，不直接进入 Owner 真人验收。
+
+
+## Holding Bridge state boundary / finalize collision closed in code
+
+2026-09-26：
+- controlled production gate 设计时发现：Bridge 默认 state 若位于 target `HERMES_HOME/state`，first-cutover runtime-home finalize 可能 prune live holding DB / HOLD marker；
+- ChatGPT 将其判定为 ADR-009 blocker，未直接进入生产；
+- PR #21 将 Holding Bridge durable state 改为 Gateway Home 外部的版本中立独立 state root；
+- systemd writable boundary 同步收窄到 Bridge state root；
+- 新增真实组合回归，证明 runtime-home finalize 不会删除 Bridge pending backlog / HOLD control；
+- 将 migration suite 纳入 Holding Bridge CI 后暴露旧 Unix socket fixture 的 AF_UNIX path-length 测试环境问题，已仅修测试夹具；
+- main `37a16b94ecb8ed62930ab8c353660780f8712359` Actions run `36225126717`：37/37 PASS；
+- evidence `EV-RT-009 = PASS_CODE`；
+- production 未改变。
+
+下一步只复验服务器上的新 state-root 边界，不直接生产切换。

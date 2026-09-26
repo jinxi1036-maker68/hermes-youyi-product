@@ -1,6 +1,6 @@
 {
   "schema_version": "xiaoyou_evidence_index_v1",
-  "updated_at": "2026-09-26T14:40:09+08:00",
+  "updated_at": "2026-09-26T14:54:05+08:00",
   "repository": "jinxi1036-maker68/hermes-youyi-product",
   "evidence": [
     {
@@ -117,6 +117,18 @@
       "verification_comment_id": 5843978547,
       "source": "Owner-relayed Codex server verification; recorded by ChatGPT on PR #20",
       "note": "production_changed=false. Production chain healthy. Python 3.11.13, aiohttp 3.14.3, httpx 0.28.1 and SQLite 3.26.0 available. Service identity write boundary PASS. Loopback 19091 bind/release PASS. Holding Bridge targeted suite 16/16 PASS; FORWARD/HOLD/FALLBACK, persist-before-ACK, store-failure fail-closed, crash recovery, replay, duplicate control, direct/replay ownership, backlog restart recovery and corrupt-HOLD fail-closed all PASS. Temporary real-loopback smoke Bridge 19091 -> mock upstream 29192 PASS. No production routing/config/service/data changes and no real WeCom callback."
+    },
+    {
+      "id": "EV-RT-009",
+      "area": "Holding Bridge durable state / Runtime Home isolation",
+      "judgment": "PASS_CODE",
+      "date": "2026-09-26",
+      "pr": 21,
+      "candidate_sha": "0a7a57a321b4a7e785c2a438b396bb59c0ec6029",
+      "merged_sha": "37a16b94ecb8ed62930ab8c353660780f8712359",
+      "github_actions_run_id": 36225126717,
+      "verification_comment_id": 5844064928,
+      "note": "Production-gate review found that Bridge DB/HOLD state under target HERMES_HOME could be pruned by first-cutover runtime-home finalize. PR #21 moves Bridge durability to a dedicated version-neutral state root outside Gateway HERMES_HOME, narrows the systemd writable boundary, aligns HOLD control with that root, and adds a finalize composition regression. Main CI passes 37/37 including Holding Bridge, safe-drain and runtime-home migration tests. Production remains unchanged; server boundary re-verification is required."
     }
   ]
 }

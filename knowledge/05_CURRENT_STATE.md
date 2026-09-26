@@ -30,12 +30,16 @@ persistent target Home 已 seed，但尚未 finalize 和切 production runtime b
 - Holding Bridge V1 已通过 PR #19 合并；
 - 最终代码审查发现 direct FORWARD / background replay 竞争窗口；
 - PR #20 已用 durable direct ownership + replay release/recovery 关闭该窗口；
-- 当前 main：`02c88bff5790110f6866b01031a7c9c75e0ded58`；
-- main GitHub Actions：Bridge + safe-drain regression **24/24 PASS**，包含强制 overlap 测试。
+- production-gate 设计审查随后发现 Bridge state 若位于 target `HERMES_HOME/state`，会与 runtime-home finalize 的 prune 语义冲突；
+- PR #21 已将 Bridge durability 独立到 Gateway Home 之外的版本中立 state root，并增加 finalize 组合回归；
+- 当前 main：`37a16b94ecb8ed62930ab8c353660780f8712359`；
+- main GitHub Actions：Holding Bridge + safe-drain + runtime-home migration regression **37/37 PASS**。
 
-服务器隔离验证现已 PASS：真实服务器运行环境可承载 Holding Bridge，service identity、SQLite durable state、loopback 端口与隔离故障矩阵均已证明，且 production 未发生任何变化。
+原 main `02c88...` 的服务器隔离验证已经 PASS，但 PR #21 改变了 Holding Bridge 的 durable state boundary，因此旧服务器验证不能自动覆盖这项新边界。
 
-因此当前已从“server-isolated verification”推进到下一层：**由 ChatGPT 设计并冻结 controlled production technical deployment/cutover gate，再由 Codex 按门禁执行正式部署与技术验证。** 在该门禁 PASS 前，不进行 Owner 企业微信真人验收。
+当前只剩一个窄门禁：**Codex 在真实服务器复验独立 Bridge state root（Gateway HERMES_HOME 外部）、真实 service-identity 写权限、systemd writable boundary，以及 runtime-home finalize 不触碰 Bridge backlog/control state。** 生产必须保持不变。
+
+该复验 PASS 后，才由 ChatGPT 冻结 controlled production technical deployment/cutover gate；在生产技术门禁 PASS 前，不进行 Owner 企业微信真人验收。
 
 ## Stage 2 最终验收
 

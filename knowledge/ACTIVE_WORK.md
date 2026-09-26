@@ -225,3 +225,39 @@ Holding Bridge V1 代码层已 PASS。
 3. 增加组合回归，证明 runtime-home finalize 不会删除 Bridge backlog / HOLD control；
 4. CI PASS 后再交 Codex 做服务器边界复验；
 5. 复验 PASS 后重新冻结正式 production cutover gate。
+
+
+## Holding state / Runtime Home isolation｜code PASS
+
+PR #21 已修复 production-gate design review 发现的 state collision：
+
+- Holding Bridge DB / HOLD marker 不再默认位于 Gateway `HERMES_HOME/state`；
+- 正式边界改为版本中立的独立 sibling state root；
+- production template 使用 `XIAOYOU_WECOM_HOLDING_STATE_ROOT=/var/lib/hermes-youyi/wecom-holding`；
+- Gateway persistent Home 仍是 `/var/lib/hermes-youyi/hermes-home`；
+- Holding Bridge systemd template 的 `ReadWritePaths` 只指向独立 Bridge state root，不再授予 Gateway Home 写权限；
+- HOLD control script 与 Bridge 使用同一个 state-root 规则；
+- 新增组合回归：Bridge pending backlog + HOLD marker 已存在时执行 runtime-home finalize，Bridge DB/marker 不被 prune，pending 仍保留；
+- 将 runtime-home migration regression 纳入 Holding Bridge CI；
+- GitHub Runner 旧 Unix socket fixture 的 AF_UNIX path-too-long 被识别为 test harness 问题并用短 `/tmp` fixture 修复，没有改变产品语义。
+
+最终：
+- PR #21 merged；
+- main：`37a16b94ecb8ed62930ab8c353660780f8712359`；
+- main Actions run：`36225126717`；
+- **37/37 PASS**；
+- evidence：`EV-RT-009 = PASS_CODE`；
+- production 未改变。
+
+### 当前唯一下一步
+
+让 Codex 只做真实服务器边界复验：
+
+1. 确认 live main 与 production SHA；
+2. 确认独立 Bridge state root 实际位于 Gateway `HERMES_HOME` 外；
+3. 确认真实 service identity 能创建/写 SQLite、WAL/SHM、HOLD marker；
+4. 确认 Bridge systemd writable boundary 可只授权该独立目录；
+5. 在隔离/临时数据下证明 runtime-home finalize 不会删除或改写该目录中的 pending backlog / HOLD marker；
+6. 不改 Nginx、不切 callback、不停 Gateway、不切 Home/selector、不发送真实 callback。
+
+复验 PASS 后，由 ChatGPT 再冻结 controlled production deployment/cutover gate。

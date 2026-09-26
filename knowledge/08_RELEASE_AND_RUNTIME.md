@@ -75,7 +75,27 @@ Drain active 时：
 
 但旧 production 588 不含 drain，因此第一次启用仍需要独立 bootstrap holding。
 
-## 5. 回滚原则
+## 5. Bootstrap Holding 独立状态边界
+
+第一次 Runtime Topology 切换期间，Holding Bridge 的 durability 不能属于 Gateway persistent Home。
+
+固定边界：
+
+```text
+/var/lib/hermes-youyi/hermes-home     # Gateway persistent HERMES_HOME
+/var/lib/hermes-youyi/wecom-holding  # Holding Bridge durable state
+```
+
+原因：
+- first-cutover runtime-home `finalize` 会清理 target Home 中不属于 source inventory 的 target-only state；
+- 如果 Bridge SQLite / HOLD marker 位于 `HERMES_HOME/state`，可能在保护 callback 的窗口被 finalize prune；
+- 因此 Bridge DB、WAL/SHM、HOLD marker 必须位于 Gateway Home 外部；
+- Bridge service writable boundary 只授权 dedicated state root；
+- Gateway Home migration/finalize 不复制、不 prune、不 reverse-sync Bridge state。
+
+PR #21 已用组合回归证明：target Home finalize 时，外部 Bridge pending backlog 与 HOLD marker 保持不变。
+
+## 6. 回滚原则
 
 首次 Runtime Topology 切换必须：
 - 保留旧 production selector；
@@ -85,7 +105,7 @@ Drain active 时：
 - 关键门禁失败立即恢复旧 selector + 旧 Home；
 - 技术验收通过前不进行业务真人测试。
 
-## 6. 发布判断必须看语义
+## 7. 发布判断必须看语义
 
 不能把会自然变化的 runtime 文件 hash 当成业务污染。
 
