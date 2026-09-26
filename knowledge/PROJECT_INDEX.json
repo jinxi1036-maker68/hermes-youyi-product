@@ -25,14 +25,14 @@
       "sealed": false
     },
     "production_sha": "588ea6eecb1833159e886181f3259be6e0befe37",
-    "production_last_verified_at": "2026-09-26T18:08:00+08:00",
+    "production_last_verified_at": "2026-09-26T18:22:00+08:00",
     "main_sha": "bcb9c801d84dbcbfe35cc3cab8cf9657bc4e0a10",
     "main_last_verified_at": "2026-09-26T18:17:30+08:00",
     "active_work_item_id": "WI-2026-09-bootstrap-durable-ingress",
     "blocker_id": "bootstrap-durable-ingress",
-    "blocker_status": "blocked",
-    "blocker_summary": "The staged Bridge legacy-plugin shadow blocker is fixed in PR #24 and main CI passes. The remaining gate is server re-verification on main bcb9c801... that stage-only still leaves Gateway active links unchanged and the formal Bridge privately starts from the exact staged holding_bridge.py despite legacy Hermes plugins.",
-    "next_action": "Owner manually relays ChatGPT's short Codex re-verification brief. Codex re-runs the stage/private Bridge verification against main bcb9c801..., with public routing unchanged. If PASS, ChatGPT advances to the callback-only Nginx production gate.",
+    "blocker_status": "cleared_for_next_gate",
+    "blocker_summary": "Private formal Holding Bridge server verification PASS on exact main. Release verify, stage-only, active Gateway-link isolation, exact-module unit boundary, private start/health, FORWARD/HOLD/FALLBACK and restart recovery all pass. Public routing remains on the old callback path and Gateway production SHA remains unchanged.",
+    "next_action": "Execute a standalone callback-only Nginx cutover gate: reconfirm Bridge active/healthy in FORWARD with no pending backlog, snapshot the exact callback config and rollback path, change only the exact /wecom/callback locations on ports 80/443 to loopback 127.0.0.1:19091, run aa_nginx config test and graceful reload, prove the callback path now traverses Bridge with synthetic GET only, and immediately rollback on any gate failure. Do not stop/restart Gateway, change Cloud Hub, finalize Home, switch HERMES_HOME/selector, or perform Owner WeCom acceptance in this gate.",
     "working_method_id": "WM-006",
     "working_method_name": "Role-Locked Concurrency-Safe Governed Adaptive Method",
     "bootstrap_holding_contract": "ADR-009: transparent-forward / persist-before-ACK / idempotent-replay-complete-after-confirmed-success"

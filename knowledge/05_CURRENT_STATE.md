@@ -37,9 +37,19 @@ persistent target Home 已 seed，但尚未 finalize 和切 production runtime b
 
 原 main `02c88...` 的服务器隔离验证已经 PASS，但 PR #21 改变了 Holding Bridge 的 durable state boundary，因此旧服务器验证不能自动覆盖这项新边界。
 
-当前只剩一个窄门禁：**Codex 在真实服务器复验独立 Bridge state root（Gateway HERMES_HOME 外部）、真实 service-identity 写权限、systemd writable boundary，以及 runtime-home finalize 不触碰 Bridge backlog/control state。** 生产必须保持不变。
+Holding Bridge 的服务器边界已经连续通过：
+- dedicated state root provisioning PASS；
+- exact-main stage-only PASS；
+- active Gateway links unchanged PASS；
+- formal private Bridge unit / health PASS；
+- FORWARD / HOLD / FALLBACK / restart recovery PASS；
+- legacy Hermes plugin shadow 已由 exact-file module load 修复并在真实服务器复验 PASS。
 
-该复验 PASS 后，才由 ChatGPT 冻结 controlled production technical deployment/cutover gate；在生产技术门禁 PASS 前，不进行 Owner 企业微信真人验收。
+当前 public callback 仍然没有切流，Gateway production SHA 仍是旧稳定版本。
+
+因此下一道独立门禁是 **callback-only Nginx cutover**：只把 80/443 的 exact `/wecom/callback` 从旧 `hermes_hub -> 19090` 路径切到 `127.0.0.1:19091` Holding Bridge，并保留对称 rollback。该门禁绝不同时停 Gateway、finalize Home 或切 selector。
+
+callback-only gate PASS 后，才进入 Gateway/Home/selector 的正式生产切换；在后者技术 PASS 前，不进行 Owner 企业微信真人验收。
 
 ## Stage 2 最终验收
 

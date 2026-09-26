@@ -202,3 +202,17 @@ PR #17：
 - main `bcb9c801d84dbcbfe35cc3cab8cf9657bc4e0a10` Actions run `36235332961`: 50/50 PASS；
 - production unchanged；
 - next step is server re-verification, not Nginx cutover yet.
+
+
+## Private formal Holding Bridge server PASS
+
+2026-09-26：
+- main `bcb9c801d84dbcbfe35cc3cab8cf9657bc4e0a10` 的 exact-main release verify/stage-only PASS；
+- active Gateway runtime/plugin/script links 前后不变；
+- formal Bridge unit 使用 staged exact candidate + verified existing Python；
+- private Bridge start/health PASS；
+- local FORWARD / HOLD / FALLBACK / restart recovery PASS；
+- public routing unchanged PASS；
+- production_changed=true 仅反映 staged release + private Bridge 正式服务存在；Gateway production SHA、Home、selector、public callback 未切；
+- evidence `EV-RT-016 = PASS_SERVER_PRIVATE_BRIDGE`；
+- 下一步进入单独 callback-only Nginx cutover gate。

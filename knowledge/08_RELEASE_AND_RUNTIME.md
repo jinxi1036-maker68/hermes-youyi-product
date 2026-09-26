@@ -115,3 +115,42 @@ PR #21 已用组合回归证明：target Home finalize 时，外部 Bridge pendi
 - import path 是否正确
 - health / port / service 是否正确
 - 权限和真实执行边界是否正确
+
+
+## 8. Callback-only Nginx cutover gate
+
+Private Bridge PASS 后，公网入口切换必须单独成门禁，不得和 Gateway/Home/selector 切换混在一次操作中。
+
+前置条件：
+- formal Bridge active + healthy；
+- Bridge mode = FORWARD；
+- pending backlog = 0；
+- loopback listener = `127.0.0.1:19091`；
+- current Gateway / Cloud Hub healthy；
+- 当前 exact callback locations 与 rollback 备份已记录。
+
+允许变化：
+- 仅 80/443 的 exact `location = /wecom/callback` 指向 Bridge loopback；
+- 使用 aa-nginx 正式 config test + graceful reload。
+
+禁止：
+- 修改共享 `hermes_hub -> 127.0.0.1:19090`；
+- 修改 health / `/api/v1`；
+- 停/重启 Gateway 或 Cloud Hub；
+- finalize runtime Home；
+- 切 HERMES_HOME / production selector；
+- 发送真实企业微信 callback。
+
+验证：
+- reload 后配置实际生效；
+- synthetic GET 通过 Nginx callback path 与 direct Bridge 的状态/响应语义一致；
+- 无 Nginx upstream 502/503；
+- Bridge 继续 active/healthy；
+- Gateway/Cloud Hub 继续健康；
+- pending backlog 保持 0（synthetic GET 不入队）。
+
+失败时：
+- 立即恢复 exact callback 配置；
+- 再次 `aa_nginx -t`；
+- graceful reload；
+- 确认 public callback 回到旧链后 STOP。

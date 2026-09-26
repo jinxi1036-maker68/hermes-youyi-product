@@ -452,3 +452,49 @@ Codex 只需重跑上一轮 stage/private Bridge server verification：
 7. public Nginx callback 仍保持旧链。
 
 PASS 后进入 callback-only Nginx production gate。
+
+
+## Private formal Holding Bridge｜server PASS
+
+Codex 对 main `bcb9c801d84dbcbfe35cc3cab8cf9657bc4e0a10` 复验结果：
+
+- `production_changed=true`；
+- 变化范围仅为 exact-main release stage + formal private Bridge install/start；
+- PRODUCTION_SHA 仍为 `588ea6eecb1833159e886181f3259be6e0befe37`；
+- RELEASE_VERIFY = PASS；
+- STAGE_ONLY = PASS；
+- ACTIVE_GATEWAY_LINKS_UNCHANGED = PASS；
+- BRIDGE_UNIT_BOUNDARY = PASS；
+- BRIDGE_PRIVATE_START / HEALTH = PASS；
+- LOCAL_FORWARD / HOLD / FALLBACK / RESTART_RECOVERY = PASS；
+- PUBLIC_ROUTING_UNCHANGED = PASS；
+- blocker = none。
+
+判断：
+- bootstrap durable ingress 已经从“代码/私有服务是否成立”推进到“公网 callback 是否切入 Bridge”；
+- 当前 public callback 仍走旧 Nginx → Cloud Hub → Gateway 链；
+- Gateway production code、active links、Home、selector 均未切换。
+
+证据：`EV-RT-016 = PASS_SERVER_PRIVATE_BRIDGE`。
+
+### 下一道独立门禁：callback-only Nginx cutover
+
+本门禁只允许：
+1. 重新确认 Bridge active + healthy；
+2. Bridge 必须处于 FORWARD，pending backlog 必须为 0；
+3. 备份并记录当前 exact callback location 配置/哈希与对称 rollback；
+4. 只修改 80/443 的 exact `location = /wecom/callback`，指向 `127.0.0.1:19091`；
+5. 不修改共享 `hermes_hub` upstream；
+6. `aa_nginx -t` PASS 后才允许 graceful reload；
+7. reload 后用 synthetic GET 比较 direct Bridge 与 Nginx callback path 的透明响应；
+8. 任一关键项失败立即恢复 exact callback 配置并再次 test + reload。
+
+本门禁明确禁止：
+- 停/重启 Gateway；
+- 修改/重启 Cloud Hub；
+- runtime-home finalize；
+- HERMES_HOME / production selector 切换；
+- 真实企业微信 callback；
+- Owner 真人 Query 验收。
+
+callback-only gate PASS 后，才进入 Gateway/Home/selector 正式切换。
