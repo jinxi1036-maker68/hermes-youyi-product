@@ -73,9 +73,6 @@ DEFAULT_MAX_BODY = 65_536
 ACK_BODY = b"success"
 ACK_CONTENT_TYPE = "text/plain"
 
-RETRYABLE_STATUS_CODES = {408, 425, 429}
-
-
 def _utc_now() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="milliseconds")
 
@@ -205,10 +202,6 @@ def _selected_response_headers(headers: Any) -> dict[str, str]:
         if value:
             result[name] = value
     return result
-
-
-def _is_retryable_status(status_code: int) -> bool:
-    return status_code >= 500 or status_code in RETRYABLE_STATUS_CODES
 
 
 class HoldingModeGate:
@@ -1026,7 +1019,13 @@ def _parser() -> argparse.ArgumentParser:
     control.add_argument("--state-root", type=Path, default=Path(os.getenv("XIAOYOU_WECOM_HOLDING_STATE_ROOT", str(DEFAULT_STATE_ROOT))))
     control.add_argument("--service-user", default=DEFAULT_SERVICE_USER)
     control.add_argument("--reason", default="runtime-topology-maintenance")
-    control.add_argument("--status-url", default=os.getenv("XIAOYOU_WECOM_HOLDING_STATUS_URL", f"http://{DEFAULT_HOST}:{DEFAULT_PORT}/_xiaoyou/status"))
+    status_host = str(os.getenv("XIAOYOU_WECOM_HOLDING_HOST", DEFAULT_HOST) or DEFAULT_HOST)
+    status_port = int(os.getenv("XIAOYOU_WECOM_HOLDING_PORT", DEFAULT_PORT))
+    default_status_url = f"http://{status_host}:{status_port}/_xiaoyou/status"
+    control.add_argument(
+        "--status-url",
+        default=os.getenv("XIAOYOU_WECOM_HOLDING_STATUS_URL", default_status_url),
+    )
     control.add_argument("--timeout-seconds", type=float, default=90.0)
     control.add_argument("--poll-seconds", type=float, default=0.2)
 
