@@ -246,16 +246,36 @@ class HoldingStore:
                 "CREATE INDEX IF NOT EXISTS idx_held_callbacks_pending "
                 "ON held_callbacks(state, next_attempt_at, received_at)"
             )
+            # A fresh process owns no in-flight direct/replay attempt from the
+            # previous process. Recover those durable rows immediately.
+            connection.execute(
+                """
+                UPDATE held_callbacks
+                SET state = 'pending', next_attempt_at = ?
+                WHERE state IN ('direct', 'replaying')
+                """,
+                (_now(),),
+            )
 
     def persist_pending(
         self,
         request: HeldRequest,
         *,
+        direct_lease_seconds: float = 0.0,
         now: float | None = None,
     ) -> dict[str, Any]:
-        """Durably stage one POST and atomically identify transport duplicates."""
+        """Durably stage one POST and atomically identify transport duplicates.
+
+        A positive direct lease marks the row as owned by the request handler.
+        Replay cannot claim it until the lease expires or the handler releases
+        it after HOLD/failure. This prevents normal direct forwarding and the
+        background replay loop from sending the same transport concurrently.
+        """
 
         timestamp = float(now if now is not None else _now())
+        lease_seconds = max(0.0, float(direct_lease_seconds))
+        initial_state = "direct" if lease_seconds > 0 else "pending"
+        next_attempt_at = timestamp + lease_seconds
         headers_json = json.dumps(
             request.headers,
             ensure_ascii=False,
@@ -273,7 +293,7 @@ class HoldingStore:
                     INSERT INTO held_callbacks (
                         fingerprint, method, raw_path, headers_json, body, state,
                         received_at, updated_at, next_attempt_at
-                    ) VALUES (?, ?, ?, ?, ?, 'pending', ?, ?, ?)
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     (
                         request.fingerprint,
@@ -281,13 +301,14 @@ class HoldingStore:
                         request.raw_path,
                         headers_json,
                         sqlite3.Binary(request.body),
+                        initial_state,
                         timestamp,
                         timestamp,
-                        timestamp,
+                        next_attempt_at,
                     ),
                 )
                 created = True
-                state = "pending"
+                state = initial_state
             else:
                 created = False
                 state = str(row["state"])
@@ -310,7 +331,7 @@ class HoldingStore:
                 """
                 SELECT fingerprint, method, raw_path, headers_json, body
                 FROM held_callbacks
-                WHERE state = 'pending' AND next_attempt_at <= ?
+                WHERE state IN ('pending', 'direct') AND next_attempt_at <= ?
                 ORDER BY received_at ASC
                 LIMIT ?
                 """,
@@ -346,9 +367,14 @@ class HoldingStore:
         with self._connect() as connection:
             connection.execute("BEGIN IMMEDIATE")
             row = connection.execute(
-                "SELECT attempt_count FROM held_callbacks "
-                "WHERE fingerprint = ? AND state = 'pending'",
-                (str(fingerprint),),
+                """
+                SELECT attempt_count
+                FROM held_callbacks
+                WHERE fingerprint = ?
+                  AND state IN ('pending', 'direct')
+                  AND next_attempt_at <= ?
+                """,
+                (str(fingerprint), timestamp),
             ).fetchone()
             if row is None:
                 connection.commit()
@@ -357,13 +383,42 @@ class HoldingStore:
             connection.execute(
                 """
                 UPDATE held_callbacks
-                SET attempt_count = ?, last_attempt_at = ?, updated_at = ?
-                WHERE fingerprint = ? AND state = 'pending'
+                SET state = 'replaying', attempt_count = ?,
+                    last_attempt_at = ?, updated_at = ?
+                WHERE fingerprint = ?
+                  AND state IN ('pending', 'direct')
+                  AND next_attempt_at <= ?
                 """,
-                (attempt, timestamp, timestamp, str(fingerprint)),
+                (
+                    attempt,
+                    timestamp,
+                    timestamp,
+                    str(fingerprint),
+                    timestamp,
+                ),
             )
             connection.commit()
         return attempt
+
+    def release_for_replay(
+        self,
+        fingerprint: str,
+        *,
+        now: float | None = None,
+    ) -> bool:
+        """Release a direct-owned durable row for immediate replay."""
+
+        timestamp = float(now if now is not None else _now())
+        with self._connect() as connection:
+            cursor = connection.execute(
+                """
+                UPDATE held_callbacks
+                SET state = 'pending', next_attempt_at = ?, updated_at = ?
+                WHERE fingerprint = ? AND state = 'direct'
+                """,
+                (timestamp, timestamp, str(fingerprint)),
+            )
+        return cursor.rowcount == 1
 
     def mark_replay_failure(
         self,
@@ -383,9 +438,9 @@ class HoldingStore:
             connection.execute(
                 """
                 UPDATE held_callbacks
-                SET updated_at = ?, next_attempt_at = ?, last_status = ?,
-                    last_error = ?
-                WHERE fingerprint = ? AND state = 'pending'
+                SET state = 'pending', updated_at = ?, next_attempt_at = ?,
+                    last_status = ?, last_error = ?
+                WHERE fingerprint = ? AND state = 'replaying'
                 """,
                 (
                     timestamp,
@@ -418,7 +473,7 @@ class HoldingStore:
                     completed_at = ?,
                     last_status = ?,
                     last_error = ''
-                WHERE fingerprint = ? AND state = 'pending'
+                WHERE fingerprint = ? AND state IN ('direct', 'replaying')
                 """,
                 (
                     timestamp,
@@ -435,7 +490,7 @@ class HoldingStore:
         with self._connect() as connection:
             cursor = connection.execute(
                 "DELETE FROM held_callbacks "
-                "WHERE fingerprint = ? AND state = 'pending'",
+                "WHERE fingerprint = ? AND state IN ('direct', 'pending')",
                 (str(fingerprint),),
             )
         return cursor.rowcount == 1
@@ -448,7 +503,12 @@ class HoldingStore:
             ).fetchall()
         counts = {"pending": 0, "completed": 0}
         for row in rows:
-            counts[str(row["state"])] = int(row["count"] or 0)
+            state = str(row["state"])
+            count = int(row["count"] or 0)
+            if state == "completed":
+                counts["completed"] += count
+            else:
+                counts["pending"] += count
         return counts
 
     def prune_completed(
@@ -656,7 +716,14 @@ class WecomHoldingBridge:
         # process crash while the downstream request is in flight would create
         # an unprotected receive-to-persist gap.
         try:
-            staged = self.store.persist_pending(held)
+            staged = self.store.persist_pending(
+                held,
+                direct_lease_seconds=max(
+                    5.0,
+                    (self.forward_timeout_seconds * 2.0)
+                    + self.replay_interval_seconds,
+                ),
+            )
         except sqlite3.Error:
             logger.exception(
                 "[WecomHoldingBridge] durable stage failed fingerprint=%s",
@@ -668,6 +735,17 @@ class WecomHoldingBridge:
             return self._ack(route="DUPLICATE")
 
         if self.mode_gate.is_holding():
+            try:
+                self.store.release_for_replay(held.fingerprint)
+            except sqlite3.Error:
+                # The durable direct row still becomes replayable when its
+                # lease expires; HOLD remains safe because no ACK preceded the
+                # durable stage.
+                logger.exception(
+                    "[WecomHoldingBridge] HOLD release failed "
+                    "fingerprint=%s",
+                    held.fingerprint,
+                )
             return self._ack(route="HOLD")
 
         try:
@@ -678,6 +756,14 @@ class WecomHoldingBridge:
                 body=held.body,
             )
         except (httpx.TimeoutException, httpx.TransportError) as exc:
+            try:
+                self.store.release_for_replay(held.fingerprint)
+            except sqlite3.Error:
+                logger.exception(
+                    "[WecomHoldingBridge] FALLBACK release failed "
+                    "fingerprint=%s",
+                    held.fingerprint,
+                )
             logger.warning(
                 "[WecomHoldingBridge] FALLBACK after transport failure "
                 "fingerprint=%s error=%s",
@@ -715,6 +801,15 @@ class WecomHoldingBridge:
             )
 
         if self._is_transient_status(response.status):
+            try:
+                self.store.release_for_replay(held.fingerprint)
+            except sqlite3.Error:
+                logger.exception(
+                    "[WecomHoldingBridge] transient-status release failed "
+                    "fingerprint=%s status=%s",
+                    held.fingerprint,
+                    response.status,
+                )
             return self._ack(route="FALLBACK")
 
         # A 3xx/4xx is an explicit downstream rejection, not a transport
