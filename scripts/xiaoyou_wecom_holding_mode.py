@@ -14,6 +14,7 @@ from typing import Any
 MODE_SCHEMA_VERSION = "xiaoyou_wecom_holding_mode_v1"
 HOLD_STATE = "hold"
 DEFAULT_SERVICE_USER = "hermes-youyi"
+DEFAULT_STATE_DIR_NAME = "wecom-holding"
 
 
 def _service_uid(user_name: str) -> int:
@@ -30,16 +31,31 @@ def _require_service_identity(user_name: str) -> None:
         )
 
 
-def _default_mode_file(runtime_home: Path) -> Path:
+def _default_state_root(runtime_home: Path | None = None) -> Path:
+    configured = str(
+        os.getenv("XIAOYOU_WECOM_HOLDING_STATE_ROOT") or ""
+    ).strip()
+    if configured:
+        return Path(configured).expanduser()
+
+    if runtime_home is not None:
+        return runtime_home.expanduser().parent / DEFAULT_STATE_DIR_NAME
+
+    home = str(os.getenv("HERMES_HOME") or "").strip()
+    if home:
+        return Path(home).expanduser().parent / DEFAULT_STATE_DIR_NAME
+
+    return Path.home() / ".hermes-wecom-holding"
+
+
+def _default_mode_file(state_root: Path) -> Path:
     configured = str(
         os.getenv("XIAOYOU_WECOM_HOLDING_MODE_FILE") or ""
     ).strip()
     return (
         Path(configured)
         if configured
-        else runtime_home
-        / "state"
-        / "wecom_callback_holding_mode.json"
+        else state_root / "wecom_callback_holding_mode.json"
     )
 
 
@@ -151,8 +167,12 @@ def main() -> int:
     parser.add_argument(
         "--runtime-home",
         type=Path,
-        required=True,
+        help=(
+            "Gateway Hermes Home used only to derive the sibling holding "
+            "state root when --state-root/env is not supplied."
+        ),
     )
+    parser.add_argument("--state-root", type=Path)
     parser.add_argument("--mode-file", type=Path)
     parser.add_argument(
         "--service-user",
@@ -167,10 +187,18 @@ def main() -> int:
     )
     args = parser.parse_args()
 
-    runtime_home = args.runtime_home.resolve()
+    runtime_home = (
+        args.runtime_home.resolve()
+        if args.runtime_home is not None
+        else None
+    )
+    state_root = (
+        args.state_root
+        or _default_state_root(runtime_home)
+    ).resolve()
     mode_file = (
         args.mode_file
-        or _default_mode_file(runtime_home)
+        or _default_mode_file(state_root)
     ).resolve()
 
     try:
@@ -190,7 +218,12 @@ def main() -> int:
 
         result = _snapshot(mode_file)
         result["action"] = args.action
-        result["runtime_home"] = str(runtime_home)
+        result["runtime_home"] = (
+            str(runtime_home)
+            if runtime_home is not None
+            else None
+        )
+        result["state_root"] = str(state_root)
         result["secret_content_inspected"] = False
         result["payload_content_inspected"] = False
     except (

@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+import json
 import os
 from pathlib import Path
 import sqlite3
 import socket
+import tempfile
 
 
 def _release(tmp_path: Path) -> Path:
@@ -215,57 +217,64 @@ def test_runtime_home_verify_requires_state_database_when_source_has_one(tmp_pat
 def test_runtime_home_inventory_skips_unix_socket_as_ephemeral_state(tmp_path):
     from scripts.xiaoyou_runtime_home_migration import inventory_runtime_home
 
-    home = _source_home(tmp_path)
-    state_dir = home / "state"
-    state_dir.mkdir()
-    socket_path = state_dir / "gateway.loop-tick.fixture.sock"
+    # GitHub runner pytest paths can exceed Linux sockaddr_un's path limit.
+    # Use a deliberately short real /tmp root; the product behavior under
+    # test is socket classification, not pytest's directory naming.
+    with tempfile.TemporaryDirectory(prefix="xu-", dir="/tmp") as short_dir:
+        home = _source_home(Path(short_dir))
+        state_dir = home / "state"
+        state_dir.mkdir()
+        socket_path = state_dir / "gateway.loop-tick.fixture.sock"
 
-    sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-    try:
-        sock.bind(str(socket_path))
-        result = inventory_runtime_home(source_home=home)
-    finally:
-        sock.close()
+        sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        try:
+            sock.bind(str(socket_path))
+            result = inventory_runtime_home(source_home=home)
+        finally:
+            sock.close()
 
-    assert result["ok"] is True
-    assert result["skipped_ephemeral_node_count"] == 1
-    assert result["skipped_ephemeral_nodes"] == [{
-        "logical": "state/gateway.loop-tick.fixture.sock",
-        "source": str(socket_path.resolve()),
-        "kind": "unix_socket",
-    }]
-    assert not any(
-        row["logical"] == "state/gateway.loop-tick.fixture.sock"
-        for row in result["entries"]
-    )
+        assert result["ok"] is True
+        assert result["skipped_ephemeral_node_count"] == 1
+        assert result["skipped_ephemeral_nodes"] == [{
+            "logical": "state/gateway.loop-tick.fixture.sock",
+            "source": str(socket_path.resolve()),
+            "kind": "unix_socket",
+        }]
+        assert not any(
+            row["logical"] == "state/gateway.loop-tick.fixture.sock"
+            for row in result["entries"]
+        )
 
 
 def test_runtime_home_seed_does_not_copy_unix_socket(tmp_path, monkeypatch):
     from scripts import xiaoyou_runtime_home_migration as migration
 
-    release = _release(tmp_path)
-    source = _source_home(tmp_path)
-    state_dir = source / "state"
-    state_dir.mkdir()
-    socket_path = state_dir / "gateway.loop-tick.fixture.sock"
-    target = tmp_path / "persistent-hermes-home"
     monkeypatch.setattr(migration, "_service_uid", lambda _user: os.geteuid())
 
-    sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-    try:
-        sock.bind(str(socket_path))
-        result = migration.migrate_runtime_home(
-            mode="seed",
-            release_root=release,
-            source_home=source,
-            target_home=target,
-            service_user="svc",
-        )
-    finally:
-        sock.close()
+    with tempfile.TemporaryDirectory(prefix="xu-", dir="/tmp") as short_dir:
+        short_root = Path(short_dir)
+        release = _release(short_root)
+        source = _source_home(short_root)
+        state_dir = source / "state"
+        state_dir.mkdir()
+        socket_path = state_dir / "gateway.loop-tick.fixture.sock"
+        target = short_root / "persistent-hermes-home"
 
-    assert result["ok"] is True
-    assert not (target / "state" / "gateway.loop-tick.fixture.sock").exists()
+        sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        try:
+            sock.bind(str(socket_path))
+            result = migration.migrate_runtime_home(
+                mode="seed",
+                release_root=release,
+                source_home=source,
+                target_home=target,
+                service_user="svc",
+            )
+        finally:
+            sock.close()
+
+        assert result["ok"] is True
+        assert not (target / "state" / "gateway.loop-tick.fixture.sock").exists()
 
 
 def test_runtime_home_inventory_still_blocks_unknown_special_node(tmp_path):
@@ -284,3 +293,75 @@ def test_runtime_home_inventory_still_blocks_unknown_special_node(tmp_path):
 
     assert result["ok"] is False
     assert "unsupported_runtime_home_node:state/unexpected.pipe" in result["errors"]
+
+
+
+def test_runtime_home_finalize_cannot_prune_external_holding_state(
+    tmp_path,
+    monkeypatch,
+):
+    from plugins.platforms.wecom import holding_bridge as hb
+    from scripts import xiaoyou_runtime_home_migration as migration
+
+    release = _release(tmp_path)
+    source = _source_home(tmp_path)
+    target = tmp_path / "persistent-hermes-home"
+    monkeypatch.setattr(migration, "_service_uid", lambda _user: os.geteuid())
+
+    seed = migration.migrate_runtime_home(
+        mode="seed",
+        release_root=release,
+        source_home=source,
+        target_home=target,
+        service_user="svc",
+    )
+    assert seed["ok"] is True
+
+    monkeypatch.setenv("HERMES_HOME", str(target))
+    monkeypatch.delenv("XIAOYOU_WECOM_HOLDING_STATE_ROOT", raising=False)
+    monkeypatch.delenv("XIAOYOU_WECOM_HOLDING_DB", raising=False)
+    monkeypatch.delenv("XIAOYOU_WECOM_HOLDING_MODE_FILE", raising=False)
+
+    bridge = hb.build_bridge_from_env()
+    expected_root = target.parent / hb.DEFAULT_STATE_DIR_NAME
+    assert bridge.store.path.parent == expected_root
+    assert expected_root != target
+    assert not expected_root.is_relative_to(target)
+
+    held = hb.make_held_request(
+        method="POST",
+        raw_path=(
+            "/wecom/callback?msg_signature=sig"
+            "&timestamp=100&nonce=n"
+        ),
+        headers={"Content-Type": "text/xml"},
+        body=b"<xml><Encrypt>held</Encrypt></xml>",
+    )
+    staged = bridge.store.persist_pending(held)
+    assert staged["created"] is True
+    bridge.mode_gate.path.parent.mkdir(parents=True, exist_ok=True)
+    bridge.mode_gate.path.write_text(
+        json.dumps(
+            {
+                "schema_version": hb.MODE_SCHEMA_VERSION,
+                "state": hb.HOLD_STATE,
+            }
+        ),
+        encoding="utf-8",
+    )
+    db_before = bridge.store.path.read_bytes()
+    mode_before = bridge.mode_gate.path.read_bytes()
+
+    final = migration.migrate_runtime_home(
+        mode="finalize",
+        release_root=release,
+        source_home=source,
+        target_home=target,
+        service_user="svc",
+        gateway_stopped_confirmed=True,
+    )
+
+    assert final["ok"] is True
+    assert bridge.store.path.read_bytes() == db_before
+    assert bridge.mode_gate.path.read_bytes() == mode_before
+    assert hb.HoldingStore(bridge.store.path).counts()["pending"] == 1

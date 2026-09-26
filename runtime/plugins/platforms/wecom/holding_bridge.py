@@ -37,6 +37,7 @@ DEFAULT_FORWARD_TIMEOUT_SECONDS = 5.0
 DEFAULT_REPLAY_INTERVAL_SECONDS = 1.0
 DEFAULT_REPLAY_BATCH_SIZE = 50
 DEFAULT_COMPLETED_RETENTION_SECONDS = 7 * 24 * 60 * 60
+DEFAULT_STATE_DIR_NAME = "wecom-holding"
 
 MAX_BODY_BYTES = 65_536
 ACK_BODY = b"success"
@@ -964,10 +965,24 @@ def create_app(
 
 
 def _default_state_root() -> Path:
+    """Return version-neutral Bridge state outside Gateway HERMES_HOME.
+
+    The bootstrap bridge must survive the first Runtime Home finalize. That
+    finalize intentionally prunes target-only Gateway Home files, so Bridge
+    durability cannot live under HERMES_HOME/state.
+    """
+
+    configured = str(
+        os.getenv("XIAOYOU_WECOM_HOLDING_STATE_ROOT") or ""
+    ).strip()
+    if configured:
+        return Path(configured).expanduser()
+
     home = str(os.getenv("HERMES_HOME") or "").strip()
     if home:
-        return Path(home).expanduser() / "state"
-    return Path.home() / ".hermes" / "state"
+        return Path(home).expanduser().parent / DEFAULT_STATE_DIR_NAME
+
+    return Path.home() / ".hermes-wecom-holding"
 
 
 def _env_float(name: str, default: float) -> float:
