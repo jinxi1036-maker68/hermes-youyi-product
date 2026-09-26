@@ -334,7 +334,7 @@ def test_store_failure_never_forwards_or_fakes_success_ack(tmp_path):
     calls = 0
 
     class BrokenStore:
-        def persist_pending(self, _held):
+        def persist_pending(self, _held, **_kwargs):
             raise sqlite3.OperationalError("disk full")
 
     def handler(_request):
@@ -371,6 +371,69 @@ def test_store_failure_never_forwards_or_fakes_success_ack(tmp_path):
     assert result.status == 503
     assert result.body != b"success"
     assert calls == 0
+
+
+def test_direct_forward_owns_row_until_downstream_finishes(tmp_path):
+    started = asyncio.Event()
+    release = asyncio.Event()
+    calls = 0
+
+    async def handler(_request):
+        nonlocal calls
+        calls += 1
+        started.set()
+        await release.wait()
+        return httpx.Response(200, text="success")
+
+    client = httpx.AsyncClient(
+        transport=httpx.MockTransport(handler),
+        timeout=1,
+    )
+    bridge = hb.WecomHoldingBridge(
+        upstream_base="http://127.0.0.1:19090",
+        store=hb.HoldingStore(tmp_path / "db.sqlite3"),
+        mode_gate=hb.HoldingModeGate(tmp_path / "mode"),
+        http_client=client,
+        forward_timeout_seconds=1.0,
+        replay_interval_seconds=0.01,
+    )
+
+    async def scenario():
+        await bridge.start()
+        direct = asyncio.create_task(
+            bridge.handle_post(
+                raw_path=_raw_path(),
+                headers=_headers(),
+                body=_body(),
+            )
+        )
+        try:
+            await asyncio.wait_for(started.wait(), timeout=1)
+            replay = await bridge.replay_once()
+            assert replay == {
+                "attempted": 0,
+                "completed": 0,
+                "failed": 0,
+            }
+            assert calls == 1
+            release.set()
+            result = await asyncio.wait_for(direct, timeout=1)
+            return result
+        finally:
+            release.set()
+            if not direct.done():
+                direct.cancel()
+            await bridge.close()
+            await client.aclose()
+
+    result = _run(scenario())
+    assert result.route == "FORWARD"
+    assert result.status == 200
+    assert calls == 1
+    assert bridge.store.counts() == {
+        "pending": 0,
+        "completed": 1,
+    }
 
 
 def test_process_failure_after_stage_remains_recoverable(tmp_path):
