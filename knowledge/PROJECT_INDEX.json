@@ -30,9 +30,9 @@
     "main_last_verified_at": "2026-09-26T14:40:09+08:00",
     "active_work_item_id": "WI-2026-09-bootstrap-durable-ingress",
     "blocker_id": "bootstrap-durable-ingress",
-    "blocker_status": "cleared_for_next_gate",
-    "blocker_summary": "Holding Bridge V1 code PASS and owner-relayed Codex server-isolated verification PASS. Runtime compatibility, service-identity write boundary, loopback candidate 19091, isolated fault semantics and real-loopback smoke are proven without production changes. No isolated blocker remains; the work item advances to the controlled production technical deployment/cutover gate.",
-    "next_action": "ChatGPT must now design the controlled production technical deployment/cutover gate, including exact preconditions, rollback, Bridge installation/start, callback-only routing transition and post-cutover verification. Codex executes only the approved server gate. Owner real WeCom/XiaoU acceptance remains blocked until ChatGPT judges the production technical gate PASS.",
+    "blocker_status": "blocked",
+    "blocker_summary": "Production-gate design exposed a state-boundary collision: Holding Bridge defaults its SQLite/mode files under target persistent HERMES_HOME/state, while first-cutover runtime-home finalize prunes target-only files. If Bridge begins holding callbacks before finalize, finalize could remove live holding state. This violates ADR-009 and must be fixed in GitHub before production cutover.",
+    "next_action": "ChatGPT must isolate Holding Bridge durable state from the Gateway persistent HERMES_HOME, add a regression proving runtime-home finalize cannot prune Bridge backlog/control state, merge only after CI PASS, then have Codex re-verify the revised state boundary before the production cutover gate.",
     "working_method_id": "WM-006",
     "working_method_name": "Role-Locked Concurrency-Safe Governed Adaptive Method",
     "bootstrap_holding_contract": "ADR-009: transparent-forward / persist-before-ACK / idempotent-replay-complete-after-confirmed-success"

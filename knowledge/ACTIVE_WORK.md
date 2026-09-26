@@ -205,3 +205,23 @@ Holding Bridge V1 代码层已 PASS。
 - CURRENT_STATE
 - EVIDENCE_INDEX
 - HISTORY / ADR（如形成长期架构决策）
+
+
+## Production gate design review｜new blocker
+
+在设计 controlled production cutover 时发现一个 ADR-009 级别风险：
+
+- Holding Bridge 当前默认 DB / HOLD marker 位于 target persistent `HERMES_HOME/state`；
+- 首次切换仍需在旧 Gateway 停止后执行 runtime-home `finalize`；
+- 现有 finalize 会 prune target Home 中不属于旧 source Home inventory 的额外文件；
+- 因此如果 Bridge 已经开始接收/holding callback，finalize 可能把 live holding DB / marker 当作 target-only state 清理；
+- 这会直接破坏“persist-before-ACK / backlog survive cutover”的冻结契约。
+
+当前结论：**不能直接进入生产切换。**
+
+下一步由 ChatGPT 在 GitHub 修复：
+1. 将 Holding Bridge durable state 与 Gateway persistent Hermes Home 解耦；
+2. 保持 Bridge state 为版本中立、持久、service-identity 可写；
+3. 增加组合回归，证明 runtime-home finalize 不会删除 Bridge backlog / HOLD control；
+4. CI PASS 后再交 Codex 做服务器边界复验；
+5. 复验 PASS 后重新冻结正式 production cutover gate。
