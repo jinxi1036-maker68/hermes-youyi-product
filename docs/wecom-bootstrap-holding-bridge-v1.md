@@ -152,6 +152,12 @@ The Bridge systemd template deliberately separates:
 - `HERMES_PYTHON`: already-verified existing Python interpreter;
 - `XIAOYOU_SERVICE_USER/GROUP`: live service identity.
 
+The Bridge entrypoint does **not** import through the global
+`plugins.platforms.wecom` package name. It loads the candidate
+`holding_bridge.py` directly from the staged payload path and verifies the
+loaded module origin. This prevents an older installed Hermes `plugins`
+package from shadowing the staged Bridge implementation.
+
 This lets the Bridge run exact candidate code before Gateway activation without
 copying scripts into the active production tree or switching current Gateway
 code links.
