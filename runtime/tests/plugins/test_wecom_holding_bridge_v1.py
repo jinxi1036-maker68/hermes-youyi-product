@@ -325,7 +325,7 @@ def test_5xx_falls_back_but_4xx_remains_transparent(tmp_path):
     assert b.route == "FORWARD"
     assert b.status == 403
     assert bridge.store.counts() == {
-        "pending": 2,
+        "pending": 1,
         "completed": 0,
     }
 

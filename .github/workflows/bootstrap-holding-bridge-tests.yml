@@ -31,7 +31,16 @@ jobs:
           python-version: '3.11'
       - name: Install targeted test dependencies
         run: python -m pip install -r requirements-test.txt
-      - name: Run Holding Bridge fault matrix
+      - name: Compile bridge runtime controls
+        run: >-
+          python -m py_compile
+          runtime/plugins/platforms/wecom/holding_bridge.py
+          scripts/xiaoyou_wecom_holding_bridge.py
+          scripts/xiaoyou_wecom_holding_mode.py
+      - name: Run Holding Bridge and safe-drain regression
         env:
           PYTHONPATH: runtime
-        run: python -m pytest -q runtime/tests/plugins/test_wecom_holding_bridge_v1.py
+        run: >-
+          python -m pytest -q
+          runtime/tests/plugins/test_wecom_holding_bridge_v1.py
+          runtime/tests/plugins/test_wecom_callback_safe_drain_v1.py

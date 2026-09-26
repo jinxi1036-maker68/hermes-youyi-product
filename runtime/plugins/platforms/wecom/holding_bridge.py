@@ -429,6 +429,17 @@ class HoldingStore:
             )
         return cursor.rowcount == 1
 
+    def discard_pending(self, fingerprint: str) -> bool:
+        """Drop a transport row after an explicit non-transient rejection."""
+
+        with self._connect() as connection:
+            cursor = connection.execute(
+                "DELETE FROM held_callbacks "
+                "WHERE fingerprint = ? AND state = 'pending'",
+                (str(fingerprint),),
+            )
+        return cursor.rowcount == 1
+
     def counts(self) -> dict[str, int]:
         with self._connect() as connection:
             rows = connection.execute(
@@ -706,9 +717,19 @@ class WecomHoldingBridge:
         if self._is_transient_status(response.status):
             return self._ack(route="FALLBACK")
 
-        # A 3xx/4xx is not classified as a transport outage. Preserve the
-        # downstream result. The durable row remains pending rather than being
-        # falsely completed, so an operator can inspect/recover it.
+        # A 3xx/4xx is an explicit downstream rejection, not a transport
+        # outage. Preserve it transparently and do not turn it into a replay
+        # backlog. It is deliberately not marked completed because only 2xx
+        # is a confirmed successful delivery.
+        try:
+            self.store.discard_pending(held.fingerprint)
+        except sqlite3.Error:
+            logger.exception(
+                "[WecomHoldingBridge] rejected transport cleanup failed "
+                "fingerprint=%s status=%s",
+                held.fingerprint,
+                response.status,
+            )
         return BridgeResult(
             response.status,
             response.body,
