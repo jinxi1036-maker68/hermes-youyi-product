@@ -21,6 +21,8 @@ PAYLOAD_ROOTS = (
     "runtime/plugins/platforms/wecom",
     "scripts",
     "systemd",
+    "deploy/systemd",
+    "deploy/config",
     "work/commercialization/xiaoyou_runtime_constitution_v1.md",
     "work/commercialization/xiaoyou_reliability_scenarios_v1.json",
 )
