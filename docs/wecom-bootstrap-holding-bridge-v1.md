@@ -136,6 +136,10 @@ python scripts/xiaoyou_release_installer.py \
   --apply
 ```
 
+For production packaging, do not rely on the historical CLI defaults for
+Hermes version/model metadata. Resolve the live production values read-only and
+pass them explicitly when building the exact-main release.
+
 Stage-only:
 - verifies the release manifest and file hashes;
 - copies the release into the canonical versioned `xiaoyou-releases` tree;
