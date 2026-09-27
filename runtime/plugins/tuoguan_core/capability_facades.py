@@ -7,7 +7,7 @@ import json
 from typing import Any, Callable
 
 
-CAPABILITY_MANIFEST_VERSION = "xiaoyou-capabilities-v1.4-24"
+CAPABILITY_MANIFEST_VERSION = "xiaoyou-capabilities-v1.5-25"
 
 
 DOMAIN_OPERATIONS: dict[str, tuple[str, ...]] = {
@@ -155,8 +155,8 @@ def operation_manifest() -> dict[str, Any]:
     return {
         "manifest_version": CAPABILITY_MANIFEST_VERSION,
         "frozen": True,
-        "surface": "12_fast_paths_plus_12_domain_facades",
-        "model_visible_tool_count": len(FAST_PATH_TOOL_NAMES) + len(MODEL_VISIBLE_DOMAIN_NAMES),
+        "surface": "12_fast_paths_plus_12_domain_facades_plus_read_bundle",
+        "model_visible_tool_count": len(FAST_PATH_TOOL_NAMES) + len(MODEL_VISIBLE_DOMAIN_NAMES) + 1,
         "fast_paths": list(FAST_PATH_TOOL_NAMES),
         "domains": len(MODEL_VISIBLE_DOMAIN_NAMES),
         "operations": operations,
@@ -368,6 +368,172 @@ def build_facade_tools(
     )
 
 
+
+READ_BUNDLE_MAX_CALLS = 4
+
+
+def build_read_bundle_tool(
+    legacy_tools: tuple[tuple[str, dict[str, Any], Callable[..., Any]], ...],
+    *,
+    tool_result: Callable[[Any], str],
+) -> tuple[str, dict[str, Any], Callable[..., Any]]:
+    """Expose one model-selected batch of independent read-only operations.
+
+    The model still chooses every domain, operation and business argument.
+    Runtime only verifies that all selected operations are existing read-only
+    capabilities, then executes them inside the same trusted Tool turn. This
+    is orchestration, not intent routing, and it never accepts a write.
+    """
+
+    legacy = {
+        name.removeprefix("tuoguan_"): (schema, handler)
+        for name, schema, handler in legacy_tools
+    }
+    manifest = operation_manifest()["operations"]
+    allowed_domains = list(MODEL_VISIBLE_DOMAIN_NAMES)
+    schema = {
+        "description": (
+            "当你已经自主判断一个问题需要多个彼此独立的只读事实时，可一次提交这些读取，"
+            "减少不必要的模型往返。每一项的 domain、operation 和 arguments 都必须由你明确选择；"
+            "系统不会根据用户文本替你决定。只允许现有 read_only operation，任何写入、删除、外发、"
+            "状态更新或其它有副作用的 operation 都会使整个 bundle 在执行前被拒绝。"
+            f"一次最多 {READ_BUNDLE_MAX_CALLS} 项。若一个读取依赖前一个结果，请不要放在同一 bundle。"
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "calls": {
+                    "type": "array",
+                    "minItems": 1,
+                    "maxItems": READ_BUNDLE_MAX_CALLS,
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "domain": {
+                                "type": "string",
+                                "enum": allowed_domains,
+                                "description": "现有领域入口名称，不带 tuoguan_ 前缀。",
+                            },
+                            "operation": {
+                                "type": "string",
+                                "description": "该领域现有的只读 operation 名称；从已显示的领域能力契约中选择。",
+                            },
+                            "arguments": {
+                                "type": "object",
+                                "description": "该 operation 的业务参数。",
+                                "additionalProperties": True,
+                            },
+                        },
+                        "required": ["domain", "operation"],
+                        "additionalProperties": False,
+                    },
+                },
+            },
+            "required": ["calls"],
+            "additionalProperties": False,
+        },
+    }
+
+    def run(args: dict[str, Any], **kwargs: Any) -> str:
+        payload = dict(args or {})
+        raw_calls = payload.get("calls")
+        if not isinstance(raw_calls, list) or not raw_calls or len(raw_calls) > READ_BUNDLE_MAX_CALLS:
+            return tool_result({
+                "ok": False,
+                "error": "invalid_read_bundle",
+                "message": f"只读 bundle 必须包含 1-{READ_BUNDLE_MAX_CALLS} 项明确读取。",
+            })
+
+        normalized: list[dict[str, Any]] = []
+        for index, raw in enumerate(raw_calls):
+            if not isinstance(raw, dict):
+                return tool_result({
+                    "ok": False,
+                    "error": "invalid_read_bundle_call",
+                    "message": "bundle 中每一项都必须是结构化只读请求。",
+                    "data": {"index": index},
+                })
+            domain = str(raw.get("domain") or "").strip()
+            operation = str(raw.get("operation") or "").strip()
+            arguments = raw.get("arguments")
+            arguments = dict(arguments) if isinstance(arguments, dict) else {}
+            if domain not in DOMAIN_OPERATIONS or operation not in DOMAIN_OPERATIONS[domain]:
+                return tool_result({
+                    "ok": False,
+                    "error": "unknown_read_bundle_operation",
+                    "message": "bundle 中存在未定义的领域或 operation，本轮没有执行任何读取。",
+                    "data": {"index": index, "domain": domain, "operation": operation},
+                })
+            policy = manifest.get(operation) or {}
+            if policy.get("access") != "read":
+                return tool_result({
+                    "ok": False,
+                    "error": "write_operation_forbidden_in_read_bundle",
+                    "message": "只读 bundle 不能包含写入或有副作用操作，本轮没有执行任何读取。",
+                    "data": {"index": index, "domain": domain, "operation": operation},
+                })
+            if operation not in legacy:
+                return tool_result({
+                    "ok": False,
+                    "error": "read_bundle_handler_missing",
+                    "message": "选中的只读能力当前没有可执行处理器，本轮没有执行任何读取。",
+                    "data": {"index": index, "operation": operation},
+                })
+            normalized.append({
+                "domain": domain,
+                "operation": operation,
+                "arguments": arguments,
+            })
+
+        results: list[dict[str, Any]] = []
+        cache: dict[str, dict[str, Any]] = {}
+        for index, call in enumerate(normalized):
+            fingerprint = json.dumps(
+                [call["domain"], call["operation"], call["arguments"]],
+                ensure_ascii=False,
+                sort_keys=True,
+                separators=(",", ":"),
+                default=str,
+            )
+            if fingerprint in cache:
+                results.append({
+                    "index": index,
+                    "domain": call["domain"],
+                    "operation": call["operation"],
+                    "deduplicated": True,
+                    "result": deepcopy(cache[fingerprint]),
+                })
+                continue
+
+            _schema, handler = legacy[call["operation"]]
+            raw_result = handler(deepcopy(call["arguments"]), **kwargs)
+            try:
+                parsed = json.loads(raw_result) if isinstance(raw_result, str) else deepcopy(raw_result)
+            except (TypeError, ValueError):
+                parsed = {"ok": False, "error": "unparseable_legacy_tool_result"}
+            if not isinstance(parsed, dict):
+                parsed = {"ok": False, "error": "invalid_legacy_tool_result"}
+            cache[fingerprint] = deepcopy(parsed)
+            results.append({
+                "index": index,
+                "domain": call["domain"],
+                "operation": call["operation"],
+                "deduplicated": False,
+                "result": parsed,
+            })
+
+        return tool_result({
+            "ok": all(bool((item.get("result") or {}).get("ok")) for item in results),
+            "data": {
+                "calls": results,
+                "executed_unique_reads": len(cache),
+                "requested_reads": len(normalized),
+            },
+            "message": "已按模型明确选择完成本轮只读事实读取；请基于真实结果继续判断。",
+        })
+
+    return ("tuoguan_read_bundle", schema, run)
+
 def facade_schema_size(facade_tools: tuple[tuple[str, dict[str, Any], Callable[..., Any]], ...]) -> dict[str, int]:
     serialized = json.dumps(
         [{"name": name, "schema": schema} for name, schema, _handler in facade_tools],
@@ -391,5 +557,7 @@ def render_facade_instruction() -> str:
         "如果已作为高频直连工具出现就直接调用；否则表示领域入口里的 operation。"
         "例如低频目标查询使用 tuoguan_goals(operation=goal_workspace, arguments={action:query_progress})。"
         "不要编造 list、query_staff、query_goal_workspace 等不存在的 operation。"
+        "当同一问题确实需要多个彼此独立的只读事实时，可使用 tuoguan_read_bundle 一次明确选择多项读取；"
+        "每项仍由模型显式选择，写入和有副作用操作禁止进入 bundle。"
         "必须由模型显式选择领域和 operation；系统不根据自然语言偷偷决定业务动作。"
     )

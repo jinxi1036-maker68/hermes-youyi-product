@@ -430,3 +430,120 @@ def test_core_contract_keeps_simple_greetings_lightweight():
     assert "简单问候" in context
     assert "不要调用工具" in context
     assert "同一参数不得重复查询" in context
+
+
+def test_read_bundle_executes_model_selected_reads_without_write_authority(monkeypatch):
+    import plugins.tuoguan_core.capability_facades as facades
+
+    calls = []
+
+    def read_students(args, **_kwargs):
+        calls.append(("query_students", dict(args or {})))
+        return json.dumps({"ok": True, "data": {"count": 10}}, ensure_ascii=False)
+
+    def read_tasks(args, **_kwargs):
+        calls.append(("query_tasks", dict(args or {})))
+        return json.dumps({"ok": True, "data": {"count": 2}}, ensure_ascii=False)
+
+    def write_task(args, **_kwargs):
+        calls.append(("create_task", dict(args or {})))
+        return json.dumps({"ok": True}, ensure_ascii=False)
+
+    legacy = (
+        ("tuoguan_query_students", {"parameters": {"properties": {}}}, read_students),
+        ("tuoguan_query_tasks", {"parameters": {"properties": {}}}, read_tasks),
+        ("tuoguan_create_task", {"parameters": {"properties": {}}}, write_task),
+    )
+    monkeypatch.setattr(
+        facades,
+        "DOMAIN_OPERATIONS",
+        {"students": ("query_students",), "tasks": ("query_tasks", "create_task")},
+    )
+    monkeypatch.setattr(
+        facades,
+        "MODEL_VISIBLE_DOMAIN_NAMES",
+        ("students", "tasks"),
+    )
+    monkeypatch.setattr(
+        facades,
+        "operation_manifest",
+        lambda: {
+            "operations": {
+                "query_students": {"access": "read"},
+                "query_tasks": {"access": "read"},
+                "create_task": {"access": "write"},
+            }
+        },
+    )
+
+    name, _schema, handler = facades.build_read_bundle_tool(
+        legacy,
+        tool_result=lambda value: json.dumps(value, ensure_ascii=False),
+    )
+    assert name == "tuoguan_read_bundle"
+    result = json.loads(handler({
+        "calls": [
+            {"domain": "students", "operation": "query_students", "arguments": {"query_scope": "regular"}},
+            {"domain": "tasks", "operation": "query_tasks", "arguments": {"date_scope": "today"}},
+        ]
+    }))
+    assert result["ok"] is True
+    assert result["data"]["requested_reads"] == 2
+    assert result["data"]["executed_unique_reads"] == 2
+    assert [item[0] for item in calls] == ["query_students", "query_tasks"]
+
+    calls.clear()
+    blocked = json.loads(handler({
+        "calls": [
+            {"domain": "tasks", "operation": "create_task", "arguments": {"title": "x"}},
+            {"domain": "students", "operation": "query_students", "arguments": {}},
+        ]
+    }))
+    assert blocked["ok"] is False
+    assert blocked["error"] == "write_operation_forbidden_in_read_bundle"
+    assert calls == []
+
+
+def test_read_bundle_deduplicates_identical_model_selected_reads(monkeypatch):
+    import plugins.tuoguan_core.capability_facades as facades
+
+    calls = []
+
+    def read_tasks(args, **_kwargs):
+        calls.append(dict(args or {}))
+        return json.dumps({"ok": True, "data": {"count": 1}}, ensure_ascii=False)
+
+    legacy = (("tuoguan_query_tasks", {"parameters": {"properties": {}}}, read_tasks),)
+    monkeypatch.setattr(facades, "DOMAIN_OPERATIONS", {"tasks": ("query_tasks",)})
+    monkeypatch.setattr(facades, "MODEL_VISIBLE_DOMAIN_NAMES", ("tasks",))
+    monkeypatch.setattr(
+        facades,
+        "operation_manifest",
+        lambda: {"operations": {"query_tasks": {"access": "read"}}},
+    )
+
+    _name, _schema, handler = facades.build_read_bundle_tool(
+        legacy, tool_result=lambda value: json.dumps(value, ensure_ascii=False),
+    )
+    result = json.loads(handler({
+        "calls": [
+            {"domain": "tasks", "operation": "query_tasks", "arguments": {"date_scope": "today"}},
+            {"domain": "tasks", "operation": "query_tasks", "arguments": {"date_scope": "today"}},
+        ]
+    }))
+    assert result["ok"] is True
+    assert result["data"]["requested_reads"] == 2
+    assert result["data"]["executed_unique_reads"] == 1
+    assert len(calls) == 1
+    assert result["data"]["calls"][1]["deduplicated"] is True
+
+
+def test_facade_surface_includes_read_bundle_without_removing_existing_tools():
+    from plugins.tuoguan_core.tools import model_tools
+
+    names = [name for name, _schema, _handler in model_tools("facade")]
+    assert "tuoguan_read_bundle" in names
+    assert "tuoguan_query_students" in names
+    assert "tuoguan_query_tasks" in names
+    assert "tuoguan_students" in names
+    assert "tuoguan_tasks" in names
