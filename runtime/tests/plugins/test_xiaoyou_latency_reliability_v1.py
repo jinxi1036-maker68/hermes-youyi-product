@@ -594,3 +594,99 @@ def test_read_bundle_rejects_ambiguous_non_query_even_if_manifest_says_read(monk
     assert result["ok"] is False
     assert result["error"] == "write_operation_forbidden_in_read_bundle"
     assert calls == []
+
+
+@pytest.mark.asyncio
+async def test_wecom_slow_turn_gets_one_truthful_processing_receipt(monkeypatch):
+    from plugins.platforms.wecom import callback_adapter
+
+    adapter = callback_adapter.WecomCallbackAdapter.__new__(callback_adapter.WecomCallbackAdapter)
+    monkeypatch.setattr(callback_adapter, "_visible_processing_receipt_seconds", lambda: 0.01)
+
+    sent = []
+
+    async def fake_send(chat_id, content, reply_to=None, metadata=None):
+        sent.append((chat_id, content, dict(metadata or {})))
+        return callback_adapter._send_result(ok=True, message_id="progress-1")
+
+    async def slow_handler(_event):
+        await asyncio.sleep(0.05)
+        return "最终结果"
+
+    adapter.send = fake_send
+    adapter.set_message_handler(slow_handler)
+    result = await adapter._message_handler(_event("帮我查一下"))
+
+    assert result == "最终结果"
+    assert len(sent) == 1
+    assert sent[0][1] == callback_adapter.VISIBLE_PROCESSING_RECEIPT_TEXT
+    assert sent[0][2] == {"xiaoyou_transport_progress": True}
+
+
+@pytest.mark.asyncio
+async def test_wecom_fast_turn_does_not_emit_processing_receipt(monkeypatch):
+    from plugins.platforms.wecom import callback_adapter
+
+    adapter = callback_adapter.WecomCallbackAdapter.__new__(callback_adapter.WecomCallbackAdapter)
+    monkeypatch.setattr(callback_adapter, "_visible_processing_receipt_seconds", lambda: 0.05)
+
+    sent = []
+
+    async def fake_send(chat_id, content, reply_to=None, metadata=None):
+        sent.append((chat_id, content))
+        return callback_adapter._send_result(ok=True, message_id="progress-1")
+
+    async def fast_handler(_event):
+        return "马上完成"
+
+    adapter.send = fake_send
+    adapter.set_message_handler(fast_handler)
+    result = await adapter._message_handler(_event("你好"))
+
+    assert result == "马上完成"
+    assert sent == []
+
+
+@pytest.mark.asyncio
+async def test_wecom_command_never_emits_processing_receipt(monkeypatch):
+    from plugins.platforms.wecom import callback_adapter
+
+    adapter = callback_adapter.WecomCallbackAdapter.__new__(callback_adapter.WecomCallbackAdapter)
+    monkeypatch.setattr(callback_adapter, "_visible_processing_receipt_seconds", lambda: 0.01)
+
+    sent = []
+
+    async def fake_send(chat_id, content, reply_to=None, metadata=None):
+        sent.append((chat_id, content))
+        return callback_adapter._send_result(ok=True, message_id="progress-1")
+
+    async def slow_handler(_event):
+        await asyncio.sleep(0.03)
+        return None
+
+    adapter.send = fake_send
+    adapter.set_message_handler(slow_handler)
+    result = await adapter._message_handler(_event("/status"))
+
+    assert result is None
+    assert sent == []
+
+
+@pytest.mark.asyncio
+async def test_wecom_processing_receipt_failure_never_changes_final_answer(monkeypatch):
+    from plugins.platforms.wecom import callback_adapter
+
+    adapter = callback_adapter.WecomCallbackAdapter.__new__(callback_adapter.WecomCallbackAdapter)
+    monkeypatch.setattr(callback_adapter, "_visible_processing_receipt_seconds", lambda: 0.01)
+
+    async def failed_send(chat_id, content, reply_to=None, metadata=None):
+        return callback_adapter._send_result(ok=False, error="synthetic-send-failure")
+
+    async def slow_handler(_event):
+        await asyncio.sleep(0.04)
+        return "模型最终答案"
+
+    adapter.send = failed_send
+    adapter.set_message_handler(slow_handler)
+
+    assert await adapter._message_handler(_event("继续处理")) == "模型最终答案"
