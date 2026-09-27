@@ -699,3 +699,33 @@ Owner 现在只做一次真实企业微信 Query：
 `今天还有哪些事情没处理完？`
 
 把小U原样回复交回 ChatGPT。PASS 后封板 Stage 2，进入 Stage 3 Direct Message / Outbound。
+
+
+## Stage 2 Owner real WeCom Query acceptance｜PASS
+
+Owner 真实企业微信问题：
+
+`今天还有哪些事情没处理完？`
+
+小U回复包含：
+- 今天到期任务：0 条；
+- 全机构未关闭任务：0 条；
+- 明确结论当前没有任务侧未完成事项。
+
+对“数据时间戳 09-23”完成代码核查后确认：
+- `tuoguan_query_tasks` 每次调用都直接读取当前 `tasks.json`；
+- `date_scope=today` 使用请求时的当前本地日期过滤 `due_at`；
+- 返回字段 `as_of` 来自 `tasks.json` 的 filesystem mtime；
+- 因此 09-23 表示任务库最后一次发生写入，不表示本轮查询使用 09-23 的旧快照。
+
+结论：
+- Owner real acceptance = PASS；
+- evidence：`EV-Q-004 = PASS_OWNER_ACCEPTANCE`；
+- Stage 2 Query 正式 sealed；
+- stable tag（逻辑基线标识）：`youyi-stable-PASS-query-2026-09-27`；
+- 下一正式阶段：Stage 3 Direct Message / Outbound。
+
+非阻断 UX debt：
+- “数据时间戳”容易被理解为查询快照时间；
+- 后续 UX 阶段应改为“任务库最后修改时间”或不在普通回复中展示该字段；
+- 不重开 Stage 2。
