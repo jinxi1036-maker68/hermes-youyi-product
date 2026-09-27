@@ -1,6 +1,6 @@
 {
   "schema_version": "xiaoyou_evidence_index_v1",
-  "updated_at": "2026-09-27T13:32:17+08:00",
+  "updated_at": "2026-09-27T14:10:00+08:00",
   "repository": "jinxi1036-maker68/hermes-youyi-product",
   "evidence": [
     {
@@ -247,6 +247,17 @@
       "production_sha": "e9c942454bf0325a90a9df55485ae52b5247ce4e",
       "source": "Owner-relayed Codex end-to-end fix/cutover result plus GitHub PR/CI verification by ChatGPT",
       "note": "New Gateway active/enabled; old stable unit stopped and preserved. 8866 and 19092 are both listening on the same new Gateway PID. Plugin Doctor 5/5 PASS. Runtime Topology, Persistent Home, Self-contained and Core Compatibility PASS. Receipt drain resumed with processing=0. Holding Bridge FORWARD/pending=0. Public callback remains through Bridge; public health HTTP 200; P0 errors=0; rollback not required. Stage 2 still awaits Owner real WeCom Query acceptance."
+    },
+    {
+      "id": "EV-Q-004",
+      "area": "Stage 2 Owner real WeCom Query acceptance",
+      "judgment": "PASS_OWNER_ACCEPTANCE",
+      "date": "2026-09-27",
+      "production_sha": "e9c942454bf0325a90a9df55485ae52b5247ce4e",
+      "main_sha": "2c65de090d6fb5ff97c55f5774533bd9089b439f",
+      "prompt": "今天还有哪些事情没处理完？",
+      "source": "Owner-provided real WeCom screenshot plus ChatGPT code-path verification",
+      "note": "XiaoU queried the authoritative task inventory, returned today-due count=0 and organization-wide open-task count=0. The displayed 09-23 timestamp corresponds to tasks.json last-modified time (mtime), not query execution time; query_tasks reads the current authoritative store at request time and computes date_scope=today from the current local date. Stage 2 Query acceptance PASS. Non-blocking UX debt: label the mtime more clearly as task-store last modified time rather than generic data timestamp."
     }
   ]
 }
