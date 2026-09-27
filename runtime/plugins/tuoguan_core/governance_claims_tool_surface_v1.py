@@ -100,7 +100,7 @@ PERSON_ASSIGNMENT_CLAIM_SCHEMA = _schema(
         "role": {"type": "string", "enum": ["boss", "manager", "teacher"]},
         "campus_id": {"type": "string"},
     },
-    ["reference_ids", "staff_user_id", "role", "campus_id"],
+    ["staff_user_id", "role", "campus_id"],
 )
 
 PENDING_IDENTITY_ACTIVATION_SCHEMA = _schema(
