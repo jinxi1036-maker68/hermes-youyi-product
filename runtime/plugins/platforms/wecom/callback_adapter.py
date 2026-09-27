@@ -89,6 +89,14 @@ ACCESS_TOKEN_TTL_SECONDS = 7200
 DEFAULT_MODEL_TURN_TIMEOUT_SECONDS = 1770.0
 MAX_MODEL_TURN_TIMEOUT_SECONDS = 1770.0
 
+# A slow callback turn is already running in the background after WeCom has
+# acknowledged the inbound HTTP request.  If it remains unfinished beyond this
+# soft deadline, emit one transport-level processing receipt.  The text makes
+# no business claim and never substitutes for the model's final answer.
+DEFAULT_VISIBLE_PROCESSING_RECEIPT_SECONDS = 8.0
+MAX_VISIBLE_PROCESSING_RECEIPT_SECONDS = 60.0
+VISIBLE_PROCESSING_RECEIPT_TEXT = "收到，我正在处理，结果出来直接发你。"
+
 # Hermes may emit lifecycle diagnostics through the gateway status channel.
 # They are useful in logs but are not a work message from 小优 and must never
 # become a standalone Enterprise WeChat message to a teacher or owner.
@@ -113,6 +121,27 @@ def _model_turn_timeout_seconds() -> float:
     except (TypeError, ValueError):
         value = DEFAULT_MODEL_TURN_TIMEOUT_SECONDS
     return min(MAX_MODEL_TURN_TIMEOUT_SECONDS, max(10.0, value))
+
+
+def _visible_processing_receipt_seconds() -> float:
+    raw = str(os.getenv("HERMES_WECOM_VISIBLE_PROCESSING_RECEIPT_SECONDS", "") or "").strip()
+    if raw.lower() in {"0", "off", "false", "disabled"}:
+        return 0.0
+    try:
+        value = float(raw) if raw else DEFAULT_VISIBLE_PROCESSING_RECEIPT_SECONDS
+    except (TypeError, ValueError):
+        value = DEFAULT_VISIBLE_PROCESSING_RECEIPT_SECONDS
+    if value <= 0:
+        return 0.0
+    return min(MAX_VISIBLE_PROCESSING_RECEIPT_SECONDS, max(2.0, value))
+
+
+def _event_command(event: MessageEvent) -> str | None:
+    get_command = getattr(event, "get_command", None)
+    if callable(get_command):
+        return get_command()
+    text = str(getattr(event, "text", "") or "").strip()
+    return text.split(maxsplit=1)[0] if text.startswith("/") else None
 
 
 def _wecom_proxy_url() -> str | None:
@@ -275,6 +304,74 @@ class WecomCallbackAdapter(BasePlatformAdapter):
         self._user_app_map: Dict[str, str] = {}
         self._access_tokens: Dict[str, Dict[str, Any]] = {}
 
+    async def _maybe_send_visible_processing_receipt(
+        self,
+        event: MessageEvent,
+        *,
+        handler_task: "asyncio.Task[Any]",
+        state: Dict[str, bool],
+    ) -> None:
+        """Emit one truthful transport receipt only while work is still active."""
+
+        delay = _visible_processing_receipt_seconds()
+        if delay <= 0:
+            return
+        if (
+            event.message_type != MessageType.TEXT
+            or not str(getattr(event, "text", "") or "").strip()
+            or _event_command(event)
+        ):
+            return
+        await asyncio.sleep(delay)
+        if handler_task.done():
+            return
+
+        state["send_started"] = True
+        chat_id = _event_chat_id(event)
+        if not chat_id:
+            return
+        outcome = "failed"
+        try:
+            result = await asyncio.wait_for(
+                self.send(
+                    chat_id,
+                    VISIBLE_PROCESSING_RECEIPT_TEXT,
+                    metadata={"xiaoyou_transport_progress": True},
+                ),
+                timeout=5.0,
+            )
+            outcome = (
+                "succeeded"
+                if bool(getattr(result, "success", getattr(result, "ok", False)))
+                else "failed"
+            )
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logger.exception(
+                "[WecomCallback] Visible processing receipt failed message_id=%s",
+                getattr(event, "message_id", ""),
+            )
+        finally:
+            state["send_finished"] = True
+            try:
+                trace_module = _import_tuoguan_module("turn_trace")
+                trace_session = trace_module.resolve_trace_session(
+                    message_id=str(getattr(event, "message_id", "") or ""),
+                )
+                if trace_session:
+                    trace_module.record_progress_event(
+                        trace_session,
+                        kind="visible_processing_receipt",
+                        source="transport",
+                        outcome=outcome,
+                    )
+            except Exception:
+                logger.debug(
+                    "[WecomCallback] Unable to trace visible processing receipt",
+                    exc_info=True,
+                )
+
     def set_message_handler(self, handler) -> None:
         """Guarantee a visible, safe reply when a non-streaming model turn fails."""
 
@@ -290,9 +387,19 @@ class WecomCallbackAdapter(BasePlatformAdapter):
                     )
                 except Exception:
                     logger.exception("[WecomCallback] Unable to begin turn fence")
+
+            handler_task = asyncio.create_task(handler(event))
+            progress_state = {"send_started": False, "send_finished": False}
+            progress_task = asyncio.create_task(
+                self._maybe_send_visible_processing_receipt(
+                    event,
+                    handler_task=handler_task,
+                    state=progress_state,
+                )
+            )
             try:
                 response = await asyncio.wait_for(
-                    handler(event),
+                    handler_task,
                     timeout=_model_turn_timeout_seconds(),
                 )
             except asyncio.CancelledError:
@@ -311,12 +418,29 @@ class WecomCallbackAdapter(BasePlatformAdapter):
                     fence.expire_turn(message_id=message_id, reason="handler_exception")
                 logger.exception("[WecomCallback] Model handler failed before producing a reply")
                 response = None
-            get_command = getattr(event, "get_command", None)
-            command = get_command() if callable(get_command) else (
-                str(event.text or "").strip().split(maxsplit=1)[0]
-                if str(event.text or "").strip().startswith("/")
-                else None
-            )
+            finally:
+                if not progress_task.done():
+                    if progress_state.get("send_started"):
+                        # Once the transport send has started, briefly let it
+                        # finish so the progress receipt cannot arrive after the
+                        # final model answer. This does not block model work.
+                        try:
+                            await asyncio.wait_for(asyncio.shield(progress_task), timeout=2.0)
+                        except (asyncio.TimeoutError, asyncio.CancelledError):
+                            progress_task.cancel()
+                    else:
+                        progress_task.cancel()
+                if progress_task.done():
+                    try:
+                        progress_task.result()
+                    except asyncio.CancelledError:
+                        pass
+                    except Exception:
+                        logger.debug(
+                            "[WecomCallback] Visible processing task ended with error",
+                            exc_info=True,
+                        )
+            command = _event_command(event)
             if (
                 response is None
                 and event.message_type == MessageType.TEXT
