@@ -1,6 +1,6 @@
 {
   "schema_version": "xiaoyou_project_knowledge_v2",
-  "knowledge_revision": 5,
+  "knowledge_revision": 6,
   "project": "xiaoyou-hermes",
   "repository": "jinxi1036-maker68/hermes-youyi-product",
   "knowledge_branch": "project-knowledge",
@@ -9,8 +9,11 @@
   "updated_at": "2026-09-27",
   "authority": {
     "dynamic_current_state": "knowledge/PROJECT_INDEX.json",
+    "current_work": "knowledge/CURRENT_WORK.json",
     "human_current_state": "knowledge/05_CURRENT_STATE.md",
-    "active_work": "knowledge/ACTIVE_WORK.md",
+    "human_current_work": "knowledge/CURRENT_WORK.md",
+    "active_work_compat": "knowledge/ACTIVE_WORK.md",
+    "knowledge_harness": "knowledge/KNOWLEDGE_HARNESS.json",
     "evidence": "knowledge/EVIDENCE_INDEX.json",
     "code": "main branch",
     "deployed_runtime": "production server",
@@ -21,20 +24,20 @@
     "formal_stage": {
       "id": 3,
       "name": "Direct Message / Outbound",
-      "status": "active",
+      "status": "ready_to_start",
       "sealed": false
     },
     "production_sha": "e9c942454bf0325a90a9df55485ae52b5247ce4e",
     "production_last_verified_at": "2026-09-27T13:30:00+08:00",
     "main_sha": "2c65de090d6fb5ff97c55f5774533bd9089b439f",
     "main_last_verified_at": "2026-09-27T13:32:17+08:00",
-    "active_work_item_id": "WI-2026-09-stage3-direct-message-outbound",
-    "blocker_id": "stage-3-direct-message-outbound",
-    "blocker_status": "ready_to_start",
-    "blocker_summary": "Stage 2 Query is sealed PASS after production technical cutover and Owner real WeCom acceptance. The apparent `09-23` data timestamp is the current authoritative tasks.json file mtime, not query execution time; the query itself reads the live task store and computes `today` at request time.",
-    "next_action": "Start Stage 3 Direct Message / Outbound by freezing its capability proposition, acceptance criteria, authority boundaries, and first verification target before implementation.",
-    "working_method_id": "WM-006",
-    "working_method_name": "Role-Locked Concurrency-Safe Governed Adaptive Method",
+    "active_work_item_id": "WI-2026-09-knowledge-harness-v3",
+    "blocker_id": "knowledge-harness-v3",
+    "blocker_status": "in_progress",
+    "blocker_summary": "Stage 2 is sealed. Before Stage 3 implementation, Project Knowledge is being refactored because ACTIVE_WORK accumulated closed history and human current-state projections drifted from PROJECT_INDEX.",
+    "next_action": "Complete and validate Knowledge Harness V3: minimal bootstrap, machine-routed load profiles, current-only work state, generated projections, archive-on-close, and stronger knowledge-health validation. Then resume Stage 3 capability design.",
+    "working_method_id": "WM-007",
+    "working_method_name": "Harness-Routed Role-Locked Governed Adaptive Method",
     "bootstrap_holding_contract": "ADR-009: transparent-forward / persist-before-ACK / idempotent-replay-complete-after-confirmed-success"
   },
   "sealed_capabilities": [
@@ -154,6 +157,17 @@
     "force_push_allowed": false,
     "project_knowledge_branch_protected": false,
     "residual_risk": "Platform-level branch protection is not currently enabled; process-level CAS and Git history are the active safeguards.",
-    "material_working_method_changes_require_owner_approval": true
+    "material_working_method_changes_require_owner_approval": true,
+    "projection_policy": "generated_from_machine_truth_not_hand_edited",
+    "current_work_history_policy": "archive_on_close_never_append_history"
+  },
+  "harness": {
+    "version": "KH-003",
+    "manifest": "knowledge/KNOWLEDGE_HARNESS.json",
+    "current_work": "knowledge/CURRENT_WORK.json",
+    "human_current_work": "knowledge/CURRENT_WORK.md",
+    "projection_renderer": "knowledge/tools/render_current.py",
+    "default_profile": "orientation",
+    "projections_generated": true
   }
 }

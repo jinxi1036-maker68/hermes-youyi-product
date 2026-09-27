@@ -1,9 +1,9 @@
 {
   "schema_version": "xiaoyou_working_method_v1",
-  "current_method_id": "WM-006",
-  "current_method_name": "Role-Locked Concurrency-Safe Governed Adaptive Method",
+  "current_method_id": "WM-007",
+  "current_method_name": "Harness-Routed Role-Locked Governed Adaptive Method",
   "status": "active",
-  "effective_at": "2026-09-26T13:45:00+08:00",
+  "effective_at": "2026-09-27T14:30:00+08:00",
   "purpose": "Continuously improve how Owner, ChatGPT and Codex build XiaoYou while preserving evidence, stage discipline, safety, project continuity, and non-drifting role ownership.",
   "stable_principles": [
     "Owner decides product/business direction and performs final real WeCom acceptance only after ChatGPT confirms the production technical gate is ready.",
@@ -17,13 +17,14 @@
     "Live facts outrank remembered facts; run the appropriate Freshness Gate before code or production work.",
     "Use the smallest general fix that addresses the root cause; do not patch for one prompt or one test case.",
     "Stop after structural failure instead of blind retry loops; establish root-cause evidence before another production attempt.",
-    "A major work item is not done until Project Knowledge is synchronized."
+    "A major work item is not done until Project Knowledge is synchronized.",
+    "Agent startup and context loading follow KH-003 progressive disclosure: PROJECT_INDEX + CURRENT_WORK first, then task-profile routing; History/Evidence/Archive are on-demand."
   ],
   "current_workflow": [
     {
       "step": 1,
-      "name": "Orient",
-      "action": "Read PROJECT_INDEX, Freshness Gate, CURRENT_STATE, ACTIVE_WORK and this Working Method before implementation."
+      "name": "Harness bootstrap",
+      "action": "Read 00_START_HERE and KNOWLEDGE_HARNESS, then PROJECT_INDEX and CURRENT_WORK only. Run the Freshness Gate needed for the task and load CURRENT_WORK.context_profile required files plus must_read; use on_demand only when necessary."
     },
     {
       "step": 2,
@@ -78,7 +79,7 @@
     {
       "step": 12,
       "name": "Knowledge sync",
-      "action": "Update PROJECT_INDEX, CURRENT_STATE, ACTIVE_WORK, Evidence, capability/ADR/history and Working Method when the method itself changed."
+      "action": "Update machine truth, archive closed work instead of appending it to Current, render CURRENT_STATE/CURRENT_WORK projections, run Knowledge Validator, and update Evidence/Capability/ADR/Method when required."
     }
   ],
   "stop_rules": [
@@ -156,7 +157,8 @@
     "knowledge/methods/WM-003-evidence-first-release.md",
     "knowledge/methods/WM-004-adaptive-evidence-first.md",
     "knowledge/methods/WM-005-concurrency-safe-governed-adaptive.md",
-    "knowledge/methods/WM-006-role-locked-governed-adaptive.md"
+    "knowledge/methods/WM-006-role-locked-governed-adaptive.md",
+    "knowledge/methods/WM-007-harness-routed-governed-adaptive.md"
   ],
   "knowledge_write_protocol": {
     "principle": "Project Knowledge writes use optimistic concurrency; never overwrite another window's unseen changes.",
@@ -247,5 +249,15 @@
       "resolved_at": "2026-09-27T13:30:00+08:00",
       "resolution": "Codex resolved the 19092/new-Gateway blocker end-to-end under the explicit owner-authorized exception. Root cause and fix were Git-governed in PR #25; isolated and production cutover verification passed. WM-006 normal role boundaries resume."
     }
-  ]
+  ],
+  "harness_integration": {
+    "harness_id": "KH-003",
+    "bootstrap_rule": "PROJECT_INDEX + CURRENT_WORK before task-profile loading",
+    "generated_projections": [
+      "knowledge/05_CURRENT_STATE.md",
+      "knowledge/CURRENT_WORK.md"
+    ],
+    "archive_closed_work": true,
+    "default_history_loading": false
+  }
 }

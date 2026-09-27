@@ -1,52 +1,44 @@
-# Schema 与一致性校验
+# Schema 与 Knowledge Health Validation｜KH-003
 
 ## 目标
 
-项目记忆也必须像代码一样可检查。
+Validator 不只检查 JSON 可解析，还要检查“当前知识是否真的可继续工作”。
 
-当前提供：
-- `schema/project_index.schema.json`
-- `tools/validate_knowledge.py`
+## 机器合同
 
-## Validator 当前检查
+- PROJECT_INDEX：项目当前事实；
+- CURRENT_WORK：当前唯一工作项；
+- KNOWLEDGE_HARNESS：上下文路由、预算、生命周期；
+- WORKING_METHOD：当前工作方法。
 
-### 结构
-- PROJECT_INDEX / Evidence / Working Method JSON 可解析；
-- schema_version / knowledge_revision；
-- main / production SHA 格式；
-- current stage 唯一存在于 roadmap；
-- ACTIVE_WORK id 与 PROJECT_INDEX 一致；
-- sealed capability 有真实 Evidence id；
-- Working Method id 与 PROJECT_INDEX 一致；
-- Method History 文件全部存在；
-- CURRENT_WORKING_METHOD 与当前 method id 一致；
-- project-knowledge 当前工作树保持纯知识。
+## Validator 必查
 
-### 防动态事实漂移
-- START_HERE / handoff 不允许硬编码 40位当前 SHA；
-- CURRENT_STATE 必须明确 PROJECT_INDEX 是动态事实权威。
+### Current 一致性
+- Index active_work_item_id == CURRENT_WORK.work_item_id；
+- CURRENT_WORK formal stage context 与当前 Stage 一致；
+- context_profile 存在；
+- profile.required / must_read / on_demand 引用存在；
+- CURRENT_WORK 禁止 history / timeline / debug_log。
 
-### 内容安全
-- 禁止明显敏感文件名；
-- 扫描高置信 credential / private-key 模式。
+### Projection drift
+- CURRENT_STATE 必须等于 renderer 输出；
+- CURRENT_WORK.md 必须等于 renderer 输出；
+- ACTIVE_WORK 只能是 deprecated compatibility pointer。
 
-### 可选 live-main Freshness
-执行者可设置 `XIAOYOU_LIVE_MAIN_SHA`，Validator会比较 PROJECT_INDEX 的 main_sha。
+### Context health
+- profile 前 machine bootstrap 只有 PROJECT_INDEX + CURRENT_WORK；
+- orientation 不得加载 History/Evidence/Archive；
+- Current/入口文件满足 byte budget；
+- 非 audit profile 不允许 required History/Archive。
 
-## Validator 不负责什么
+### 原有不变量
+SHA、Stage/roadmap、sealed Evidence、Working Method lineage、force=false、静态入口不硬编码当前 SHA、public-safe/secret scan、可选 live-main Freshness。
 
-Validator只能证明**知识库内部一致性**。
+## 使用
 
-它不能证明：
-- Production仍是原版本；
-- GitHub main没有刚发生外部变化（除非传入 live SHA）；
-- 业务现实没有改变；
-- 一条知识从商业角度是否应该公开。
+```bash
+python knowledge/tools/render_current.py --check
+python knowledge/tools/validate_knowledge.py
+```
 
-这些分别由 Freshness Gate、生产只读核验和 Public Safety判断负责。
-
-## JSON Schema
-
-Schema 是机器合同和结构文档。
-
-Validator 当前使用标准库实现关键不变量，不依赖额外 `jsonschema` 包，以保证任何基础 Python 环境都能运行。
+机器事实变化后用 `render_current.py --write` 再验证。
