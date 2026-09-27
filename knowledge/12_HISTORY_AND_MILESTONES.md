@@ -273,3 +273,19 @@ PR #17：
 - evidence `EV-RT-020 = PASS_PRODUCTION_TECHNICAL_CUTOVER`；
 - 一次性 Codex role exception `WM-006-EXC-19092-001` 到此结束，恢复 WM-006 正常角色边界；
 - Stage 2 只剩 Owner real WeCom Query acceptance，尚未 sealed。
+
+
+## Stage 2 Query sealed
+
+2026-09-27：
+- Runtime Topology production technical cutover 已通过 `EV-RT-020`；
+- Owner 在真实企业微信发送 `今天还有哪些事情没处理完？`；
+- 小U查询权威任务库存并返回 today due=0、全机构 open=0；
+- 回复中 `数据时间戳 09-23` 经代码核查确认是当前 `tasks.json` 的最后修改时间，而不是旧快照查询时间；
+- `query_tasks` 每次调用实时读取任务库，并按请求时本地日期计算 `date_scope=today`；
+- 因此 Owner acceptance 判定 PASS；
+- `EV-Q-004 = PASS_OWNER_ACCEPTANCE`；
+- Stage 2 Query 正式 sealed；
+- 下一阶段 Stage 3 Direct Message / Outbound。
+
+另记录非阻断 UX debt：普通回复不应将 task-store mtime 模糊展示为“数据时间戳”，避免被误解为数据新鲜度。
