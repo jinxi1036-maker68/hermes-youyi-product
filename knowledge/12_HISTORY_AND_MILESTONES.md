@@ -303,3 +303,12 @@ PR #17：
 - remote structural/projection/profile/budget audit returned 0 errors；
 - evidence `EV-KH-001 = PASS_KNOWLEDGE_HARNESS`；
 - KH-003 work item closed and archived; Stage 3 remains intentionally waiting for Owner resume.
+
+
+## Response latency / interaction architecture work opened
+
+2026-09-27：
+- Owner paused Stage 3 implementation to address XiaoU response speed and perceived responsiveness first；
+- current work moved to `WI-2026-09-response-latency-ux-architecture`；
+- research scope includes model/tool/session/context/delivery latency plus a two-phase visible response/background continuation model；
+- Stage 3 remains paused until this architecture is frozen.

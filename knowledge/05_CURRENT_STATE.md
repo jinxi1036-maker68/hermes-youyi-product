@@ -10,12 +10,12 @@
 
 ## Current Work
 
-- ID: `WI-2026-09-stage3-direct-message-outbound`
-- Kind: `capability_stage`
-- Status: `waiting_owner_resume`
-- Objective: Hold a clean Stage 3 entry point after KH-003; do not begin product implementation until the Owner explicitly resumes the stage.
-- Blocker: No technical blocker. Work is deliberately paused at the Stage 3 entry boundary.
-- Next: Wait for Owner to resume Stage 3. Then switch to the capability_design profile and freeze the Stage 3 capability contract before coding.
+- ID: `WI-2026-09-response-latency-ux-architecture`
+- Kind: `runtime_experience_architecture`
+- Status: `research_in_progress`
+- Objective: Redesign XiaoU for low true latency and low perceived latency: simple turns should finish quickly; long work should acknowledge quickly, continue safely in the background, and deliver a truthful final result later.
+- Blocker: Current production has latency telemetry but no current baseline decomposition by turn class, and the user-visible response policy does not separate first-visible response from final task completion.
+- Next: Finish first-principles latency diagnosis and freeze an optimization architecture and measurement plan before code changes.
 
 ## Runtime facts
 
@@ -30,5 +30,5 @@
 ## Context routing
 
 - Harness: `KH-003`
-- Profile: `orientation`
-- Work execution state: `ready_to_start`
+- Profile: `capability_design`
+- Work execution state: `paused_before_implementation`

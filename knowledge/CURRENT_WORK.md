@@ -2,46 +2,49 @@
 
 > **GENERATED — DO NOT EDIT.** 机器权威：`knowledge/CURRENT_WORK.json`。
 
-- work_item_id: `WI-2026-09-stage3-direct-message-outbound`
-- kind: `capability_stage`
-- status: `waiting_owner_resume`
-- context_profile: `orientation`
-- formal_stage_context: Stage 3 Direct Message / Outbound / ready_to_start
+- work_item_id: `WI-2026-09-response-latency-ux-architecture`
+- kind: `runtime_experience_architecture`
+- status: `research_in_progress`
+- context_profile: `capability_design`
+- formal_stage_context: Stage 3 Direct Message / Outbound / paused_before_implementation
 
 ## Objective
 
-Hold a clean Stage 3 entry point after KH-003; do not begin product implementation until the Owner explicitly resumes the stage.
+Redesign XiaoU for low true latency and low perceived latency: simple turns should finish quickly; long work should acknowledge quickly, continue safely in the background, and deliver a truthful final result later.
 
 ## Current blocker
 
-No technical blocker. Work is deliberately paused at the Stage 3 entry boundary.
+Current production has latency telemetry but no current baseline decomposition by turn class, and the user-visible response policy does not separate first-visible response from final task completion.
 
 ## Next action
 
-Wait for Owner to resume Stage 3. Then switch to the capability_design profile and freeze the Stage 3 capability contract before coding.
+Finish first-principles latency diagnosis and freeze an optimization architecture and measurement plan before code changes.
 
 ## Acceptance criteria
 
-- No Stage 3 product code changes occur before the Owner resumes the stage.
-- On resume, create/finalize the Stage 3 capability record before implementation.
-- Freeze outbound authority, target resolution, permission, delivery evidence, failure semantics, non-goals and real acceptance criteria before coding.
+- Separate TTFV (time to first visible value) from TTC (time to complete).
+- Identify which latency components are evidenced in XiaoU today and which still require production measurement.
+- Define adaptive fast/normal/work lanes without weakening authority or write confirmation boundaries.
+- Define a truthful early-response/background-continuation policy that avoids spam on fast turns.
+- Define latency observability by turn class using privacy-safe traces.
+- Define phased changes with measurable p50/p95 targets and rollback/evaluation criteria.
 
 ## Stop rules
 
-- Do not infer Owner approval to begin Stage 3 from completion of KH-003.
-- Do not mix Stage 4 Student Basic Writes into Stage 3.
-- Do not preload History/Evidence/Archive while waiting.
+- Do not start Stage 3 capability implementation during this latency architecture work.
+- Do not assume knowledge/context size is the main cause without trace evidence.
+- Do not make writes or risky actions asynchronous past their confirmation/authority boundary.
+- Do not add generic progress spam to every turn.
 
 ## Context routing
 
-Profile: `orientation`
+Profile: `capability_design`
 
 Must read:
+- `knowledge/08_RELEASE_AND_RUNTIME.md`
 
 On demand:
-- `knowledge/01_PRODUCT_NORTH_STAR.md`
-- `knowledge/02_ARCHITECTURE_AND_BOUNDARIES.md`
-- `knowledge/04_CAPABILITY_MAP.md`
-- `knowledge/07_AUTHORITY_DATA_AND_TRUTH.md`
-- `knowledge/decisions/ADR-002-human-command-vs-ai-autonomy.md`
+- `knowledge/EVIDENCE_INDEX.json`
+- `knowledge/12_HISTORY_AND_MILESTONES.md`
+- `knowledge/WORKING_METHOD.json`
 - `knowledge/09_TESTING_SEALING_AND_EVIDENCE.md`

@@ -1,42 +1,45 @@
 {
   "schema_version": "xiaoyou_current_work_v1",
-  "work_item_id": "WI-2026-09-stage3-direct-message-outbound",
-  "kind": "capability_stage",
-  "status": "waiting_owner_resume",
+  "work_item_id": "WI-2026-09-response-latency-ux-architecture",
+  "kind": "runtime_experience_architecture",
+  "status": "research_in_progress",
   "formal_stage_context": {
     "id": 3,
     "name": "Direct Message / Outbound",
-    "execution_state": "ready_to_start"
+    "execution_state": "paused_before_implementation"
   },
-  "objective": "Hold a clean Stage 3 entry point after KH-003; do not begin product implementation until the Owner explicitly resumes the stage.",
-  "problem_statement": "Stage 2 is sealed and KH-003 is complete. Stage 3 capability proposition and acceptance contract have not yet been frozen.",
-  "blocker": "No technical blocker. Work is deliberately paused at the Stage 3 entry boundary.",
-  "next_action": "Wait for Owner to resume Stage 3. Then switch to the capability_design profile and freeze the Stage 3 capability contract before coding.",
+  "objective": "Redesign XiaoU for low true latency and low perceived latency: simple turns should finish quickly; long work should acknowledge quickly, continue safely in the background, and deliver a truthful final result later.",
+  "problem_statement": "Users experience XiaoU as very slow. The cause may span model generation, long sessions, multi-model/tool loops, serial tool execution, context construction, delivery behavior and UX that stays silent until final completion.",
+  "blocker": "Current production has latency telemetry but no current baseline decomposition by turn class, and the user-visible response policy does not separate first-visible response from final task completion.",
+  "next_action": "Finish first-principles latency diagnosis and freeze an optimization architecture and measurement plan before code changes.",
   "acceptance_criteria": [
-    "No Stage 3 product code changes occur before the Owner resumes the stage.",
-    "On resume, create/finalize the Stage 3 capability record before implementation.",
-    "Freeze outbound authority, target resolution, permission, delivery evidence, failure semantics, non-goals and real acceptance criteria before coding."
+    "Separate TTFV (time to first visible value) from TTC (time to complete).",
+    "Identify which latency components are evidenced in XiaoU today and which still require production measurement.",
+    "Define adaptive fast/normal/work lanes without weakening authority or write confirmation boundaries.",
+    "Define a truthful early-response/background-continuation policy that avoids spam on fast turns.",
+    "Define latency observability by turn class using privacy-safe traces.",
+    "Define phased changes with measurable p50/p95 targets and rollback/evaluation criteria."
   ],
   "stop_rules": [
-    "Do not infer Owner approval to begin Stage 3 from completion of KH-003.",
-    "Do not mix Stage 4 Student Basic Writes into Stage 3.",
-    "Do not preload History/Evidence/Archive while waiting."
+    "Do not start Stage 3 capability implementation during this latency architecture work.",
+    "Do not assume knowledge/context size is the main cause without trace evidence.",
+    "Do not make writes or risky actions asynchronous past their confirmation/authority boundary.",
+    "Do not add generic progress spam to every turn."
   ],
-  "context_profile": "orientation",
-  "must_read": [],
+  "context_profile": "capability_design",
+  "must_read": [
+    "knowledge/08_RELEASE_AND_RUNTIME.md"
+  ],
   "on_demand": [
-    "knowledge/01_PRODUCT_NORTH_STAR.md",
-    "knowledge/02_ARCHITECTURE_AND_BOUNDARIES.md",
-    "knowledge/04_CAPABILITY_MAP.md",
-    "knowledge/07_AUTHORITY_DATA_AND_TRUTH.md",
-    "knowledge/decisions/ADR-002-human-command-vs-ai-autonomy.md",
+    "knowledge/EVIDENCE_INDEX.json",
+    "knowledge/12_HISTORY_AND_MILESTONES.md",
+    "knowledge/WORKING_METHOD.json",
     "knowledge/09_TESTING_SEALING_AND_EVIDENCE.md"
   ],
   "evidence_refs": [
     "EV-KH-001",
-    "EV-Q-004",
     "EV-RT-020"
   ],
   "opened_at": "2026-09-27",
-  "owner_resume_required": true
+  "owner_approved": true
 }
