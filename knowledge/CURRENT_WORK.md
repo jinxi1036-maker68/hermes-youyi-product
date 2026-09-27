@@ -28,7 +28,7 @@ Implement KH-003 files, generated projections, archive-on-close, task load profi
 - CURRENT_STATE.md and CURRENT_WORK.md are deterministic generated projections and validator detects drift.
 - Load profiles keep History, Evidence and Archive out of default bootstrap context.
 - Validator detects work/index mismatch, invalid profile references and context-budget violations.
-- Authority, evidence, safety, concurrency and WM-006 guarantees are not weakened.
+- Authority, evidence, safety, concurrency and WM-006 role guarantees remain preserved under WM-007.
 
 ## Stop rules
 

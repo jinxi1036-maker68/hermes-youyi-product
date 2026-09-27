@@ -36,8 +36,8 @@
     "blocker_status": "in_progress",
     "blocker_summary": "Stage 2 is sealed. Before Stage 3 implementation, Project Knowledge is being refactored because ACTIVE_WORK accumulated closed history and human current-state projections drifted from PROJECT_INDEX.",
     "next_action": "Complete and validate Knowledge Harness V3: minimal bootstrap, machine-routed load profiles, current-only work state, generated projections, archive-on-close, and stronger knowledge-health validation. Then resume Stage 3 capability design.",
-    "working_method_id": "WM-006",
-    "working_method_name": "Role-Locked Concurrency-Safe Governed Adaptive Method",
+    "working_method_id": "WM-007",
+    "working_method_name": "Harness-Routed Role-Locked Governed Adaptive Method",
     "bootstrap_holding_contract": "ADR-009: transparent-forward / persist-before-ACK / idempotent-replay-complete-after-confirmed-success"
   },
   "sealed_capabilities": [
