@@ -4,7 +4,7 @@
 
 - work_item_id: `WI-2026-09-response-latency-ux-architecture`
 - kind: `runtime_experience_architecture`
-- status: `context_compaction_perf_evidence_blocked`
+- status: `latency_v1_phase3_delivery_and_retry`
 - context_profile: `capability_design`
 - formal_stage_context: Stage 3 Direct Message / Outbound / paused_before_implementation
 
@@ -18,7 +18,7 @@ Current production has latency telemetry but no current baseline decomposition b
 
 ## Next action
 
-Keep PR #28 open and unmerged. Run a production-adjacent, no-traffic synthetic A/B on the exact Agnes 3.0 route: same synthetic long-session semantics before and after Hermes-native compaction, capture prompt tokens, TTFT/API duration/complete time if available, and prove no production/public routing changes.
+Keep production unchanged. Complete V1 with the remaining cognition-preserving work: eliminate avoidable corrective/missing-argument model loops and add truthful early-visible progress for turns that exceed a soft deadline. Then assemble one candidate release for Owner speed+quality acceptance with rollback.
 
 ## Acceptance criteria
 

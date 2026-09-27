@@ -1,6 +1,6 @@
 {
   "schema_version": "xiaoyou_evidence_index_v1",
-  "updated_at": "2026-09-27T18:49:00+08:00",
+  "updated_at": "2026-09-27T21:05:00+08:00",
   "repository": "jinxi1036-maker68/hermes-youyi-product",
   "evidence": [
     {
@@ -321,6 +321,31 @@
         "compressor_only_ms": 75.76
       },
       "note": "Hermes 0.21.0 / agnes-3.0-flash verified. Candidate changes only compression.* and auxiliary.compression.provider. 5/5 targeted tests PASS; continuity/tail 28/28 PASS; archive-history 16/16 PASS with 1 skip. Recent context, semantic facts/current task/object continuity and raw history were preserved. Exact-byte rollback PASS. Isolated real-model probes exceeded 60 seconds, so end-to-end latency improvement remains unproven. Production unchanged; PR must remain unmerged until a trustworthy production-adjacent A/B is obtained."
+    },
+    {
+      "id": "EV-LAT-004",
+      "area": "Latency V1 long-session context compaction performance A/B",
+      "judgment": "PASS_PERFORMANCE_MERGED_NOT_DEPLOYED",
+      "date": "2026-09-27",
+      "pr": 28,
+      "candidate_sha": "f9867f93675066c1a7393997f02fb7e895975e48",
+      "merged_sha": "dec626d34003f5f8ca38134db76441aad1000460",
+      "production_sha": "e9c942454bf0325a90a9df55485ae52b5247ce4e",
+      "source": "Owner-relayed Codex production-route synthetic A/B plus GitHub merge by ChatGPT",
+      "metrics": {
+        "runs_a": 3,
+        "runs_b": 3,
+        "input_tokens_a": 93147,
+        "input_tokens_b": 15192,
+        "api_duration_p50_a_ms": 13322.65,
+        "api_duration_p50_b_ms": 2029.07,
+        "timeouts_a": 0,
+        "timeouts_b": 0,
+        "performance_gain_percent": 84.8,
+        "speedup_x": 6.57,
+        "p50_saved_ms": 11293.58
+      },
+      "note": "Exact same agnes-3.0-flash and Provider route, synthetic long-session semantics, no real user/business data and no production traffic changes. B group preserved answer quality 3/3 exactly and made no Tool calls. Current path is non-streaming, so TTFT was not measurable. PR #28 is merged to main but remains undeployed pending final V1 assembly and Owner acceptance."
     }
   ]
 }
