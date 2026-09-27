@@ -18,13 +18,21 @@
     "Define adaptive fast/normal/work lanes without weakening authority or write confirmation boundaries.",
     "Define a truthful early-response/background-continuation policy that avoids spam on fast turns.",
     "Define latency observability by turn class using privacy-safe traces.",
-    "Define phased changes with measurable p50/p95 targets and rollback/evaluation criteria."
+    "Define phased changes with measurable p50/p95 targets and rollback/evaluation criteria.",
+    "Preserve the single-business-brain invariant: the model remains responsible for business understanding, judgment, planning, action/tool selection, and user-facing business expression.",
+    "Latency optimization must reduce orchestration overhead, redundant model/tool rounds, waiting and delivery silence without lowering reasoning quality or removing evidence required for correctness.",
+    "Any concurrency layer may only schedule model-selected operations whose tool metadata proves they are independent and read-only; it must never infer business intent or choose actions for the model.",
+    "Any proposed model downgrade, reasoning-budget reduction, context reduction or deterministic business reply path requires separate evidence that result quality and authority semantics are unchanged."
   ],
   "stop_rules": [
     "Do not start Stage 3 capability implementation during this latency architecture work.",
     "Do not assume knowledge/context size is the main cause without trace evidence.",
     "Do not make writes or risky actions asynchronous past their confirmation/authority boundary.",
-    "Do not add generic progress spam to every turn."
+    "Do not add generic progress spam to every turn.",
+    "Do not introduce a keyword/business router, deterministic business decision tree, or rule-based replacement for model intent/action selection in the name of latency.",
+    "Do not globally reduce reasoning effort, switch to a weaker model, cap necessary tool use, or truncate required context solely to hit a latency target.",
+    "Do not bypass the model for final business expression merely because a tool returned authoritative data; transport/system receipts are the only exception.",
+    "Do not let early progress messages make business claims that the model/tool evidence has not yet established."
   ],
   "context_profile": "capability_design",
   "must_read": [
