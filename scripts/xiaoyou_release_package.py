@@ -19,6 +19,7 @@ SCHEMA_VERSION = "xiaoyou_release_manifest_v1"
 PAYLOAD_ROOTS = (
     "runtime/plugins/tuoguan_core",
     "runtime/plugins/agenda_service_work",
+    "runtime/plugins/platforms/http_policy.py",
     "runtime/plugins/platforms/wecom",
     "runtime/plugins/reply_recovery",
     "runtime/plugins/robot_poc",

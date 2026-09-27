@@ -25,6 +25,7 @@ def test_release_package_is_versioned_and_tamper_evident(tmp_path):
     assert verification["ok"] is True
     assert verification["manifest"]["contains_business_data"] is False
     assert verification["manifest"]["contains_credentials"] is False
+    assert (release_root / "payload/runtime/plugins/platforms/http_policy.py").is_file()
     assert (release_root / "payload/runtime/plugins/platforms/wecom/http_policy.py").is_file()
     for plugin in ("agenda_service_work", "reply_recovery", "robot_poc"):
         assert (release_root / f"payload/runtime/plugins/{plugin}/plugin.yaml").is_file()
@@ -201,6 +202,7 @@ def test_release_installer_never_targets_persistent_home(tmp_path):
     assert {
         "runtime/plugins/tuoguan_core",
         "runtime/plugins/agenda_service_work",
+        "runtime/plugins/platforms/http_policy.py",
         "runtime/plugins/platforms/wecom",
         "runtime/plugins/reply_recovery",
         "runtime/plugins/robot_poc",
