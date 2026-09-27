@@ -30,9 +30,9 @@
     "main_last_verified_at": "2026-09-27T13:32:17+08:00",
     "active_work_item_id": "WI-2026-09-bootstrap-durable-ingress",
     "blocker_id": "bootstrap-durable-ingress",
-    "blocker_status": "ready_for_owner_acceptance",
-    "blocker_summary": "Stage 2 production technical cutover is PASS. PR #25 fixed the missing production Gateway plugin set (including robot_poc which owns 19092) and repeated Runtime Home finalize on 0555/0444 Hermes trees. New Gateway is active/enabled with both 8866 and 19092 on the same PID; Plugin Doctor 5/5, Runtime Topology, Persistent Home, Self-contained and Core Compatibility all PASS; Bridge is FORWARD with pending=0; public callback remains protected by Bridge; public health is 200; P0 errors=0.",
-    "next_action": "Owner performs the frozen real WeCom Query acceptance exactly once: send `今天还有哪些事情没处理完？` to XiaoU. Return XiaoU's exact response to ChatGPT. If the response satisfies the Stage 2 Query evidence/semantics acceptance, ChatGPT seals Stage 2 and starts Stage 3 Direct Message / Outbound; otherwise fix only the observed business blocker.",
+    "blocker_status": "owner_acceptance_failed",
+    "blocker_summary": "Owner real WeCom Query acceptance failed on 2026-09-27 because XiaoU answered a current-day task question while explicitly reporting data timestamp 09-23. Stage 2 cannot seal on stale task evidence.",
+    "next_action": "Fix only the Stage 2 authoritative task-query freshness/current-read blocker, verify in production, then repeat the same Owner WeCom acceptance.",
     "working_method_id": "WM-006",
     "working_method_name": "Role-Locked Concurrency-Safe Governed Adaptive Method",
     "bootstrap_holding_contract": "ADR-009: transparent-forward / persist-before-ACK / idempotent-replay-complete-after-confirmed-success"
