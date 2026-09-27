@@ -103,3 +103,27 @@ callback-only Nginx cutover 已正式 PASS：
 结论：**production technical gate PASS**。
 
 Stage 2 Query 仍保持 active / sealed=false，只差 Owner 的真实 WeCom Query acceptance。
+
+
+## 2026-09-27｜Stage 2 Query SEALED PASS
+
+生产技术门禁已 PASS，Owner 真实 WeCom Query 也已 PASS。
+
+验收问题：
+`今天还有哪些事情没处理完？`
+
+真实回复证明：
+- 使用任务库存权威查询；
+- today due scope 正常；
+- organization-wide open-task inventory 正常；
+- 当前结果为 today due=0、all open=0。
+
+显示的 `09-23` 是 `tasks.json` 最后修改时间，而不是查询执行时间；实时查询仍发生在验收当下，today 由当前本地日期计算。
+
+Stage 2：
+- status = PASS
+- sealed = true
+- evidence = `EV-Q-004`
+- stable baseline label = `youyi-stable-PASS-query-2026-09-27`
+
+当前正式进入 Stage 3：Direct Message / Outbound。
