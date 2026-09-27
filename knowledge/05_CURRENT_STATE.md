@@ -12,10 +12,10 @@
 
 - ID: `WI-2026-09-response-latency-ux-architecture`
 - Kind: `runtime_experience_architecture`
-- Status: `latency_v1_integrated_candidate_certification`
+- Status: `latency_v1_awaiting_owner_wecom_acceptance`
 - Objective: Redesign XiaoU for low true latency and low perceived latency: simple turns should finish quickly; long work should acknowledge quickly, continue safely in the background, and deliver a truthful final result later.
 - Blocker: Current production has latency telemetry but no current baseline decomposition by turn class, and the user-visible response policy does not separate first-visible response from final task completion.
-- Next: Certify the integrated V1 candidate branch rc/latency-v1-owner-acceptance at cb843ccf4545cb40195614f3087cb4efd75cdfa8. Verify combined read-bundle, context compaction, slow-turn visible progress and optional-schema retry removal together, including rollback and smartness non-regression. Keep production on e9c942454bf0325a90a9df55485ae52b5247ce4e until Owner accepts.
+- Next: Await explicit Owner authorization for a reversible real-WeCom acceptance window. Candidate cb843ccf4545cb40195614f3087cb4efd75cdfa8 is technically certified; production must remain on e9c942454bf0325a90a9df55485ae52b5247ce4e until that authorization. Owner acceptance must cover speed, answer quality, Tool selection, authority/Unknown behavior, slow-turn progress UX, and rollback readiness.
 
 ## Runtime facts
 

@@ -4,7 +4,7 @@
 
 - work_item_id: `WI-2026-09-response-latency-ux-architecture`
 - kind: `runtime_experience_architecture`
-- status: `latency_v1_integrated_candidate_certification`
+- status: `latency_v1_awaiting_owner_wecom_acceptance`
 - context_profile: `capability_design`
 - formal_stage_context: Stage 3 Direct Message / Outbound / paused_before_implementation
 
@@ -18,7 +18,7 @@ Current production has latency telemetry but no current baseline decomposition b
 
 ## Next action
 
-Certify the integrated V1 candidate branch rc/latency-v1-owner-acceptance at cb843ccf4545cb40195614f3087cb4efd75cdfa8. Verify combined read-bundle, context compaction, slow-turn visible progress and optional-schema retry removal together, including rollback and smartness non-regression. Keep production on e9c942454bf0325a90a9df55485ae52b5247ce4e until Owner accepts.
+Await explicit Owner authorization for a reversible real-WeCom acceptance window. Candidate cb843ccf4545cb40195614f3087cb4efd75cdfa8 is technically certified; production must remain on e9c942454bf0325a90a9df55485ae52b5247ce4e until that authorization. Owner acceptance must cover speed, answer quality, Tool selection, authority/Unknown behavior, slow-turn progress UX, and rollback readiness.
 
 ## Acceptance criteria
 

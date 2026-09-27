@@ -2,7 +2,7 @@
   "schema_version": "xiaoyou_current_work_v1",
   "work_item_id": "WI-2026-09-response-latency-ux-architecture",
   "kind": "runtime_experience_architecture",
-  "status": "latency_v1_integrated_candidate_certification",
+  "status": "latency_v1_awaiting_owner_wecom_acceptance",
   "formal_stage_context": {
     "id": 3,
     "name": "Direct Message / Outbound",
@@ -11,7 +11,7 @@
   "objective": "Redesign XiaoU for low true latency and low perceived latency: simple turns should finish quickly; long work should acknowledge quickly, continue safely in the background, and deliver a truthful final result later.",
   "problem_statement": "Users experience XiaoU as very slow. The cause may span model generation, long sessions, multi-model/tool loops, serial tool execution, context construction, delivery behavior and UX that stays silent until final completion.",
   "blocker": "Current production has latency telemetry but no current baseline decomposition by turn class, and the user-visible response policy does not separate first-visible response from final task completion.",
-  "next_action": "Certify the integrated V1 candidate branch rc/latency-v1-owner-acceptance at cb843ccf4545cb40195614f3087cb4efd75cdfa8. Verify combined read-bundle, context compaction, slow-turn visible progress and optional-schema retry removal together, including rollback and smartness non-regression. Keep production on e9c942454bf0325a90a9df55485ae52b5247ce4e until Owner accepts.",
+  "next_action": "Await explicit Owner authorization for a reversible real-WeCom acceptance window. Candidate cb843ccf4545cb40195614f3087cb4efd75cdfa8 is technically certified; production must remain on e9c942454bf0325a90a9df55485ae52b5247ce4e until that authorization. Owner acceptance must cover speed, answer quality, Tool selection, authority/Unknown behavior, slow-turn progress UX, and rollback readiness.",
   "acceptance_criteria": [
     "Separate TTFV (time to first visible value) from TTC (time to complete).",
     "Identify which latency components are evidenced in XiaoU today and which still require production measurement.",
@@ -57,7 +57,8 @@
     "EV-LAT-003",
     "EV-LAT-004",
     "EV-LAT-005",
-    "EV-LAT-006"
+    "EV-LAT-006",
+    "EV-LAT-007"
   ],
   "opened_at": "2026-09-27",
   "owner_approved": true,
@@ -174,5 +175,25 @@
       "Phase 3B optional-schema corrective retry removal PASS"
     ],
     "promotion_gate": "Integrated isolated/shadow certification -> Owner real WeCom speed+quality acceptance -> production promotion only after explicit Owner acceptance"
+  },
+  "latency_v1_integrated_certification": {
+    "status": "PASS_AWAITING_OWNER_ACCEPTANCE",
+    "candidate_branch": "rc/latency-v1-owner-acceptance",
+    "candidate_sha": "cb843ccf4545cb40195614f3087cb4efd75cdfa8",
+    "integrated_tests": "18/18 PASS",
+    "core_compaction_continuity": "15/15 PASS",
+    "regression": "68 passed; 6 same baseline failures; no candidate-specific failures",
+    "model_segments": "12 -> 10 synthetic",
+    "context_budget": "80K -> 24K synthetic",
+    "simple_turn": "PASS 1 segment",
+    "direct_read": "PASS 2 segments",
+    "multi_read": "PASS 3 -> 2 segments",
+    "slow_turn": "PASS 8207ms with exactly 1 progress receipt",
+    "answer_quality_parity": true,
+    "tool_selection_parity": true,
+    "authority_parity": true,
+    "unknown_parity": true,
+    "rollback": true,
+    "production_changed": false
   }
 }

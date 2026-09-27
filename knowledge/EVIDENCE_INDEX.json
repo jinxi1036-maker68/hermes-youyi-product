@@ -1,6 +1,6 @@
 {
   "schema_version": "xiaoyou_evidence_index_v1",
-  "updated_at": "2026-09-27T23:30:00+08:00",
+  "updated_at": "2026-09-27T23:40:00+08:00",
   "repository": "jinxi1036-maker68/hermes-youyi-product",
   "evidence": [
     {
@@ -372,6 +372,29 @@
       "production_sha": "e9c942454bf0325a90a9df55485ae52b5247ce4e",
       "source": "Owner-relayed Codex isolated verification plus GitHub merge/RC assembly by ChatGPT",
       "note": "PR #30 targeted 2/2 PASS; 47 regression PASS with the same 6 baseline failures as current main and no candidate-specific failure. Person-assignment reference_ids is truly optional and defaults to []; no fake reference is created. Business fields remain model-owned. Pending-identity campus behavior remains unique-authority-only; tuoguan_people operation remains model-required. Synthetic corrective model segments improved 2 -> 1. All Latency V1 phases are now merged but undeployed; final integrated candidate certification and Owner real WeCom acceptance are required before production promotion."
+    },
+    {
+      "id": "EV-LAT-007",
+      "area": "Latency V1 integrated candidate certification",
+      "judgment": "PASS_INTEGRATED_AWAITING_OWNER_ACCEPTANCE",
+      "date": "2026-09-27",
+      "candidate_branch": "rc/latency-v1-owner-acceptance",
+      "candidate_sha": "cb843ccf4545cb40195614f3087cb4efd75cdfa8",
+      "production_sha": "e9c942454bf0325a90a9df55485ae52b5247ce4e",
+      "source": "Owner-relayed Codex integrated isolated/shadow certification",
+      "metrics": {
+        "integrated_tests": "18/18 PASS",
+        "core_compaction_continuity": "15/15 PASS",
+        "regression_passed": 68,
+        "baseline_failures": 6,
+        "model_segments_before": 12,
+        "model_segments_after": 10,
+        "synthetic_context_before": "80K",
+        "synthetic_context_after": "24K",
+        "slow_turn_ms": 8207,
+        "slow_turn_progress_receipts": 1
+      },
+      "note": "Read bundle, Hermes-native semantic compaction, truthful slow-turn visible progress and optional-schema retry removal all passed together. Answer quality, Tool selection, authority and Unknown behavior remained at parity. Write boundary and rollback passed. No real Provider request was used in this integrated certification; earlier EV-LAT-004 separately proved Agnes 3.0 production-route context-compaction performance. Production unchanged. Final gate is Owner real WeCom acceptance before promotion."
     }
   ]
 }
