@@ -17,7 +17,8 @@
     "roles",
     "freshness_policy",
     "safety",
-    "governance"
+    "governance",
+    "harness"
   ],
   "properties": {
     "schema_version": {
@@ -25,7 +26,7 @@
     },
     "knowledge_revision": {
       "type": "integer",
-      "minimum": 4
+      "minimum": 6
     },
     "project": {
       "type": "string",
@@ -56,8 +57,11 @@
       "type": "object",
       "required": [
         "dynamic_current_state",
+        "current_work",
         "human_current_state",
-        "active_work",
+        "human_current_work",
+        "active_work_compat",
+        "knowledge_harness",
         "evidence",
         "code",
         "deployed_runtime",
@@ -155,7 +159,20 @@
         "knowledge_write_mode",
         "force_push_allowed",
         "project_knowledge_branch_protected",
-        "material_working_method_changes_require_owner_approval"
+        "material_working_method_changes_require_owner_approval",
+        "projection_policy",
+        "current_work_history_policy"
+      ]
+    },
+    "harness": {
+      "type": "object",
+      "required": [
+        "version",
+        "manifest",
+        "current_work",
+        "projection_renderer",
+        "default_profile",
+        "projections_generated"
       ]
     }
   }
