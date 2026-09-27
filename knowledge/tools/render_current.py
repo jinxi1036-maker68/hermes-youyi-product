@@ -93,7 +93,7 @@ def render_current_state(index: dict, work: dict) -> str:
         "",
         f"- Harness: `{harness.get('version','')}`",
         f"- Profile: `{work.get('context_profile','')}`",
-        "- Stage 3 product implementation is paused until the current Knowledge Harness work item closes.",
+        f"- Work execution state: `{(work.get('formal_stage_context') or {}).get('execution_state','')}`",
         "",
     ])
     return "\n".join(lines)

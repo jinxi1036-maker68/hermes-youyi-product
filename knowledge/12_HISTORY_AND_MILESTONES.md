@@ -289,3 +289,17 @@ PR #17：
 - 下一阶段 Stage 3 Direct Message / Outbound。
 
 另记录非阻断 UX debt：普通回复不应将 task-store mtime 模糊展示为“数据时间戳”，避免被误解为数据新鲜度。
+
+
+## Knowledge Harness V3 deployed
+
+2026-09-27：
+- PR #26 merged to project-knowledge as `5d73f81e13cbe9aa49f700572f8894fb4822a9fb`；
+- KH-003 replaces broad startup reading with Harness → PROJECT_INDEX → CURRENT_WORK → task profile progressive disclosure；
+- old 32KB ACTIVE_WORK history archived; ACTIVE_WORK is now a short compatibility pointer；
+- CURRENT_STATE and CURRENT_WORK Markdown are generated projections；
+- context budgets and profile routing are machine-validated；
+- WM-007 preserves WM-006 role/safety/Evidence governance while changing only bootstrap and Knowledge Sync workflow；
+- remote structural/projection/profile/budget audit returned 0 errors；
+- evidence `EV-KH-001 = PASS_KNOWLEDGE_HARNESS`；
+- KH-003 work item closed and archived; Stage 3 remains intentionally waiting for Owner resume.

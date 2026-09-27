@@ -1,6 +1,6 @@
 {
   "schema_version": "xiaoyou_evidence_index_v1",
-  "updated_at": "2026-09-27T14:10:00+08:00",
+  "updated_at": "2026-09-27T14:45:00+08:00",
   "repository": "jinxi1036-maker68/hermes-youyi-product",
   "evidence": [
     {
@@ -258,6 +258,18 @@
       "prompt": "今天还有哪些事情没处理完？",
       "source": "Owner-provided real WeCom screenshot plus ChatGPT code-path verification",
       "note": "XiaoU queried the authoritative task inventory, returned today-due count=0 and organization-wide open-task count=0. The displayed 09-23 timestamp corresponds to tasks.json last-modified time (mtime), not query execution time; query_tasks reads the current authoritative store at request time and computes date_scope=today from the current local date. Stage 2 Query acceptance PASS. Non-blocking UX debt: label the mtime more clearly as task-store last modified time rather than generic data timestamp."
+    },
+    {
+      "id": "EV-KH-001",
+      "area": "Knowledge Harness V3 migration",
+      "judgment": "PASS_KNOWLEDGE_HARNESS",
+      "date": "2026-09-27",
+      "pr": 26,
+      "project_knowledge_commit": "5d73f81e13cbe9aa49f700572f8894fb4822a9fb",
+      "harness_id": "KH-003",
+      "working_method_id": "WM-007",
+      "source": "GitHub project-knowledge PR review plus remote structural/projection/profile/budget audit",
+      "note": "KH-003 introduces minimal bootstrap, PROJECT_INDEX + CURRENT_WORK machine truth, task load profiles, archive-on-close, generated current projections, byte budgets and stronger validator checks. The previous 32KB ACTIVE_WORK was archived and replaced by a 443-byte compatibility pointer. Remote audit returned 0 structural/projection/profile/budget errors. WM-007 changes only startup and Knowledge Sync; WM-006 role contract, stop rules and Class B governance are preserved."
     }
   ]
 }

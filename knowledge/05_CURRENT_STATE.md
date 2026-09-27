@@ -10,12 +10,12 @@
 
 ## Current Work
 
-- ID: `WI-2026-09-knowledge-harness-v3`
-- Kind: `knowledge_harness`
-- Status: `in_progress`
-- Objective: Refactor Project Knowledge into a compact, progressive-disclosure Knowledge Harness before Stage 3 implementation begins.
-- Blocker: Current knowledge structure permits projection drift and lets current-work documents grow as append-only history.
-- Next: Implement KH-003 files, generated projections, archive-on-close, task load profiles, and validator checks; validate the branch; then resume Stage 3 capability design.
+- ID: `WI-2026-09-stage3-direct-message-outbound`
+- Kind: `capability_stage`
+- Status: `waiting_owner_resume`
+- Objective: Hold a clean Stage 3 entry point after KH-003; do not begin product implementation until the Owner explicitly resumes the stage.
+- Blocker: No technical blocker. Work is deliberately paused at the Stage 3 entry boundary.
+- Next: Wait for Owner to resume Stage 3. Then switch to the capability_design profile and freeze the Stage 3 capability contract before coding.
 
 ## Runtime facts
 
@@ -30,5 +30,5 @@
 ## Context routing
 
 - Harness: `KH-003`
-- Profile: `knowledge_maintenance`
-- Stage 3 product implementation is paused until the current Knowledge Harness work item closes.
+- Profile: `orientation`
+- Work execution state: `ready_to_start`
