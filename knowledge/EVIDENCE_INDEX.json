@@ -1,6 +1,6 @@
 {
   "schema_version": "xiaoyou_evidence_index_v1",
-  "updated_at": "2026-09-27T22:10:00+08:00",
+  "updated_at": "2026-09-27T23:30:00+08:00",
   "repository": "jinxi1036-maker68/hermes-youyi-product",
   "evidence": [
     {
@@ -358,6 +358,20 @@
       "production_sha": "e9c942454bf0325a90a9df55485ae52b5247ce4e",
       "source": "Owner-relayed Codex isolated verification plus GitHub merge by ChatGPT",
       "note": "3A PASS: 2.092s and 7.507s turns emitted zero progress receipts; 9.002s and 15.008s turns emitted exactly one; final reply preserved, no progress-after-final, send failure isolated, no business-text router. Missing-argument diagnosis found 3 historical cases: operation is model-required; reference_ids on person assignment is safely optional []; pending identity campus is already safely resolved only when authority exposes one unique campus, while person_name/staff_user_id remain model-required. PR #30 contains the only remaining current safe schema fix. Production unchanged."
+    },
+    {
+      "id": "EV-LAT-006",
+      "area": "Latency V1 optional-schema corrective retry fix and integrated candidate assembly",
+      "judgment": "PASS_CODE_MERGED_AWAITING_INTEGRATED_CERTIFICATION",
+      "date": "2026-09-27",
+      "pr": 30,
+      "candidate_sha": "84744ad2f1a43f2f6b150abd72c5705dad8447de",
+      "merged_sha": "cb843ccf4545cb40195614f3087cb4efd75cdfa8",
+      "integrated_candidate_branch": "rc/latency-v1-owner-acceptance",
+      "integrated_candidate_sha": "cb843ccf4545cb40195614f3087cb4efd75cdfa8",
+      "production_sha": "e9c942454bf0325a90a9df55485ae52b5247ce4e",
+      "source": "Owner-relayed Codex isolated verification plus GitHub merge/RC assembly by ChatGPT",
+      "note": "PR #30 targeted 2/2 PASS; 47 regression PASS with the same 6 baseline failures as current main and no candidate-specific failure. Person-assignment reference_ids is truly optional and defaults to []; no fake reference is created. Business fields remain model-owned. Pending-identity campus behavior remains unique-authority-only; tuoguan_people operation remains model-required. Synthetic corrective model segments improved 2 -> 1. All Latency V1 phases are now merged but undeployed; final integrated candidate certification and Owner real WeCom acceptance are required before production promotion."
     }
   ]
 }

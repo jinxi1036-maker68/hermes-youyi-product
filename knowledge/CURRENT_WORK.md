@@ -4,7 +4,7 @@
 
 - work_item_id: `WI-2026-09-response-latency-ux-architecture`
 - kind: `runtime_experience_architecture`
-- status: `latency_v1_phase3b_optional_schema_retry`
+- status: `latency_v1_integrated_candidate_certification`
 - context_profile: `capability_design`
 - formal_stage_context: Stage 3 Direct Message / Outbound / paused_before_implementation
 
@@ -18,7 +18,7 @@ Current production has latency telemetry but no current baseline decomposition b
 
 ## Next action
 
-Isolate-test PR #30 as the final V1 corrective-retry fix. If PASS, merge to main, assemble the V1 candidate release from phases 1-3, then perform Owner real WeCom speed+quality acceptance before production promotion.
+Certify the integrated V1 candidate branch rc/latency-v1-owner-acceptance at cb843ccf4545cb40195614f3087cb4efd75cdfa8. Verify combined read-bundle, context compaction, slow-turn visible progress and optional-schema retry removal together, including rollback and smartness non-regression. Keep production on e9c942454bf0325a90a9df55485ae52b5247ce4e until Owner accepts.
 
 ## Acceptance criteria
 
