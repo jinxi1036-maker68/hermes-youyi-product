@@ -1,126 +1,63 @@
-# Project Knowledge 更新协议
+# Project Knowledge 更新协议｜KH-003
 
-## 1. 动态事实唯一权威
+## 1. 机器事实分层
 
-`knowledge/PROJECT_INDEX.json` 是当前 Stage、关键 SHA、blocker、next action 的机器权威。
+- `PROJECT_INDEX.json`：项目级当前事实与路由权威；
+- `CURRENT_WORK.json`：当前唯一 work item；
+- `WORKING_METHOD.json`：当前工作方式；
+- `EVIDENCE_INDEX.json`：可追溯证据。
 
-CURRENT_STATE 是解释性投影；START_HERE、Roadmap、handoff 不得独立维护动态答案。
+Markdown 不建立第二套动态权威。
 
-## 2. 当前工作方式唯一权威
+## 2. Current 不是 History
 
-`knowledge/WORKING_METHOD.json` 是当前 Working Method 权威。
+work item 关闭时：
+1. 把最终记录归档到 `knowledge/archive/work_items/<id>.md`；
+2. 只把长期有价值结论写入 Evidence / History / ADR / Capability；
+3. 用新的 CURRENT_WORK.json 替换旧工作；
+4. 重新生成 CURRENT_STATE / CURRENT_WORK Markdown。
 
-`CURRENT_WORKING_METHOD.md` 是人类可读投影。
+禁止完成后继续往 Current 追加。
 
-新窗口不得静默改变工作节奏、职责、Evidence或生产纪律。
+## 3. Progressive Disclosure
 
-## 3. 并发写入
+Bootstrap 后依据 CURRENT_WORK.context_profile 读取 profile.required + must_read；on_demand 只有问题需要时读取。
 
-材料性更新必须使用 optimistic concurrency：
+Evidence / History / Archive 不得成为默认启动上下文。
 
-1. 记录开始时 `project-knowledge` HEAD = K0；
-2. 准备更新；
-3. 写前再读 HEAD = K1；
-4. K1 == K0：parent=K0，fast-forward，`force=false`；
-5. K1 != K0：STOP，读取并语义合并另一窗口变化，再重新校验；
-6. 永远禁止用 force push 解决知识冲突。
+## 4. Generated Projections
 
-详见 `CONCURRENCY_AND_RECOVERY.md`。
+`05_CURRENT_STATE.md`、`CURRENT_WORK.md` 禁止手工编辑。
 
-## 4. ACTIVE_WORK
+机器事实变化后：
+- `python knowledge/tools/render_current.py --write`
+- `python knowledge/tools/validate_knowledge.py`
 
-以下变化必须同步：
-- work item；
-- 第一真实 blocker；
-- 已否定方案；
-- next single action；
-- stop rules。
+Validator 不通过则 Knowledge Sync 未完成。
 
-## 5. Evidence
+## 5. 并发写入
 
-重要 PASS / FAIL / BLOCKED 应记录：
-- area；
-- judgment；
-- PR/commit/tag（如有）；
-- verification comment（如有）；
-- 简明证据。
+材料性更新使用 optimistic concurrency：K0 → 准备 → 写前 K1；K1==K0 才 fast-forward + `force=false`。若 K1 改变，必须重读、语义合并、重新 render/validate。禁止 force push。
 
-sealed capability 必须有 Evidence id。
+## 6. Evidence / ADR / Capability
 
-## 6. Working Method Learning
+关键 PASS/FAIL/BLOCKED 进入 Evidence；长期架构/权威/安全/Harness 决策进入 ADR；Capability 只保存稳定语义、验收、reopen 条件；History 只保存里程碑摘要。
 
-出现重复失败、协作摩擦、无价值等待、新工具能力或项目阶段变化时，可以提出方法优化。
+## 7. Working Method
 
-### Class A
-不改变角色、安全、Evidence阈值、生产授权、权限/权威、Stage封板。  
-可由 ChatGPT 在证据支持下升级并记录。
+WM-006 和 Method Learning Loop 继续有效。KH-003 不降低角色、安全、Evidence 或生产纪律。
 
-### Class B
-改变上述任一关键边界。  
-**必须 Owner 明确批准后才能永久激活。**
-
-临时更严格 Stop Rule 可以先用于防风险，但不能自动变成永久制度。
-
-## 7. Freshness
-
-代码工作：核对 live main。
-
-生产工作：同轮做必要只读 production verification。
-
-实时事实冲突时，先刷新 Project Knowledge。
-
-## 8. ADR
-
-以下长期变化写 ADR：
-- 架构边界；
-- 权威来源；
-- 安全语义；
-- 模型/程序职责；
-- 长期方案选择；
-- Knowledge / Working Method治理变化。
-
-## 9. Capability Archive
-
-能力开始建立 capability file；封板补齐：
-- stable semantics；
-- Evidence；
-- regression；
-- reopen conditions。
-
-## 10. Definition of Done
+## 8. Definition of Done
 
 ```text
-代码/设计完成
-+ 必要隔离验证
-+ 必要生产验证
-+ 必要真人验收
-+ Project Knowledge Sync
-+ 如方法发生变化则 Working Method Sync
+实现/设计完成
++ 必要验证/真人证据
++ Current Work 收口
++ Generated projections 刷新
++ Validator PASS
 = Done
 ```
 
-## 11. 必须同步的事件
+## 9. 不进入 Current
 
-- Stage状态改变；
-- main关键SHA改变；
-- production改变；
-- blocker / next action改变；
-- 架构/权威/安全决策；
-- stable tag / seal；
-- 旧权威被证明错误；
-- 长期产品原则形成；
-- Working Method升级、回滚或替换。
-
-## 12. 不进入核心知识
-
-- 临时命令；
-- 全量日志；
-- 每次debug；
-- 低价值聊天流水；
-- 不影响未来判断的尝试细节。
-
-## 13. 分支边界
-
-Project Knowledge 当前树保持纯知识；代码只从 main 读取。
-
-未来可迁移到独立 private Project Knowledge repo。
+全量日志、临时命令、已完成 debug 流水、旧阶段操作步骤、归档切换过程、与当前 work item 无直接关系的背景。
