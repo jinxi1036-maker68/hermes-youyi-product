@@ -2,7 +2,7 @@
   "schema_version": "xiaoyou_current_work_v1",
   "work_item_id": "WI-2026-09-response-latency-ux-architecture",
   "kind": "runtime_experience_architecture",
-  "status": "research_in_progress",
+  "status": "approved_for_measurement",
   "formal_stage_context": {
     "id": 3,
     "name": "Direct Message / Outbound",
@@ -11,7 +11,7 @@
   "objective": "Redesign XiaoU for low true latency and low perceived latency: simple turns should finish quickly; long work should acknowledge quickly, continue safely in the background, and deliver a truthful final result later.",
   "problem_statement": "Users experience XiaoU as very slow. The cause may span model generation, long sessions, multi-model/tool loops, serial tool execution, context construction, delivery behavior and UX that stays silent until final completion.",
   "blocker": "Current production has latency telemetry but no current baseline decomposition by turn class, and the user-visible response policy does not separate first-visible response from final task completion.",
-  "next_action": "Finish first-principles latency diagnosis and freeze an optimization architecture and measurement plan before code changes.",
+  "next_action": "Run a read-only production latency profile using existing privacy-safe turn traces/session metrics. Measure p50/p95 by turn class and decompose context_build, initial/follow-up model, tool time, provider API duration, prompt tokens/session size, reply size and delivery latency. No code/config changes in this measurement run.",
   "acceptance_criteria": [
     "Separate TTFV (time to first visible value) from TTC (time to complete).",
     "Identify which latency components are evidenced in XiaoU today and which still require production measurement.",
@@ -49,5 +49,6 @@
     "EV-RT-020"
   ],
   "opened_at": "2026-09-27",
-  "owner_approved": true
+  "owner_approved": true,
+  "architecture_direction": "Cognition-preserving latency optimization: preserve model-led business reasoning and final expression; optimize only orchestration overhead, redundant rounds, independent read scheduling, session/context mechanics, and truthful delivery timing."
 }

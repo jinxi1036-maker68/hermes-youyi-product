@@ -12,10 +12,10 @@
 
 - ID: `WI-2026-09-response-latency-ux-architecture`
 - Kind: `runtime_experience_architecture`
-- Status: `research_in_progress`
+- Status: `approved_for_measurement`
 - Objective: Redesign XiaoU for low true latency and low perceived latency: simple turns should finish quickly; long work should acknowledge quickly, continue safely in the background, and deliver a truthful final result later.
 - Blocker: Current production has latency telemetry but no current baseline decomposition by turn class, and the user-visible response policy does not separate first-visible response from final task completion.
-- Next: Finish first-principles latency diagnosis and freeze an optimization architecture and measurement plan before code changes.
+- Next: Run a read-only production latency profile using existing privacy-safe turn traces/session metrics. Measure p50/p95 by turn class and decompose context_build, initial/follow-up model, tool time, provider API duration, prompt tokens/session size, reply size and delivery latency. No code/config changes in this measurement run.
 
 ## Runtime facts
 

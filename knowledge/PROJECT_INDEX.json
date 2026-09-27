@@ -33,9 +33,9 @@
     "main_last_verified_at": "2026-09-27T13:32:17+08:00",
     "active_work_item_id": "WI-2026-09-response-latency-ux-architecture",
     "blocker_id": "response-latency-ux",
-    "blocker_status": "research_in_progress",
-    "blocker_summary": "Before Stage 3 capability implementation, XiaoU response latency and perceived responsiveness need a first-principles redesign. Optimization must preserve the single-business-brain model: the model keeps business understanding, judgment, planning, action/tool selection and business expression; the runtime may optimize orchestration, evidence scheduling, session/context mechanics and delivery UX only.",
-    "next_action": "Finish a cognition-preserving latency architecture: establish production latency decomposition, then design TTFV/TTC, orchestration-only fast paths, model-selected read concurrency, long-session control, truthful progress/background continuation and quality-parity gates before code changes.",
+    "blocker_status": "approved_for_measurement",
+    "blocker_summary": "Owner approved the cognition-preserving latency direction. The model remains the sole business brain; optimization may only remove non-value latency around reasoning and delivery.",
+    "next_action": "Collect a read-only production latency baseline from existing privacy-safe telemetry before any implementation.",
     "working_method_id": "WM-007",
     "working_method_name": "Harness-Routed Role-Locked Governed Adaptive Method",
     "bootstrap_holding_contract": "ADR-009: transparent-forward / persist-before-ACK / idempotent-replay-complete-after-confirmed-success"
