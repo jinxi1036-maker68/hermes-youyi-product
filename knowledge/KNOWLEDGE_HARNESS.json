@@ -1,0 +1,129 @@
+{
+  "schema_version": "xiaoyou_knowledge_harness_v3",
+  "harness_id": "KH-003",
+  "purpose": "Keep agent startup small, current state non-drifting, and long-term knowledge progressively disclosed by task.",
+  "principles": {
+    "minimal_bootstrap": true,
+    "progressive_disclosure": true,
+    "current_is_not_history": true,
+    "generated_current_projections": true,
+    "machine_verifiable": true,
+    "history_may_grow_without_bootstrap_cost": true
+  },
+  "bootstrap": {
+    "human_entry": "knowledge/00_START_HERE.md",
+    "machine_read_order": [
+      "knowledge/PROJECT_INDEX.json",
+      "knowledge/CURRENT_WORK.json"
+    ],
+    "freshness_protocol": "knowledge/FRESHNESS_PROTOCOL.md",
+    "max_machine_files_before_profile": 2,
+    "rule": "After PROJECT_INDEX and CURRENT_WORK, run only the Freshness Gate needed for the task, then load the CURRENT_WORK context_profile."
+  },
+  "profiles": {
+    "orientation": {
+      "required": [],
+      "max_context_files": 4,
+      "purpose": "Locate project state and next action."
+    },
+    "knowledge_maintenance": {
+      "required": [
+        "knowledge/14_UPDATE_PROTOCOL.md",
+        "knowledge/SCHEMA_AND_VALIDATION.md",
+        "knowledge/CONCURRENCY_AND_RECOVERY.md"
+      ],
+      "max_context_files": 8,
+      "purpose": "Change Project Knowledge/Harness."
+    },
+    "capability_design": {
+      "required": [
+        "knowledge/01_PRODUCT_NORTH_STAR.md",
+        "knowledge/02_ARCHITECTURE_AND_BOUNDARIES.md",
+        "knowledge/04_CAPABILITY_MAP.md",
+        "knowledge/07_AUTHORITY_DATA_AND_TRUTH.md"
+      ],
+      "max_context_files": 10,
+      "purpose": "Freeze capability proposition, authority and acceptance."
+    },
+    "code_change": {
+      "required": [
+        "knowledge/FRESHNESS_PROTOCOL.md",
+        "knowledge/02_ARCHITECTURE_AND_BOUNDARIES.md",
+        "knowledge/REJECTED_APPROACHES.md"
+      ],
+      "max_context_files": 10,
+      "purpose": "Modify main code within current boundaries."
+    },
+    "production_change": {
+      "required": [
+        "knowledge/FRESHNESS_PROTOCOL.md",
+        "knowledge/08_RELEASE_AND_RUNTIME.md",
+        "knowledge/ROLE_AND_HANDOFF_CONTRACT.md",
+        "knowledge/WORKING_METHOD.json"
+      ],
+      "max_context_files": 10,
+      "purpose": "Verify/deploy/rollback production."
+    },
+    "method_change": {
+      "required": [
+        "knowledge/WORKING_METHOD.json",
+        "knowledge/CURRENT_WORKING_METHOD.md",
+        "knowledge/ROLE_AND_HANDOFF_CONTRACT.md",
+        "knowledge/14_UPDATE_PROTOCOL.md"
+      ],
+      "max_context_files": 9,
+      "purpose": "Change the working method."
+    },
+    "audit": {
+      "required": [
+        "knowledge/EVIDENCE_INDEX.json",
+        "knowledge/12_HISTORY_AND_MILESTONES.md"
+      ],
+      "max_context_files": 10,
+      "purpose": "Trace historical evidence."
+    }
+  },
+  "current_work_routing": {
+    "profile_field": "context_profile",
+    "additive_required_field": "must_read",
+    "on_demand_field": "on_demand",
+    "rule": "Load profile.required plus CURRENT_WORK.must_read. Load on_demand only when needed."
+  },
+  "bootstrap_excluded": [
+    "knowledge/05_CURRENT_STATE.md",
+    "knowledge/CURRENT_WORK.md",
+    "knowledge/ACTIVE_WORK.md",
+    "knowledge/EVIDENCE_INDEX.json",
+    "knowledge/12_HISTORY_AND_MILESTONES.md",
+    "knowledge/archive/**",
+    "knowledge/methods/**"
+  ],
+  "generated_projections": {
+    "knowledge/05_CURRENT_STATE.md": {
+      "sources": [
+        "knowledge/PROJECT_INDEX.json",
+        "knowledge/CURRENT_WORK.json"
+      ]
+    },
+    "knowledge/CURRENT_WORK.md": {
+      "sources": [
+        "knowledge/CURRENT_WORK.json"
+      ]
+    }
+  },
+  "lifecycle": {
+    "current_work_rule": "Exactly one CURRENT_WORK.json; no append-only timeline.",
+    "close_rule": "Archive closed work under knowledge/archive/work_items/<work_item_id>.md, then replace CURRENT_WORK.json.",
+    "projection_rule": "CURRENT_STATE.md and CURRENT_WORK.md are generated and never hand-appended.",
+    "evidence_rule": "Evidence and history are durable but not bootstrap context."
+  },
+  "budgets_bytes": {
+    "knowledge/00_START_HERE.md": 4096,
+    "knowledge/KNOWLEDGE_HARNESS.json": 12288,
+    "knowledge/PROJECT_INDEX.json": 12288,
+    "knowledge/CURRENT_WORK.json": 12288,
+    "knowledge/05_CURRENT_STATE.md": 8192,
+    "knowledge/CURRENT_WORK.md": 8192,
+    "knowledge/ACTIVE_WORK.md": 1024
+  }
+}
