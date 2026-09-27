@@ -1,6 +1,6 @@
 {
   "schema_version": "xiaoyou_evidence_index_v1",
-  "updated_at": "2026-09-27T21:05:00+08:00",
+  "updated_at": "2026-09-27T22:10:00+08:00",
   "repository": "jinxi1036-maker68/hermes-youyi-product",
   "evidence": [
     {
@@ -346,6 +346,18 @@
         "p50_saved_ms": 11293.58
       },
       "note": "Exact same agnes-3.0-flash and Provider route, synthetic long-session semantics, no real user/business data and no production traffic changes. B group preserved answer quality 3/3 exactly and made no Tool calls. Current path is non-streaming, so TTFT was not measurable. PR #28 is merged to main but remains undeployed pending final V1 assembly and Owner acceptance."
+    },
+    {
+      "id": "EV-LAT-005",
+      "area": "Latency V1 truthful slow-turn processing receipt + missing-argument diagnosis",
+      "judgment": "PASS_PROGRESS_MERGED_DIAGNOSIS_COMPLETE",
+      "date": "2026-09-27",
+      "pr": 29,
+      "candidate_sha": "e96f6fe949a16ffd634085e5457be65a2439d0c1",
+      "merged_sha": "570d8a666f0885bcc56d01b721ed269047b080af",
+      "production_sha": "e9c942454bf0325a90a9df55485ae52b5247ce4e",
+      "source": "Owner-relayed Codex isolated verification plus GitHub merge by ChatGPT",
+      "note": "3A PASS: 2.092s and 7.507s turns emitted zero progress receipts; 9.002s and 15.008s turns emitted exactly one; final reply preserved, no progress-after-final, send failure isolated, no business-text router. Missing-argument diagnosis found 3 historical cases: operation is model-required; reference_ids on person assignment is safely optional []; pending identity campus is already safely resolved only when authority exposes one unique campus, while person_name/staff_user_id remain model-required. PR #30 contains the only remaining current safe schema fix. Production unchanged."
     }
   ]
 }

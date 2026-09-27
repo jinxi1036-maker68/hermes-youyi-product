@@ -4,7 +4,7 @@
 
 - work_item_id: `WI-2026-09-response-latency-ux-architecture`
 - kind: `runtime_experience_architecture`
-- status: `latency_v1_phase3_delivery_and_retry`
+- status: `latency_v1_phase3b_optional_schema_retry`
 - context_profile: `capability_design`
 - formal_stage_context: Stage 3 Direct Message / Outbound / paused_before_implementation
 
@@ -18,7 +18,7 @@ Current production has latency telemetry but no current baseline decomposition b
 
 ## Next action
 
-Keep production unchanged. Complete V1 with the remaining cognition-preserving work: eliminate avoidable corrective/missing-argument model loops and add truthful early-visible progress for turns that exceed a soft deadline. Then assemble one candidate release for Owner speed+quality acceptance with rollback.
+Isolate-test PR #30 as the final V1 corrective-retry fix. If PASS, merge to main, assemble the V1 candidate release from phases 1-3, then perform Owner real WeCom speed+quality acceptance before production promotion.
 
 ## Acceptance criteria
 
