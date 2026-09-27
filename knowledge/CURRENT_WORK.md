@@ -4,7 +4,7 @@
 
 - work_item_id: `WI-2026-09-response-latency-ux-architecture`
 - kind: `runtime_experience_architecture`
-- status: `approved_for_measurement`
+- status: `measurement_complete_architecture_design`
 - context_profile: `capability_design`
 - formal_stage_context: Stage 3 Direct Message / Outbound / paused_before_implementation
 
@@ -18,7 +18,7 @@ Current production has latency telemetry but no current baseline decomposition b
 
 ## Next action
 
-Run a read-only production latency profile using existing privacy-safe turn traces/session metrics. Measure p50/p95 by turn class and decompose context_build, initial/follow-up model, tool time, provider API duration, prompt tokens/session size, reply size and delivery latency. No code/config changes in this measurement run.
+Freeze a cognition-preserving latency architecture from EV-LAT-001 before code changes: reduce avoidable model round-trips, eliminate corrective/redundant read waste, preserve semantics while shrinking hot session context, and introduce truthful early-visible progress/background completion.
 
 ## Acceptance criteria
 

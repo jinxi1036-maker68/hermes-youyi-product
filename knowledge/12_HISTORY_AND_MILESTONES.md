@@ -312,3 +312,17 @@ PR #17：
 - current work moved to `WI-2026-09-response-latency-ux-architecture`；
 - research scope includes model/tool/session/context/delivery latency plus a two-phase visible response/background continuation model；
 - Stage 3 remains paused until this architecture is frozen.
+
+
+## Production latency baseline completed
+
+2026-09-27：
+- read-only profile of 30 complete WeCom turns; production unchanged；
+- evidence `EV-LAT-001 = PASS_READ_ONLY_LATENCY_PROFILE`；
+- total P50/P95 = 18.6s / 69.4s；
+- context build P50/P95 = 86ms / 128ms；
+- model P50/P95 = 13.6s / 56.4s；
+- Tool execution P50/P95 = 25ms / 1.65s；
+- dominant bottleneck is provider/model wait plus extra model rounds after tools；
+- long provider input is strongly correlated with slower turns；
+- next work is architecture design, not immediate code/config changes.

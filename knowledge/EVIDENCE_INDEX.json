@@ -1,6 +1,6 @@
 {
   "schema_version": "xiaoyou_evidence_index_v1",
-  "updated_at": "2026-09-27T14:45:00+08:00",
+  "updated_at": "2026-09-27T17:26:00+08:00",
   "repository": "jinxi1036-maker68/hermes-youyi-product",
   "evidence": [
     {
@@ -270,6 +270,29 @@
       "working_method_id": "WM-007",
       "source": "GitHub project-knowledge PR review plus remote structural/projection/profile/budget audit",
       "note": "KH-003 introduces minimal bootstrap, PROJECT_INDEX + CURRENT_WORK machine truth, task load profiles, archive-on-close, generated current projections, byte budgets and stronger validator checks. The previous 32KB ACTIVE_WORK was archived and replaced by a 443-byte compatibility pointer. Remote audit returned 0 structural/projection/profile/budget errors. WM-007 changes only startup and Knowledge Sync; WM-006 role contract, stop rules and Class B governance are preserved."
+    },
+    {
+      "id": "EV-LAT-001",
+      "area": "XiaoU production response latency baseline",
+      "judgment": "PASS_READ_ONLY_LATENCY_PROFILE",
+      "date": "2026-09-27",
+      "production_sha": "e9c942454bf0325a90a9df55485ae52b5247ce4e",
+      "sample_size": 30,
+      "time_window": "2026-09-22 09:05:46 to 2026-09-27 14:04:12 CST",
+      "source": "Owner-relayed Codex read-only production telemetry analysis",
+      "metrics": {
+        "p50_total_ms": 18561,
+        "p95_total_ms": 69409,
+        "p50_context_ms": 86,
+        "p95_context_ms": 128,
+        "p50_model_ms": 13597,
+        "p95_model_ms": 56353,
+        "provider_api_call_p50_ms": 6878,
+        "provider_api_call_p95_ms": 19331,
+        "tool_exec_p50_ms": 25,
+        "tool_exec_p95_ms": 1651
+      },
+      "note": "30 completed WeCom turns; production unchanged. Provider/model waiting and extra post-tool model segments dominate latency. Tool execution and context construction are minor. Long provider input is strongly correlated with slower turns. Corrective retries and repeated same-tool patterns correlate with higher latency. Delivery latency remains unisolated."
     }
   ]
 }

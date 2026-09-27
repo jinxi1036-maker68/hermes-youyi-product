@@ -2,7 +2,7 @@
   "schema_version": "xiaoyou_current_work_v1",
   "work_item_id": "WI-2026-09-response-latency-ux-architecture",
   "kind": "runtime_experience_architecture",
-  "status": "approved_for_measurement",
+  "status": "measurement_complete_architecture_design",
   "formal_stage_context": {
     "id": 3,
     "name": "Direct Message / Outbound",
@@ -11,7 +11,7 @@
   "objective": "Redesign XiaoU for low true latency and low perceived latency: simple turns should finish quickly; long work should acknowledge quickly, continue safely in the background, and deliver a truthful final result later.",
   "problem_statement": "Users experience XiaoU as very slow. The cause may span model generation, long sessions, multi-model/tool loops, serial tool execution, context construction, delivery behavior and UX that stays silent until final completion.",
   "blocker": "Current production has latency telemetry but no current baseline decomposition by turn class, and the user-visible response policy does not separate first-visible response from final task completion.",
-  "next_action": "Run a read-only production latency profile using existing privacy-safe turn traces/session metrics. Measure p50/p95 by turn class and decompose context_build, initial/follow-up model, tool time, provider API duration, prompt tokens/session size, reply size and delivery latency. No code/config changes in this measurement run.",
+  "next_action": "Freeze a cognition-preserving latency architecture from EV-LAT-001 before code changes: reduce avoidable model round-trips, eliminate corrective/redundant read waste, preserve semantics while shrinking hot session context, and introduce truthful early-visible progress/background completion.",
   "acceptance_criteria": [
     "Separate TTFV (time to first visible value) from TTC (time to complete).",
     "Identify which latency components are evidenced in XiaoU today and which still require production measurement.",
@@ -50,5 +50,26 @@
   ],
   "opened_at": "2026-09-27",
   "owner_approved": true,
-  "architecture_direction": "Cognition-preserving latency optimization: preserve model-led business reasoning and final expression; optimize only orchestration overhead, redundant rounds, independent read scheduling, session/context mechanics, and truthful delivery timing."
+  "architecture_direction": "Cognition-preserving latency optimization: preserve model-led business reasoning and final expression; optimize only orchestration overhead, redundant rounds, independent read scheduling, session/context mechanics, and truthful delivery timing.",
+  "measurement_summary": {
+    "evidence_id": "EV-LAT-001",
+    "sample_size": 30,
+    "p50_total_ms": 18561,
+    "p95_total_ms": 69409,
+    "p50_context_ms": 86,
+    "p95_context_ms": 128,
+    "p50_model_ms": 13597,
+    "p95_model_ms": 56353,
+    "provider_call_p50_ms": 6878,
+    "provider_call_p95_ms": 19331,
+    "tool_exec_p50_ms": 25,
+    "tool_exec_p95_ms": 1651,
+    "findings": [
+      "Provider/model waiting dominates observed latency.",
+      "Post-tool follow-up model segments multiply wall-clock time.",
+      "Context construction and tool execution are not priority bottlenecks.",
+      "Long provider input is strongly correlated with slower turns.",
+      "Corrective retries and repeated same-tool patterns correlate with slower turns."
+    ]
+  }
 }

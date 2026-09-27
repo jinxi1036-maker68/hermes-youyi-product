@@ -33,9 +33,9 @@
     "main_last_verified_at": "2026-09-27T13:32:17+08:00",
     "active_work_item_id": "WI-2026-09-response-latency-ux-architecture",
     "blocker_id": "response-latency-ux",
-    "blocker_status": "approved_for_measurement",
-    "blocker_summary": "Owner approved the cognition-preserving latency direction. The model remains the sole business brain; optimization may only remove non-value latency around reasoning and delivery.",
-    "next_action": "Collect a read-only production latency baseline from existing privacy-safe telemetry before any implementation.",
+    "blocker_status": "measurement_complete_architecture_design",
+    "blocker_summary": "Read-only production latency profile completed. Dominant latency is provider/model wait plus extra post-tool model rounds; context build and tool execution are minor. Long model input is strongly correlated with slower turns.",
+    "next_action": "Freeze the cognition-preserving latency architecture and staged implementation plan from EV-LAT-001 before any runtime code change.",
     "working_method_id": "WM-007",
     "working_method_name": "Harness-Routed Role-Locked Governed Adaptive Method",
     "bootstrap_holding_contract": "ADR-009: transparent-forward / persist-before-ACK / idempotent-replay-complete-after-confirmed-success"
