@@ -15,7 +15,7 @@
 - Status: `measurement_complete_architecture_design`
 - Objective: Redesign XiaoU for low true latency and low perceived latency: simple turns should finish quickly; long work should acknowledge quickly, continue safely in the background, and deliver a truthful final result later.
 - Blocker: Current production has latency telemetry but no current baseline decomposition by turn class, and the user-visible response policy does not separate first-visible response from final task completion.
-- Next: Freeze a cognition-preserving latency architecture from EV-LAT-001 before code changes: reduce avoidable model round-trips, eliminate corrective/redundant read waste, preserve semantics while shrinking hot session context, and introduce truthful early-visible progress/background completion.
+- Next: Freeze the reversible V1 latency architecture, complete the final three technical confirmations, then implement behind an isolated/candidate release boundary. Owner tests speed and answer quality before promotion; failed acceptance triggers rollback to the current stable production baseline.
 
 ## Runtime facts
 

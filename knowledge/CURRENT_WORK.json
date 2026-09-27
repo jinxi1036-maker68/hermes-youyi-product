@@ -11,7 +11,7 @@
   "objective": "Redesign XiaoU for low true latency and low perceived latency: simple turns should finish quickly; long work should acknowledge quickly, continue safely in the background, and deliver a truthful final result later.",
   "problem_statement": "Users experience XiaoU as very slow. The cause may span model generation, long sessions, multi-model/tool loops, serial tool execution, context construction, delivery behavior and UX that stays silent until final completion.",
   "blocker": "Current production has latency telemetry but no current baseline decomposition by turn class, and the user-visible response policy does not separate first-visible response from final task completion.",
-  "next_action": "Freeze a cognition-preserving latency architecture from EV-LAT-001 before code changes: reduce avoidable model round-trips, eliminate corrective/redundant read waste, preserve semantics while shrinking hot session context, and introduce truthful early-visible progress/background completion.",
+  "next_action": "Freeze the reversible V1 latency architecture, complete the final three technical confirmations, then implement behind an isolated/candidate release boundary. Owner tests speed and answer quality before promotion; failed acceptance triggers rollback to the current stable production baseline.",
   "acceptance_criteria": [
     "Separate TTFV (time to first visible value) from TTC (time to complete).",
     "Identify which latency components are evidenced in XiaoU today and which still require production measurement.",
@@ -22,7 +22,10 @@
     "Preserve the single-business-brain invariant: the model remains responsible for business understanding, judgment, planning, action/tool selection, and user-facing business expression.",
     "Latency optimization must reduce orchestration overhead, redundant model/tool rounds, waiting and delivery silence without lowering reasoning quality or removing evidence required for correctness.",
     "Any concurrency layer may only schedule model-selected operations whose tool metadata proves they are independent and read-only; it must never infer business intent or choose actions for the model.",
-    "Any proposed model downgrade, reasoning-budget reduction, context reduction or deterministic business reply path requires separate evidence that result quality and authority semantics are unchanged."
+    "Any proposed model downgrade, reasoning-budget reduction, context reduction or deterministic business reply path requires separate evidence that result quality and authority semantics are unchanged.",
+    "All latency optimizations must be deployable behind a reversible release boundary and be testable before becoming the new production baseline.",
+    "Owner must be able to compare speed and answer quality before accepting the optimized runtime.",
+    "Rollback must restore the pre-optimization production behavior without losing business data, session truth or durable work state."
   ],
   "stop_rules": [
     "Do not start Stage 3 capability implementation during this latency architecture work.",
@@ -32,7 +35,9 @@
     "Do not introduce a keyword/business router, deterministic business decision tree, or rule-based replacement for model intent/action selection in the name of latency.",
     "Do not globally reduce reasoning effort, switch to a weaker model, cap necessary tool use, or truncate required context solely to hit a latency target.",
     "Do not bypass the model for final business expression merely because a tool returned authoritative data; transport/system receipts are the only exception.",
-    "Do not let early progress messages make business claims that the model/tool evidence has not yet established."
+    "Do not let early progress messages make business claims that the model/tool evidence has not yet established.",
+    "Do not make irreversible production data migrations solely for latency optimization.",
+    "Do not retire the current stable runtime until Owner acceptance of the optimized behavior."
   ],
   "context_profile": "capability_design",
   "must_read": [

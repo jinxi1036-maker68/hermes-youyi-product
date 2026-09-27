@@ -35,7 +35,7 @@
     "blocker_id": "response-latency-ux",
     "blocker_status": "measurement_complete_architecture_design",
     "blocker_summary": "Read-only production latency profile completed. Dominant latency is provider/model wait plus extra post-tool model rounds; context build and tool execution are minor. Long model input is strongly correlated with slower turns.",
-    "next_action": "Freeze the cognition-preserving latency architecture and staged implementation plan from EV-LAT-001 before any runtime code change.",
+    "next_action": "Define a reversible latency optimization V1, verify it in isolation/candidate runtime, then let Owner test before promotion. Keep the current stable runtime available for rollback until acceptance.",
     "working_method_id": "WM-007",
     "working_method_name": "Harness-Routed Role-Locked Governed Adaptive Method",
     "bootstrap_holding_contract": "ADR-009: transparent-forward / persist-before-ACK / idempotent-replay-complete-after-confirmed-success"

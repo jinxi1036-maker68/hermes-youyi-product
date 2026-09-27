@@ -18,7 +18,7 @@ Current production has latency telemetry but no current baseline decomposition b
 
 ## Next action
 
-Freeze a cognition-preserving latency architecture from EV-LAT-001 before code changes: reduce avoidable model round-trips, eliminate corrective/redundant read waste, preserve semantics while shrinking hot session context, and introduce truthful early-visible progress/background completion.
+Freeze the reversible V1 latency architecture, complete the final three technical confirmations, then implement behind an isolated/candidate release boundary. Owner tests speed and answer quality before promotion; failed acceptance triggers rollback to the current stable production baseline.
 
 ## Acceptance criteria
 
@@ -32,6 +32,9 @@ Freeze a cognition-preserving latency architecture from EV-LAT-001 before code c
 - Latency optimization must reduce orchestration overhead, redundant model/tool rounds, waiting and delivery silence without lowering reasoning quality or removing evidence required for correctness.
 - Any concurrency layer may only schedule model-selected operations whose tool metadata proves they are independent and read-only; it must never infer business intent or choose actions for the model.
 - Any proposed model downgrade, reasoning-budget reduction, context reduction or deterministic business reply path requires separate evidence that result quality and authority semantics are unchanged.
+- All latency optimizations must be deployable behind a reversible release boundary and be testable before becoming the new production baseline.
+- Owner must be able to compare speed and answer quality before accepting the optimized runtime.
+- Rollback must restore the pre-optimization production behavior without losing business data, session truth or durable work state.
 
 ## Stop rules
 
@@ -43,6 +46,8 @@ Freeze a cognition-preserving latency architecture from EV-LAT-001 before code c
 - Do not globally reduce reasoning effort, switch to a weaker model, cap necessary tool use, or truncate required context solely to hit a latency target.
 - Do not bypass the model for final business expression merely because a tool returned authoritative data; transport/system receipts are the only exception.
 - Do not let early progress messages make business claims that the model/tool evidence has not yet established.
+- Do not make irreversible production data migrations solely for latency optimization.
+- Do not retire the current stable runtime until Owner acceptance of the optimized behavior.
 
 ## Context routing
 
