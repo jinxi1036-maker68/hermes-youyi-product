@@ -419,27 +419,25 @@ class WecomCallbackAdapter(BasePlatformAdapter):
                 logger.exception("[WecomCallback] Model handler failed before producing a reply")
                 response = None
             finally:
-                if not progress_task.done():
-                    if progress_state.get("send_started"):
-                        # Once the transport send has started, briefly let it
-                        # finish so the progress receipt cannot arrive after the
-                        # final model answer. This does not block model work.
-                        try:
-                            await asyncio.wait_for(asyncio.shield(progress_task), timeout=2.0)
-                        except (asyncio.TimeoutError, asyncio.CancelledError):
-                            progress_task.cancel()
-                    else:
-                        progress_task.cancel()
-                if progress_task.done():
+                if not progress_task.done() and progress_state.get("send_started"):
+                    # Once the transport send has started, briefly let it
+                    # finish so the progress receipt cannot arrive after the
+                    # final model answer. This does not block model work.
                     try:
-                        progress_task.result()
-                    except asyncio.CancelledError:
+                        await asyncio.wait_for(asyncio.shield(progress_task), timeout=2.0)
+                    except (asyncio.TimeoutError, asyncio.CancelledError):
                         pass
-                    except Exception:
-                        logger.debug(
-                            "[WecomCallback] Visible processing task ended with error",
-                            exc_info=True,
-                        )
+                if not progress_task.done():
+                    progress_task.cancel()
+                try:
+                    await progress_task
+                except asyncio.CancelledError:
+                    pass
+                except Exception:
+                    logger.debug(
+                        "[WecomCallback] Visible processing task ended with error",
+                        exc_info=True,
+                    )
             command = _event_command(event)
             if (
                 response is None
