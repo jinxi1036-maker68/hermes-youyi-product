@@ -1,6 +1,6 @@
 {
   "schema_version": "xiaoyou_evidence_index_v1",
-  "updated_at": "2026-09-27T17:26:00+08:00",
+  "updated_at": "2026-09-27T17:50:00+08:00",
   "repository": "jinxi1036-maker68/hermes-youyi-product",
   "evidence": [
     {
@@ -293,6 +293,18 @@
         "tool_exec_p95_ms": 1651
       },
       "note": "30 completed WeCom turns; production unchanged. Provider/model waiting and extra post-tool model segments dominate latency. Tool execution and context construction are minor. Long provider input is strongly correlated with slower turns. Corrective retries and repeated same-tool patterns correlate with higher latency. Delivery latency remains unisolated."
+    },
+    {
+      "id": "EV-LAT-002",
+      "area": "Latency V1 model-selected read bundle",
+      "judgment": "PASS_ISOLATED_MERGED_NOT_DEPLOYED",
+      "date": "2026-09-27",
+      "pr": 27,
+      "candidate_sha": "532a215f408b90434c66b96d19fff6f511c7bc2b",
+      "merged_sha": "adb8b031a89f61950d71df005c176b07b9a5e3c1",
+      "production_sha": "e9c942454bf0325a90a9df55485ae52b5247ce4e",
+      "source": "Owner-relayed Codex isolated verification plus GitHub merge by ChatGPT",
+      "note": "Targeted read-bundle tests 4/4 PASS. Relevant regression failures reproduced on stable baseline and introduced no candidate-specific failures. Existing tools preserved; only tuoguan_read_bundle added. Model still explicitly selects domain/operation/arguments. Bundle rejects writes, delete/send/update-status/advance/generate before handler execution, deduplicates exact repeated reads, and reduced synthetic model segments from 3 to 2. Production unchanged."
     }
   ]
 }

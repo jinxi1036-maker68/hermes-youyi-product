@@ -12,14 +12,14 @@
 
 - ID: `WI-2026-09-response-latency-ux-architecture`
 - Kind: `runtime_experience_architecture`
-- Status: `measurement_complete_architecture_design`
+- Status: `latency_v1_phase2_context_compaction`
 - Objective: Redesign XiaoU for low true latency and low perceived latency: simple turns should finish quickly; long work should acknowledge quickly, continue safely in the background, and deliver a truthful final result later.
 - Blocker: Current production has latency telemetry but no current baseline decomposition by turn class, and the user-visible response policy does not separate first-visible response from final task completion.
-- Next: Freeze the reversible V1 latency architecture, complete the final three technical confirmations, then implement behind an isolated/candidate release boundary. Owner tests speed and answer quality before promotion; failed acceptance triggers rollback to the current stable production baseline.
+- Next: Build and isolate-test a reversible Hermes-native long-session compaction candidate for Agnes 3.0. Target the observed >=24k latency cliff while preserving model-led reasoning, recent verbatim turns, semantic summary/recovery, trusted identity/authority context and full historical recoverability.
 
 ## Runtime facts
 
-- main: `2c65de090d6fb5ff97c55f5774533bd9089b439f`
+- main: `adb8b031a89f61950d71df005c176b07b9a5e3c1`
 - production: `e9c942454bf0325a90a9df55485ae52b5247ce4e`
 
 ## Sealed capabilities

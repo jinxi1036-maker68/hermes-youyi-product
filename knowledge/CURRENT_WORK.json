@@ -2,7 +2,7 @@
   "schema_version": "xiaoyou_current_work_v1",
   "work_item_id": "WI-2026-09-response-latency-ux-architecture",
   "kind": "runtime_experience_architecture",
-  "status": "measurement_complete_architecture_design",
+  "status": "latency_v1_phase2_context_compaction",
   "formal_stage_context": {
     "id": 3,
     "name": "Direct Message / Outbound",
@@ -11,7 +11,7 @@
   "objective": "Redesign XiaoU for low true latency and low perceived latency: simple turns should finish quickly; long work should acknowledge quickly, continue safely in the background, and deliver a truthful final result later.",
   "problem_statement": "Users experience XiaoU as very slow. The cause may span model generation, long sessions, multi-model/tool loops, serial tool execution, context construction, delivery behavior and UX that stays silent until final completion.",
   "blocker": "Current production has latency telemetry but no current baseline decomposition by turn class, and the user-visible response policy does not separate first-visible response from final task completion.",
-  "next_action": "Freeze the reversible V1 latency architecture, complete the final three technical confirmations, then implement behind an isolated/candidate release boundary. Owner tests speed and answer quality before promotion; failed acceptance triggers rollback to the current stable production baseline.",
+  "next_action": "Build and isolate-test a reversible Hermes-native long-session compaction candidate for Agnes 3.0. Target the observed >=24k latency cliff while preserving model-led reasoning, recent verbatim turns, semantic summary/recovery, trusted identity/authority context and full historical recoverability.",
   "acceptance_criteria": [
     "Separate TTFV (time to first visible value) from TTC (time to complete).",
     "Identify which latency components are evidenced in XiaoU today and which still require production measurement.",
@@ -51,7 +51,9 @@
   ],
   "evidence_refs": [
     "EV-KH-001",
-    "EV-RT-020"
+    "EV-RT-020",
+    "EV-LAT-001",
+    "EV-LAT-002"
   ],
   "opened_at": "2026-09-27",
   "owner_approved": true,
@@ -76,5 +78,13 @@
       "Long provider input is strongly correlated with slower turns.",
       "Corrective retries and repeated same-tool patterns correlate with slower turns."
     ]
+  },
+  "phase1_read_bundle": {
+    "status": "PASS_MERGED_NOT_DEPLOYED",
+    "pr": 27,
+    "candidate_sha": "532a215f408b90434c66b96d19fff6f511c7bc2b",
+    "merged_sha": "adb8b031a89f61950d71df005c176b07b9a5e3c1",
+    "production_changed": false,
+    "isolated_result": "4/4 targeted PASS; no candidate-specific regression; synthetic model segments 3 -> 2"
   }
 }

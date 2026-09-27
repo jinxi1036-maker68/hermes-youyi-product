@@ -4,7 +4,7 @@
 
 - work_item_id: `WI-2026-09-response-latency-ux-architecture`
 - kind: `runtime_experience_architecture`
-- status: `measurement_complete_architecture_design`
+- status: `latency_v1_phase2_context_compaction`
 - context_profile: `capability_design`
 - formal_stage_context: Stage 3 Direct Message / Outbound / paused_before_implementation
 
@@ -18,7 +18,7 @@ Current production has latency telemetry but no current baseline decomposition b
 
 ## Next action
 
-Freeze the reversible V1 latency architecture, complete the final three technical confirmations, then implement behind an isolated/candidate release boundary. Owner tests speed and answer quality before promotion; failed acceptance triggers rollback to the current stable production baseline.
+Build and isolate-test a reversible Hermes-native long-session compaction candidate for Agnes 3.0. Target the observed >=24k latency cliff while preserving model-led reasoning, recent verbatim turns, semantic summary/recovery, trusted identity/authority context and full historical recoverability.
 
 ## Acceptance criteria
 
