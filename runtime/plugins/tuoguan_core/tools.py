@@ -1846,12 +1846,13 @@ def model_tools(surface: str = ""):
         return tuple(tool for tool in LEGACY_TOOLS if tool[0] in agenda_service_names)
     if selected != "facade":
         raise ValueError("HERMES_TUOGUAN_TOOL_SURFACE must be facade, legacy, robot_poc, agenda_service or governance_claims_candidate")
-    from .capability_facades import FAST_PATH_TOOL_NAMES, build_facade_tools
+    from .capability_facades import FAST_PATH_TOOL_NAMES, build_facade_tools, build_read_bundle_tool
     from .governance_claims_tool_surface_v1 import build_governance_claim_tools
 
     fast_path_names = set(FAST_PATH_TOOL_NAMES)
     fast_paths = tuple(tool for tool in LEGACY_TOOLS if tool[0] in fast_path_names)
     facades = build_facade_tools(LEGACY_TOOLS, tool_result=tool_result)
+    read_bundle = build_read_bundle_tool(LEGACY_TOOLS, tool_result=tool_result)
     # Progressive claims are explicit, generic governance contracts.  They
     # are uniformly present on the normal human surface; neither the Gateway
     # nor this function examines message content or chooses an action.
@@ -1861,7 +1862,7 @@ def model_tools(surface: str = ""):
         current_turn=current_trusted_turn,
         tool_result=tool_result,
     )
-    return (*fast_paths, *facades, *claims)
+    return (*fast_paths, read_bundle, *facades, *claims)
 
 
 def _agenda_user_message_schema() -> dict[str, Any]:
