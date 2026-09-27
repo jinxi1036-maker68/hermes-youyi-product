@@ -33,9 +33,9 @@
     "main_last_verified_at": "2026-09-27T23:30:00+08:00",
     "active_work_item_id": "WI-2026-09-response-latency-ux-architecture",
     "blocker_id": "response-latency-ux",
-    "blocker_status": "latency_v1_awaiting_owner_wecom_acceptance",
-    "blocker_summary": "Latency V1 integrated candidate at cb843ccf4545cb40195614f3087cb4efd75cdfa8 passed combined isolated/shadow certification with no candidate-specific regressions. Production remains on e9c942454bf0325a90a9df55485ae52b5247ce4e. Final gate is Owner real WeCom speed+quality acceptance before promotion.",
-    "next_action": "After explicit Owner authorization, expose the V1 candidate only for a reversible owner acceptance window, preserve immediate rollback to the current stable production baseline, and collect real WeCom speed+quality evidence before any broader promotion.",
+    "blocker_status": "latency_v1_owner_authorized_acceptance_deployment",
+    "blocker_summary": "Owner explicitly authorized deployment of the technically certified Latency V1 candidate for a reversible real-WeCom acceptance window. This is not final production acceptance; current stable baseline must remain immediately recoverable.",
+    "next_action": "Deploy candidate cb843ccf4545cb40195614f3087cb4efd75cdfa8 under Holding Bridge protection for a reversible Owner acceptance window, verify health and rollback readiness, then wait for Owner real-WeCom speed+quality judgment.",
     "working_method_id": "WM-007",
     "working_method_name": "Harness-Routed Role-Locked Governed Adaptive Method",
     "bootstrap_holding_contract": "ADR-009: transparent-forward / persist-before-ACK / idempotent-replay-complete-after-confirmed-success"

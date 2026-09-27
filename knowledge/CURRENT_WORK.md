@@ -4,7 +4,7 @@
 
 - work_item_id: `WI-2026-09-response-latency-ux-architecture`
 - kind: `runtime_experience_architecture`
-- status: `latency_v1_awaiting_owner_wecom_acceptance`
+- status: `latency_v1_owner_authorized_acceptance_deployment`
 - context_profile: `capability_design`
 - formal_stage_context: Stage 3 Direct Message / Outbound / paused_before_implementation
 
@@ -18,7 +18,7 @@ Current production has latency telemetry but no current baseline decomposition b
 
 ## Next action
 
-Await explicit Owner authorization for a reversible real-WeCom acceptance window. Candidate cb843ccf4545cb40195614f3087cb4efd75cdfa8 is technically certified; production must remain on e9c942454bf0325a90a9df55485ae52b5247ce4e until that authorization. Owner acceptance must cover speed, answer quality, Tool selection, authority/Unknown behavior, slow-turn progress UX, and rollback readiness.
+Perform one bounded reversible acceptance deployment of cb843ccf4545cb40195614f3087cb4efd75cdfa8 using the existing Holding Bridge/cutover safeguards. Preserve the current stable release e9c942454bf0325a90a9df55485ae52b5247ce4e for immediate rollback. After technical PASS, stop changing the system and wait for Owner real WeCom acceptance.
 
 ## Acceptance criteria
 
