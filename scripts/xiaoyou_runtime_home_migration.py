@@ -266,17 +266,44 @@ def _prepare_target(
 
 
 def _copy_regular_entries(entries: list[Entry], target_home: Path) -> None:
-    for item in sorted(entries, key=lambda row: (row.kind != "directory", row.logical)):
+    directories = sorted(
+        (item for item in entries if item.kind == "directory"),
+        key=lambda row: (len(Path(row.logical).parts), row.logical),
+    )
+    files = sorted(
+        (item for item in entries if item.kind != "directory"),
+        key=lambda row: row.logical,
+    )
+
+    # Hermes intentionally locks installed trees to 0555/0444.  A repeated
+    # migration must still be able to replace their state without weakening
+    # the final permissions, so keep destination directories writable only
+    # for the duration of the copy.
+    for item in directories:
+        target = target_home / Path(item.logical)
+        target.mkdir(parents=True, exist_ok=True)
+        target.chmod(item.mode | stat.S_IRUSR | stat.S_IWUSR | stat.S_IXUSR)
+
+    for item in files:
         logical = Path(item.logical)
         target = target_home / logical
-        if item.kind == "directory":
-            target.mkdir(parents=True, exist_ok=True)
-            target.chmod(item.mode)
-            continue
         if logical.as_posix() in {SQLITE_MAIN, *SQLITE_TRANSIENT}:
             continue
         target.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copy2(item.source, target, follow_symlinks=True)
+        temp = target.with_name(f".{target.name}.migration-{os.getpid()}")
+        temp.unlink(missing_ok=True)
+        try:
+            shutil.copy2(item.source, temp, follow_symlinks=True)
+            os.replace(temp, target)
+        finally:
+            temp.unlink(missing_ok=True)
+
+    for item in sorted(
+        directories,
+        key=lambda row: (len(Path(row.logical).parts), row.logical),
+        reverse=True,
+    ):
+        (target_home / Path(item.logical)).chmod(item.mode)
 
 
 def _sqlite_backup(source_db: Path, target_db: Path) -> dict[str, Any]:
@@ -315,15 +342,24 @@ def _prune_target(entries: list[Entry], target_home: Path) -> list[str]:
             continue
         if any(value.startswith(logical + "/") for value in allowed):
             continue
-        if path.is_symlink() or path.is_file():
-            path.unlink()
-            removed.append(logical)
-        elif path.is_dir():
-            try:
-                path.rmdir()
+        parent = path.parent
+        parent_mode = stat.S_IMODE(parent.stat().st_mode)
+        parent_changed = not bool(parent_mode & stat.S_IWUSR)
+        if parent_changed:
+            parent.chmod(parent_mode | stat.S_IWUSR)
+        try:
+            if path.is_symlink() or path.is_file():
+                path.unlink()
                 removed.append(logical)
-            except OSError:
-                pass
+            elif path.is_dir():
+                try:
+                    path.rmdir()
+                    removed.append(logical)
+                except OSError:
+                    pass
+        finally:
+            if parent_changed and parent.exists():
+                parent.chmod(parent_mode)
     return removed
 
 

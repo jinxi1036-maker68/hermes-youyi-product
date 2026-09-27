@@ -18,7 +18,11 @@ DEFAULT_SERVICE_GROUP = "hermes-youyi"
 DEFAULT_MODULES = (
     "hermes_cli",
     "plugins.tuoguan_core",
+    "plugins.agenda_service_work",
+    "plugins.platforms.http_policy",
     "plugins.platforms.wecom",
+    "plugins.reply_recovery",
+    "plugins.robot_poc",
 )
 
 

@@ -5,6 +5,7 @@ import os
 from pathlib import Path
 import sqlite3
 import socket
+import stat
 import tempfile
 
 
@@ -168,6 +169,79 @@ def test_finalize_requires_gateway_stop_and_prunes_stale_target_state(tmp_path, 
     assert not (target / "stale.txt").exists()
     assert source.is_dir()
     assert (source / "state.db").is_file()
+
+
+def test_finalize_prunes_hermes_locked_release_tree(tmp_path, monkeypatch):
+    from scripts import xiaoyou_runtime_home_migration as migration
+
+    release = _release(tmp_path)
+    source = _source_home(tmp_path)
+    target = tmp_path / "persistent-hermes-home"
+    locked = target / "skills" / "creative" / "fixture.md"
+    locked.parent.mkdir(parents=True)
+    locked.write_text("stale release content\n", encoding="utf-8")
+    locked.chmod(0o444)
+    locked.parent.chmod(0o555)
+    (target / "skills").chmod(0o555)
+    monkeypatch.setattr(migration, "_service_uid", lambda _user: os.geteuid())
+
+    result = migration.migrate_runtime_home(
+        mode="finalize",
+        release_root=release,
+        source_home=source,
+        target_home=target,
+        service_user="svc",
+        gateway_stopped_confirmed=True,
+    )
+
+    assert result["ok"] is True
+    assert not (target / "skills").exists()
+    receipt = json.loads(Path(result["receipt"]).read_text(encoding="utf-8"))
+    assert "skills/creative/fixture.md" in receipt["pruned_target_paths"]
+
+
+def test_repeated_migration_atomically_replaces_read_only_state(tmp_path, monkeypatch):
+    from scripts import xiaoyou_runtime_home_migration as migration
+
+    release = _release(tmp_path)
+    source = _source_home(tmp_path)
+    protected = source / "state" / "protected.json"
+    protected.parent.mkdir()
+    protected.write_text('{"version": 1}\n', encoding="utf-8")
+    protected.chmod(0o444)
+    protected.parent.chmod(0o555)
+    target = tmp_path / "persistent-hermes-home"
+    monkeypatch.setattr(migration, "_service_uid", lambda _user: os.geteuid())
+
+    first = migration.migrate_runtime_home(
+        mode="seed",
+        release_root=release,
+        source_home=source,
+        target_home=target,
+        service_user="svc",
+    )
+    assert first["ok"] is True
+    source_state_mode = stat.S_IMODE(protected.parent.stat().st_mode)
+    source_file_mode = stat.S_IMODE(protected.stat().st_mode)
+    protected.parent.chmod(0o755)
+    protected.chmod(0o644)
+    protected.write_text('{"version": 2}\n', encoding="utf-8")
+    protected.chmod(source_file_mode)
+    protected.parent.chmod(source_state_mode)
+
+    second = migration.migrate_runtime_home(
+        mode="finalize",
+        release_root=release,
+        source_home=source,
+        target_home=target,
+        service_user="svc",
+        gateway_stopped_confirmed=True,
+    )
+
+    assert second["ok"] is True
+    assert (target / "state" / "protected.json").read_text(encoding="utf-8") == '{"version": 2}\n'
+    assert stat.S_IMODE((target / "state").stat().st_mode) == 0o555
+    assert stat.S_IMODE((target / "state" / "protected.json").stat().st_mode) == 0o444
 
 
 def test_runtime_home_inventory_excludes_release_code_directories(tmp_path):
