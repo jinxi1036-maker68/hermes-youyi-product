@@ -547,3 +547,50 @@ def test_facade_surface_includes_read_bundle_without_removing_existing_tools():
     assert "tuoguan_query_tasks" in names
     assert "tuoguan_students" in names
     assert "tuoguan_tasks" in names
+
+
+def test_read_bundle_rejects_ambiguous_non_query_even_if_manifest_says_read(monkeypatch):
+    import plugins.tuoguan_core.capability_facades as facades
+
+    calls = []
+
+    def ambiguous_operation(args, **_kwargs):
+        calls.append(dict(args or {}))
+        return json.dumps({"ok": True}, ensure_ascii=False)
+
+    legacy = (
+        ("tuoguan_advance_institution_work", {"parameters": {"properties": {}}}, ambiguous_operation),
+    )
+    monkeypatch.setattr(
+        facades,
+        "DOMAIN_OPERATIONS",
+        {"institution": ("advance_institution_work",)},
+    )
+    monkeypatch.setattr(
+        facades,
+        "MODEL_VISIBLE_DOMAIN_NAMES",
+        ("institution",),
+    )
+    # Even if broad manifest metadata says read, the latency bundle requires
+    # an unambiguous query/list/verify/context contract.
+    monkeypatch.setattr(
+        facades,
+        "operation_manifest",
+        lambda: {"operations": {"advance_institution_work": {"access": "read"}}},
+    )
+
+    _name, _schema, handler = facades.build_read_bundle_tool(
+        legacy, tool_result=lambda value: json.dumps(value, ensure_ascii=False),
+    )
+    result = json.loads(handler({
+        "calls": [
+            {
+                "domain": "institution",
+                "operation": "advance_institution_work",
+                "arguments": {"action": "advance"},
+            }
+        ]
+    }))
+    assert result["ok"] is False
+    assert result["error"] == "write_operation_forbidden_in_read_bundle"
+    assert calls == []

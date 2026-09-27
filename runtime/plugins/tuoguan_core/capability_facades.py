@@ -370,6 +370,26 @@ def build_facade_tools(
 
 
 READ_BUNDLE_MAX_CALLS = 4
+_READ_BUNDLE_EXACT_READS = frozenset({"context"})
+
+
+def _read_bundle_operation_allowed(operation: str) -> bool:
+    """Return only operations whose naming contract is unambiguously read-only.
+
+    The broader capability manifest contains a historical risk classification
+    for all operations, but a latency optimization must be stricter than that
+    generic metadata.  Ambiguous verbs (advance/generate/goal/next/etc.) stay
+    on their ordinary Tool path even if another manifest currently labels
+    them read-only.
+    """
+
+    name = str(operation or "")
+    return (
+        name in _READ_BUNDLE_EXACT_READS
+        or name.startswith("query_")
+        or name.startswith("list_")
+        or name.startswith("verify_")
+    )
 
 
 def build_read_bundle_tool(
@@ -465,11 +485,11 @@ def build_read_bundle_tool(
                     "data": {"index": index, "domain": domain, "operation": operation},
                 })
             policy = manifest.get(operation) or {}
-            if policy.get("access") != "read":
+            if policy.get("access") != "read" or not _read_bundle_operation_allowed(operation):
                 return tool_result({
                     "ok": False,
                     "error": "write_operation_forbidden_in_read_bundle",
-                    "message": "只读 bundle 不能包含写入或有副作用操作，本轮没有执行任何读取。",
+                    "message": "只读 bundle 只接受明确无副作用的查询类 operation；其它操作继续走原有 Tool 路径，本轮没有执行任何读取。",
                     "data": {"index": index, "domain": domain, "operation": operation},
                 })
             if operation not in legacy:
