@@ -12,10 +12,10 @@
 
 - ID: `WI-2026-09-response-latency-ux-architecture`
 - Kind: `runtime_experience_architecture`
-- Status: `latency_v1_phase2_context_compaction`
+- Status: `context_compaction_perf_evidence_blocked`
 - Objective: Redesign XiaoU for low true latency and low perceived latency: simple turns should finish quickly; long work should acknowledge quickly, continue safely in the background, and deliver a truthful final result later.
 - Blocker: Current production has latency telemetry but no current baseline decomposition by turn class, and the user-visible response policy does not separate first-visible response from final task completion.
-- Next: Build and isolate-test a reversible Hermes-native long-session compaction candidate for Agnes 3.0. Target the observed >=24k latency cliff while preserving model-led reasoning, recent verbatim turns, semantic summary/recovery, trusted identity/authority context and full historical recoverability.
+- Next: Keep PR #28 open and unmerged. Run a production-adjacent, no-traffic synthetic A/B on the exact Agnes 3.0 route: same synthetic long-session semantics before and after Hermes-native compaction, capture prompt tokens, TTFT/API duration/complete time if available, and prove no production/public routing changes.
 
 ## Runtime facts
 

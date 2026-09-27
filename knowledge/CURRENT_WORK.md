@@ -4,7 +4,7 @@
 
 - work_item_id: `WI-2026-09-response-latency-ux-architecture`
 - kind: `runtime_experience_architecture`
-- status: `latency_v1_phase2_context_compaction`
+- status: `context_compaction_perf_evidence_blocked`
 - context_profile: `capability_design`
 - formal_stage_context: Stage 3 Direct Message / Outbound / paused_before_implementation
 
@@ -18,7 +18,7 @@ Current production has latency telemetry but no current baseline decomposition b
 
 ## Next action
 
-Build and isolate-test a reversible Hermes-native long-session compaction candidate for Agnes 3.0. Target the observed >=24k latency cliff while preserving model-led reasoning, recent verbatim turns, semantic summary/recovery, trusted identity/authority context and full historical recoverability.
+Keep PR #28 open and unmerged. Run a production-adjacent, no-traffic synthetic A/B on the exact Agnes 3.0 route: same synthetic long-session semantics before and after Hermes-native compaction, capture prompt tokens, TTFT/API duration/complete time if available, and prove no production/public routing changes.
 
 ## Acceptance criteria
 

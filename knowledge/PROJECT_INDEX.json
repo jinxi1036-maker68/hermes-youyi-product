@@ -33,9 +33,9 @@
     "main_last_verified_at": "2026-09-27T17:50:00+08:00",
     "active_work_item_id": "WI-2026-09-response-latency-ux-architecture",
     "blocker_id": "response-latency-ux",
-    "blocker_status": "latency_v1_phase2_context_compaction",
-    "blocker_summary": "Latency V1 phase 1 (model-selected read bundle) passed isolated verification and merged to main without production deployment. Phase 2 is long-session compaction using Hermes-native semantic compression, with continuity/recall and rollback gates.",
-    "next_action": "Build a reversible Agnes 3.0 / Hermes 0.21 context-compaction candidate using native semantic compression; test recall and latency in isolation before any production change.",
+    "blocker_status": "context_compaction_perf_evidence_blocked",
+    "blocker_summary": "PR #28 context compaction passed continuity, semantic recall, raw-history preservation, config-scope and exact rollback gates, but isolated real-model probes did not complete within 60 seconds, so latency improvement is not yet evidenced.",
+    "next_action": "Keep PR #28 unmerged. Run one production-adjacent shadow A/B using the exact Agnes 3.0 route and synthetic long-session input, with no public routing or business-data changes, to measure provider latency before vs after compaction.",
     "working_method_id": "WM-007",
     "working_method_name": "Harness-Routed Role-Locked Governed Adaptive Method",
     "bootstrap_holding_contract": "ADR-009: transparent-forward / persist-before-ACK / idempotent-replay-complete-after-confirmed-success"

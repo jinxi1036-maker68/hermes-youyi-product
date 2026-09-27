@@ -2,7 +2,7 @@
   "schema_version": "xiaoyou_current_work_v1",
   "work_item_id": "WI-2026-09-response-latency-ux-architecture",
   "kind": "runtime_experience_architecture",
-  "status": "latency_v1_phase2_context_compaction",
+  "status": "context_compaction_perf_evidence_blocked",
   "formal_stage_context": {
     "id": 3,
     "name": "Direct Message / Outbound",
@@ -11,7 +11,7 @@
   "objective": "Redesign XiaoU for low true latency and low perceived latency: simple turns should finish quickly; long work should acknowledge quickly, continue safely in the background, and deliver a truthful final result later.",
   "problem_statement": "Users experience XiaoU as very slow. The cause may span model generation, long sessions, multi-model/tool loops, serial tool execution, context construction, delivery behavior and UX that stays silent until final completion.",
   "blocker": "Current production has latency telemetry but no current baseline decomposition by turn class, and the user-visible response policy does not separate first-visible response from final task completion.",
-  "next_action": "Build and isolate-test a reversible Hermes-native long-session compaction candidate for Agnes 3.0. Target the observed >=24k latency cliff while preserving model-led reasoning, recent verbatim turns, semantic summary/recovery, trusted identity/authority context and full historical recoverability.",
+  "next_action": "Keep PR #28 open and unmerged. Run a production-adjacent, no-traffic synthetic A/B on the exact Agnes 3.0 route: same synthetic long-session semantics before and after Hermes-native compaction, capture prompt tokens, TTFT/API duration/complete time if available, and prove no production/public routing changes.",
   "acceptance_criteria": [
     "Separate TTFV (time to first visible value) from TTC (time to complete).",
     "Identify which latency components are evidenced in XiaoU today and which still require production measurement.",
@@ -53,7 +53,8 @@
     "EV-KH-001",
     "EV-RT-020",
     "EV-LAT-001",
-    "EV-LAT-002"
+    "EV-LAT-002",
+    "EV-LAT-003"
   ],
   "opened_at": "2026-09-27",
   "owner_approved": true,
@@ -86,5 +87,19 @@
     "merged_sha": "adb8b031a89f61950d71df005c176b07b9a5e3c1",
     "production_changed": false,
     "isolated_result": "4/4 targeted PASS; no candidate-specific regression; synthetic model segments 3 -> 2"
+  },
+  "phase2_context_compaction": {
+    "status": "PASS_SAFETY_BLOCKED_PERFORMANCE_EVIDENCE",
+    "pr": 28,
+    "candidate_sha": "f9867f93675066c1a7393997f02fb7e895975e48",
+    "hermes_version": "0.21.0",
+    "primary_model": "agnes-3.0-flash",
+    "prompt_tokens_before": 91107,
+    "prompt_tokens_after": 17738,
+    "targeted_tests": "5/5 PASS",
+    "continuity_tests": "28/28 PASS",
+    "archive_history_tests": "16/16 PASS, 1 skipped",
+    "rollback": "PASS exact original bytes",
+    "latency_measurement": "BLOCKED: isolated real-model probes exceeded 60s"
   }
 }

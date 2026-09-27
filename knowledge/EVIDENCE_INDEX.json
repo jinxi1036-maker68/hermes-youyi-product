@@ -1,6 +1,6 @@
 {
   "schema_version": "xiaoyou_evidence_index_v1",
-  "updated_at": "2026-09-27T17:50:00+08:00",
+  "updated_at": "2026-09-27T18:49:00+08:00",
   "repository": "jinxi1036-maker68/hermes-youyi-product",
   "evidence": [
     {
@@ -305,6 +305,22 @@
       "production_sha": "e9c942454bf0325a90a9df55485ae52b5247ce4e",
       "source": "Owner-relayed Codex isolated verification plus GitHub merge by ChatGPT",
       "note": "Targeted read-bundle tests 4/4 PASS. Relevant regression failures reproduced on stable baseline and introduced no candidate-specific failures. Existing tools preserved; only tuoguan_read_bundle added. Model still explicitly selects domain/operation/arguments. Bundle rejects writes, delete/send/update-status/advance/generate before handler execution, deduplicates exact repeated reads, and reduced synthetic model segments from 3 to 2. Production unchanged."
+    },
+    {
+      "id": "EV-LAT-003",
+      "area": "Latency V1 long-session context compaction candidate",
+      "judgment": "PASS_SAFETY_BLOCKED_PERFORMANCE_EVIDENCE",
+      "date": "2026-09-27",
+      "pr": 28,
+      "candidate_sha": "f9867f93675066c1a7393997f02fb7e895975e48",
+      "production_sha": "e9c942454bf0325a90a9df55485ae52b5247ce4e",
+      "source": "Owner-relayed Codex isolated verification",
+      "metrics": {
+        "prompt_tokens_before": 91107,
+        "prompt_tokens_after": 17738,
+        "compressor_only_ms": 75.76
+      },
+      "note": "Hermes 0.21.0 / agnes-3.0-flash verified. Candidate changes only compression.* and auxiliary.compression.provider. 5/5 targeted tests PASS; continuity/tail 28/28 PASS; archive-history 16/16 PASS with 1 skip. Recent context, semantic facts/current task/object continuity and raw history were preserved. Exact-byte rollback PASS. Isolated real-model probes exceeded 60 seconds, so end-to-end latency improvement remains unproven. Production unchanged; PR must remain unmerged until a trustworthy production-adjacent A/B is obtained."
     }
   ]
 }
