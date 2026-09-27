@@ -664,3 +664,38 @@ Owner explicitly changed the role boundary for the current blocker only:
 - this does **not** globally replace WM-006; the exception ends when this blocker is resolved/verified or Codex reports a final irreducible blocker.
 
 exception id: `WM-006-EXC-19092-001`.
+
+
+## Stage 2 production technical cutover｜PASS
+
+2026-09-27，Owner 回传 Codex 最终结果，ChatGPT 复核 GitHub/CI 后判定：
+
+- ROOT_CAUSE：`19092` 由 Gateway 主进程中的 `robot_poc` 插件启动；此前 release package / installer / self-contained gate 遗漏 `robot_poc`、`agenda_service_work`、`reply_recovery` 及共享 `plugins.platforms.http_policy`，导致 8866 正常而 19092 静默缺失；
+- 同时修复 Runtime Home repeated finalize 对 Hermes `0555/0444` 只读树的替换/清理能力；
+- fix commit：`e9c942454bf0325a90a9df55485ae52b5247ce4e`；
+- PR #25 已正式合并；
+- main：`2c65de090d6fb5ff97c55f5774533bd9089b439f`；
+- main Actions run `36297478611`：SUCCESS；
+- production：`e9c942454bf0325a90a9df55485ae52b5247ce4e`；
+- new Gateway active/enabled，old stable unit stopped/preserved；
+- 8866 + 19092 同属 new Gateway 同一 PID；
+- Plugin Doctor 5/5 PASS；
+- Runtime Topology / Persistent Home / Self-contained / Core Compatibility PASS；
+- receipt drain 已解除，processing=0；
+- Bridge FORWARD，pending=0；
+- public callback 继续经过 Holding Bridge；
+- public health HTTP 200；
+- P0 errors = 0；
+- rollback not required。
+
+证据：`EV-RT-020 = PASS_PRODUCTION_TECHNICAL_CUTOVER`。
+
+### 当前只剩 Owner 真人验收
+
+Stage 2 尚未 sealed。
+
+Owner 现在只做一次真实企业微信 Query：
+
+`今天还有哪些事情没处理完？`
+
+把小U原样回复交回 ChatGPT。PASS 后封板 Stage 2，进入 Stage 3 Direct Message / Outbound。

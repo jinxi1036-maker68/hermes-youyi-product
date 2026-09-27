@@ -1,6 +1,6 @@
 {
   "schema_version": "xiaoyou_evidence_index_v1",
-  "updated_at": "2026-09-26T21:18:00+08:00",
+  "updated_at": "2026-09-27T13:32:17+08:00",
   "repository": "jinxi1036-maker68/hermes-youyi-product",
   "evidence": [
     {
@@ -232,6 +232,21 @@
       "restored_production_sha": "588ea6eecb1833159e886181f3259be6e0befe37",
       "source": "Owner-relayed Codex production cutover result",
       "note": "PRE_HOLD_GATE, Bridge HOLD, old Gateway drain/quiesce/stop, Home finalize/verify and new Gateway binding all PASS. New Gateway start failed because 19092 did not listen within 75 seconds, although 8866 listened and no ImportError/ModuleNotFoundError/Traceback was detected. Technical gate therefore failed before drain resume/recovery. Rollback was required and PASS: old production restored, Bridge resumed, Bridge backlog returned to zero. Current blocker is read-only diagnosis of the 19092 listener ownership/startup boundary."
+    },
+    {
+      "id": "EV-RT-020",
+      "area": "First Runtime Topology production technical cutover",
+      "judgment": "PASS_PRODUCTION_TECHNICAL_CUTOVER",
+      "date": "2026-09-27",
+      "root_cause": "19092 is owned by the in-process robot_poc plugin. The prior release package/self-contained gate omitted robot_poc, agenda_service_work, reply_recovery and shared plugins.platforms.http_policy, so 8866 started while 19092 was silently absent. Repeated Runtime Home finalize also needed support for Hermes 0555/0444 trees.",
+      "fix_commit": "e9c942454bf0325a90a9df55485ae52b5247ce4e",
+      "pr": 25,
+      "main_merge_sha": "2c65de090d6fb5ff97c55f5774533bd9089b439f",
+      "github_actions_run_id": 36297478611,
+      "verification_comment_id": 5853027371,
+      "production_sha": "e9c942454bf0325a90a9df55485ae52b5247ce4e",
+      "source": "Owner-relayed Codex end-to-end fix/cutover result plus GitHub PR/CI verification by ChatGPT",
+      "note": "New Gateway active/enabled; old stable unit stopped and preserved. 8866 and 19092 are both listening on the same new Gateway PID. Plugin Doctor 5/5 PASS. Runtime Topology, Persistent Home, Self-contained and Core Compatibility PASS. Receipt drain resumed with processing=0. Holding Bridge FORWARD/pending=0. Public callback remains through Bridge; public health HTTP 200; P0 errors=0; rollback not required. Stage 2 still awaits Owner real WeCom Query acceptance."
     }
   ]
 }

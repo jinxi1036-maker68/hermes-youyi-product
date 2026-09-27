@@ -82,3 +82,24 @@ callback-only Nginx cutover 已正式 PASS：
 - 其它不影响当前首次安全切换的历史技术债。
 
 精确 SHA、时间、blocker id、next action 请读取 PROJECT_INDEX.json。
+
+
+## 2026-09-27｜Stage 2 production technical gate PASS
+
+首次 Runtime Topology 正式生产切换已经完成。
+
+当前生产事实：
+- production fix commit：`e9c942454bf0325a90a9df55485ae52b5247ce4e`；
+- GitHub main 已通过 PR #25 收口为 `2c65de090d6fb5ff97c55f5774533bd9089b439f`；
+- new Gateway active/enabled；
+- 8866 / 19092 同一 Gateway PID 正常监听；
+- robot_poc / agenda_service_work / reply_recovery / shared http_policy 已纳入正式 release/self-contained 边界；
+- Runtime Topology / Persistent Home / Self-contained / Core Compatibility / Plugin Doctor 均 PASS；
+- Bridge FORWARD / pending=0；
+- public callback 继续通过 Holding Bridge；
+- public health 200；
+- P0 errors=0。
+
+结论：**production technical gate PASS**。
+
+Stage 2 Query 仍保持 active / sealed=false，只差 Owner 的真实 WeCom Query acceptance。

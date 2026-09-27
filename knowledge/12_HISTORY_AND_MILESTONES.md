@@ -257,3 +257,19 @@ PR #17：
 - Bridge resumed and Holding backlog returned to zero；
 - this production fault path proves the Holding Bridge / rollback design prevented the failed Gateway activation from leaving callback backlog stranded；
 - next work is read-only ownership/startup diagnosis for 19092, not another cutover attempt.
+
+
+## Stage 2 Runtime Topology technical cutover completed
+
+2026-09-27：
+- Owner 临时授权 Codex 端到端解决最终 19092 blocker；
+- 根因确认：19092 不是独立服务，而是 Gateway 主进程 `robot_poc` 插件监听；旧 release packaging 只覆盖部分插件，遗漏生产实际启用的 robot_poc / agenda_service_work / reply_recovery / shared http_policy；
+- Codex 在 GitHub 修复并提交 `e9c942454bf0325a90a9df55485ae52b5247ce4e`（PR #25）；
+- 同时修复 repeated Runtime Home finalize 对 Hermes 0555/0444 只读树的处理；
+- isolated new Gateway 8866/19092 PASS；
+- 正式 production cutover PASS，无 rollback；
+- Bridge FORWARD/pending=0，public callback 仍受 Holding Bridge 保护；
+- PR #25 由 ChatGPT 最终复核并合并，main = `2c65de090d6fb5ff97c55f5774533bd9089b439f`，main Actions SUCCESS；
+- evidence `EV-RT-020 = PASS_PRODUCTION_TECHNICAL_CUTOVER`；
+- 一次性 Codex role exception `WM-006-EXC-19092-001` 到此结束，恢复 WM-006 正常角色边界；
+- Stage 2 只剩 Owner real WeCom Query acceptance，尚未 sealed。
