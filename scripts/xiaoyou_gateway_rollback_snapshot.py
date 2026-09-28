@@ -98,8 +98,21 @@ def create_gateway_snapshot(
         return result
 
     output_root = output_root.absolute()
-    output_root.mkdir(parents=True, exist_ok=True)
-    os.chmod(output_root, 0o700)
+    if output_root.is_symlink():
+        return {**result, "ok": False, "error": "output_root_symlink_forbidden"}
+    if output_root.exists():
+        if not output_root.is_dir():
+            return {**result, "ok": False, "error": "output_root_not_directory"}
+        if (output_root.stat().st_mode & 0o777) != 0o700:
+            return {
+                **result,
+                "ok": False,
+                "error": "output_root_mode_must_be_0700",
+                "observed_mode": f"{output_root.stat().st_mode & 0o777:04o}",
+            }
+    else:
+        output_root.mkdir(parents=True, mode=0o700)
+        os.chmod(output_root, 0o700)
 
     fingerprint = hashlib.sha256(
         "\\n".join(
