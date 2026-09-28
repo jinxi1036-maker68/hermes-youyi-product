@@ -178,3 +178,21 @@ def test_teacher_cannot_direct_message_other_staff(tmp_path):
     )
     assert result["ok"] is False
     assert result["error"] == "permission_denied"
+
+
+def test_stage3_reply_truth_never_upgrades_queue_to_sent():
+    from plugins.tuoguan_core.runtime_foundation import _sanitize_external_reply
+
+    queued = _sanitize_external_reply(
+        "已经发给王老师了。",
+        outreach_state="queued",
+        outreach_guard_applies=True,
+    )
+    assert queued == "这条消息已经安排发送，但目前只有入队回执，是否送达还没有确认。"
+
+    no_receipt = _sanitize_external_reply(
+        "已经发给王老师了。",
+        outreach_state="",
+        outreach_guard_applies=True,
+    )
+    assert no_receipt == "当前没有真实发送回执，不能说已经通知对方。"
