@@ -1,6 +1,6 @@
 {
   "schema_version": "xiaoyou_project_knowledge_v2",
-  "knowledge_revision": 8,
+  "knowledge_revision": 9,
   "project": "xiaoyou-hermes",
   "repository": "jinxi1036-maker68/hermes-youyi-product",
   "knowledge_branch": "project-knowledge",
@@ -28,14 +28,14 @@
       "sealed": false
     },
     "production_sha": "cb843ccf4545cb40195614f3087cb4efd75cdfa8",
-    "production_last_verified_at": "2026-09-28T12:32:00+08:00",
+    "production_last_verified_at": "2026-09-28T19:01:00+08:00",
     "main_sha": "c4e116c4bd1799dc5532e020c2e8ccc1b7b50223",
     "main_last_verified_at": "2026-09-28T11:08:00+08:00",
     "active_work_item_id": "WI-2026-09-stage3-direct-message-outbound-v2",
-    "blocker_id": "stage3-production-preflight",
-    "blocker_status": "blocked_runtime_core_binding_drift",
-    "blocker_summary": "Stage 3 pre-deploy gate is BLOCKED by an existing production runtime binding defect: active cb843 release resolves hermes_cli from sibling release e9c942. Gateway/Bridge/callback are healthy; production was unchanged. Exact config rollback copy is also missing.",
-    "next_action": "Run a bounded read-only root-cause diagnosis of the active cb843 Core/venv binding (pyvenv.cfg, console shebang, sys.path/.pth, installed distribution metadata and symlink/origin chain) and identify the smallest Git-governed repair plus exact config-backup gate. Do not deploy Stage 3 or change production.",
+    "blocker_id": "stage3-runtime-repair",
+    "blocker_status": "stage3_runtime_repair_candidate_isolated_verification",
+    "blocker_summary": "Root cause confirmed: active cb843 uses a real local venv whose stale editable Hermes Core metadata still points to sibling e9c942; service PYTHONPATH masks the defect in the live Gateway. Exact rollback snapshot coverage for all active Gateway inputs is also missing. GitHub PR #32 implements a clean full-candidate assembly gate, metadata-leak fail-closed checks, and protected exact Gateway rollback snapshots. Production remains unchanged.",
+    "next_action": "Verify PR #32 candidate 300a9b8b87f363e43c66fa828ffa259183ec4109 in isolation on the server. Prove a newly assembled full candidate has no sibling-release Core/metadata path, the current cb843 defect is detected, protected exact config/unit snapshot semantics pass, and production remains unchanged. Do not merge or deploy.",
     "working_method_id": "WM-007",
     "working_method_name": "Harness-Routed Role-Locked Governed Adaptive Method",
     "bootstrap_holding_contract": "ADR-009: transparent-forward / persist-before-ACK / idempotent-replay-complete-after-confirmed-success"

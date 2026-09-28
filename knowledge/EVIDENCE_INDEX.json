@@ -1,6 +1,6 @@
 {
   "schema_version": "xiaoyou_evidence_index_v1",
-  "updated_at": "2026-09-28T12:32:00+08:00",
+  "updated_at": "2026-09-28T19:01:00+08:00",
   "repository": "jinxi1036-maker68/hermes-youyi-product",
   "evidence": [
     {
@@ -448,6 +448,18 @@
       "production_sha": "cb843ccf4545cb40195614f3087cb4efd75cdfa8",
       "source": "Owner-relayed Codex read-only production preflight",
       "note": "Gateway, Holding Bridge, public callback path, Runtime Topology and Persistent Home are healthy; Bridge FORWARD pending=0; production unchanged. Release Self-contained Gate fails because active cb843 Python resolves hermes_cli from sibling e9c942. Exact-main package build/no-apply stage plan passes, but real candidate runtime compatibility was intentionally not started. No standalone exact config rollback copy was found. Stage 3 capability remains isolated-PASS; deployment is blocked pending runtime binding diagnosis/repair and rollback-copy gate."
+    },
+    {
+      "id": "EV-DM-003",
+      "area": "Stage 3 pre-deploy runtime binding root cause and repair candidate",
+      "judgment": "ROOT_CAUSE_CONFIRMED_FIX_CANDIDATE_READY",
+      "date": "2026-09-28",
+      "pr": 32,
+      "candidate_sha": "300a9b8b87f363e43c66fa828ffa259183ec4109",
+      "main_sha": "c4e116c4bd1799dc5532e020c2e8ccc1b7b50223",
+      "production_sha": "cb843ccf4545cb40195614f3087cb4efd75cdfa8",
+      "source": "Owner-relayed Codex read-only root-cause diagnosis; GitHub repair authored by ChatGPT",
+      "note": "Confirmed active cb843 .venv is a real directory but retained editable Hermes Core metadata from e9c942: pyvenv.cfg command references e9c942, __editable__ finder maps Core packages to e9c942 and lib/lib64 direct_url.json declares editable source e9c942. Service PYTHONPATH makes live Gateway imports resolve cb843, masking the standalone venv defect. No symlink chain caused it. The prior full-candidate server assembly reused/copied the old venv rather than creating a clean Git-governed candidate. Exact rollback coverage is also incomplete for config.yaml, active Gateway EnvironmentFiles and unit. PR #32 adds clean candidate-local Core/venv assembly, stale metadata detection and protected exact rollback snapshots. Production unchanged; isolated verification required before merge."
     }
   ]
 }

@@ -4,9 +4,9 @@
 
 - work_item_id: `WI-2026-09-stage3-direct-message-outbound-v2`
 - kind: `capability_stage`
-- status: `stage3_predeploy_blocked_runtime_binding`
+- status: `stage3_runtime_repair_candidate_isolated_verification`
 - context_profile: `capability_design`
-- formal_stage_context: Stage 3 Direct Message / Outbound / runtime_binding_diagnosis
+- formal_stage_context: Stage 3 Direct Message / Outbound / runtime_repair_candidate_verification
 
 ## Objective
 
@@ -14,11 +14,11 @@ Freeze and then implement XiaoU's first formal direct outbound capability so an 
 
 ## Current blocker
 
-Production preflight found an existing release self-containment defect: active cb843 resolves hermes_cli from sibling e9c942. This is a runtime/deployment blocker, not a Stage 3 capability failure. A standalone exact config rollback copy is also absent.
+Root cause is confirmed outside Stage 3 business logic: cb843 inherited stale editable Hermes Core metadata pointing at e9c942, and current production lacks one exact protected rollback snapshot for all Gateway config inputs + unit. PR #32 is the Git-governed repair candidate.
 
 ## Next action
 
-Run a bounded read-only root-cause diagnosis of the active cb843 Core/venv binding (pyvenv.cfg, console shebang, sys.path/.pth, installed distribution metadata and symlink/origin chain) and identify the smallest Git-governed repair plus exact config-backup gate. Do not deploy Stage 3 or change production.
+Verify PR #32 candidate 300a9b8b87f363e43c66fa828ffa259183ec4109 in isolation on the server. Prove a newly assembled full candidate has no sibling-release Core/metadata path, the current cb843 defect is detected, protected exact config/unit snapshot semantics pass, and production remains unchanged. Do not merge or deploy.
 
 ## Acceptance criteria
 
