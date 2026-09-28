@@ -4,7 +4,7 @@
 
 - work_item_id: `WI-2026-09-response-latency-ux-architecture`
 - kind: `runtime_experience_architecture`
-- status: `latency_v1_owner_authorized_acceptance_deployment`
+- status: `latency_v1_owner_acceptance_window_active`
 - context_profile: `capability_design`
 - formal_stage_context: Stage 3 Direct Message / Outbound / paused_before_implementation
 
@@ -18,7 +18,7 @@ Current production has latency telemetry but no current baseline decomposition b
 
 ## Next action
 
-Perform one bounded reversible acceptance deployment of cb843ccf4545cb40195614f3087cb4efd75cdfa8 using the existing Holding Bridge/cutover safeguards. Preserve the current stable release e9c942454bf0325a90a9df55485ae52b5247ce4e for immediate rollback. After technical PASS, stop changing the system and wait for Owner real WeCom acceptance.
+Hold the system unchanged while Owner tests real WeCom behavior. Acceptance must cover perceived speed, simple turn quality, direct read, multi-read, long-session continuity, >8s progress receipt behavior, authority/Unknown correctness and no business-brain regression. On any Owner rejection, perform immediate rollback to the preserved stable release/config.
 
 ## Acceptance criteria
 

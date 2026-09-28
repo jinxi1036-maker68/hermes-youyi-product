@@ -12,15 +12,15 @@
 
 - ID: `WI-2026-09-response-latency-ux-architecture`
 - Kind: `runtime_experience_architecture`
-- Status: `latency_v1_owner_authorized_acceptance_deployment`
+- Status: `latency_v1_owner_acceptance_window_active`
 - Objective: Redesign XiaoU for low true latency and low perceived latency: simple turns should finish quickly; long work should acknowledge quickly, continue safely in the background, and deliver a truthful final result later.
 - Blocker: Current production has latency telemetry but no current baseline decomposition by turn class, and the user-visible response policy does not separate first-visible response from final task completion.
-- Next: Perform one bounded reversible acceptance deployment of cb843ccf4545cb40195614f3087cb4efd75cdfa8 using the existing Holding Bridge/cutover safeguards. Preserve the current stable release e9c942454bf0325a90a9df55485ae52b5247ce4e for immediate rollback. After technical PASS, stop changing the system and wait for Owner real WeCom acceptance.
+- Next: Hold the system unchanged while Owner tests real WeCom behavior. Acceptance must cover perceived speed, simple turn quality, direct read, multi-read, long-session continuity, >8s progress receipt behavior, authority/Unknown correctness and no business-brain regression. On any Owner rejection, perform immediate rollback to the preserved stable release/config.
 
 ## Runtime facts
 
 - main: `cb843ccf4545cb40195614f3087cb4efd75cdfa8`
-- production: `e9c942454bf0325a90a9df55485ae52b5247ce4e`
+- production: `cb843ccf4545cb40195614f3087cb4efd75cdfa8`
 
 ## Sealed capabilities
 

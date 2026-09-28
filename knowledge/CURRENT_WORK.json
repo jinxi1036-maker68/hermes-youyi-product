@@ -2,7 +2,7 @@
   "schema_version": "xiaoyou_current_work_v1",
   "work_item_id": "WI-2026-09-response-latency-ux-architecture",
   "kind": "runtime_experience_architecture",
-  "status": "latency_v1_owner_authorized_acceptance_deployment",
+  "status": "latency_v1_owner_acceptance_window_active",
   "formal_stage_context": {
     "id": 3,
     "name": "Direct Message / Outbound",
@@ -11,7 +11,7 @@
   "objective": "Redesign XiaoU for low true latency and low perceived latency: simple turns should finish quickly; long work should acknowledge quickly, continue safely in the background, and deliver a truthful final result later.",
   "problem_statement": "Users experience XiaoU as very slow. The cause may span model generation, long sessions, multi-model/tool loops, serial tool execution, context construction, delivery behavior and UX that stays silent until final completion.",
   "blocker": "Current production has latency telemetry but no current baseline decomposition by turn class, and the user-visible response policy does not separate first-visible response from final task completion.",
-  "next_action": "Perform one bounded reversible acceptance deployment of cb843ccf4545cb40195614f3087cb4efd75cdfa8 using the existing Holding Bridge/cutover safeguards. Preserve the current stable release e9c942454bf0325a90a9df55485ae52b5247ce4e for immediate rollback. After technical PASS, stop changing the system and wait for Owner real WeCom acceptance.",
+  "next_action": "Hold the system unchanged while Owner tests real WeCom behavior. Acceptance must cover perceived speed, simple turn quality, direct read, multi-read, long-session continuity, >8s progress receipt behavior, authority/Unknown correctness and no business-brain regression. On any Owner rejection, perform immediate rollback to the preserved stable release/config.",
   "acceptance_criteria": [
     "Separate TTFV (time to first visible value) from TTC (time to complete).",
     "Identify which latency components are evidenced in XiaoU today and which still require production measurement.",
@@ -58,7 +58,8 @@
     "EV-LAT-004",
     "EV-LAT-005",
     "EV-LAT-006",
-    "EV-LAT-007"
+    "EV-LAT-007",
+    "EV-LAT-008"
   ],
   "opened_at": "2026-09-27",
   "owner_approved": true,
@@ -203,5 +204,14 @@
     "candidate_sha": "cb843ccf4545cb40195614f3087cb4efd75cdfa8",
     "rollback_baseline_sha": "e9c942454bf0325a90a9df55485ae52b5247ce4e",
     "final_production_acceptance": false
+  },
+  "owner_acceptance_window": {
+    "status": "ACTIVE_NOT_FINAL_ACCEPTANCE",
+    "candidate_sha": "cb843ccf4545cb40195614f3087cb4efd75cdfa8",
+    "rollback_baseline_sha": "e9c942454bf0325a90a9df55485ae52b5247ce4e",
+    "bridge_pending": 0,
+    "rollback_ready": true,
+    "final_production_acceptance": false,
+    "started_at": "2026-09-28T08:33:00+08:00"
   }
 }

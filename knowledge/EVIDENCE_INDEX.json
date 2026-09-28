@@ -1,6 +1,6 @@
 {
   "schema_version": "xiaoyou_evidence_index_v1",
-  "updated_at": "2026-09-27T23:40:00+08:00",
+  "updated_at": "2026-09-28T08:33:00+08:00",
   "repository": "jinxi1036-maker68/hermes-youyi-product",
   "evidence": [
     {
@@ -395,6 +395,17 @@
         "slow_turn_progress_receipts": 1
       },
       "note": "Read bundle, Hermes-native semantic compaction, truthful slow-turn visible progress and optional-schema retry removal all passed together. Answer quality, Tool selection, authority and Unknown behavior remained at parity. Write boundary and rollback passed. No real Provider request was used in this integrated certification; earlier EV-LAT-004 separately proved Agnes 3.0 production-route context-compaction performance. Production unchanged. Final gate is Owner real WeCom acceptance before promotion."
+    },
+    {
+      "id": "EV-LAT-008",
+      "area": "Latency V1 reversible Owner acceptance deployment",
+      "judgment": "PASS_OWNER_ACCEPTANCE_WINDOW_READY",
+      "date": "2026-09-28",
+      "candidate_sha": "cb843ccf4545cb40195614f3087cb4efd75cdfa8",
+      "previous_production_sha": "e9c942454bf0325a90a9df55485ae52b5247ce4e",
+      "current_production_sha": "cb843ccf4545cb40195614f3087cb4efd75cdfa8",
+      "source": "Owner-relayed Codex production deployment verification",
+      "note": "Pre-deploy gate, release stage, candidate preflight, Holding Bridge HOLD/cutover/resume, Gateway start, ports 8866/19092, Plugin Doctor, runtime topology, persistent Home and public callback all passed. Approved context-compaction fields applied with exact original config backup retained. Bridge pending returned to 0. Shared hermes_hub unchanged. Stable release and original config retained for immediate rollback. This is a reversible Owner acceptance window, not final production acceptance."
     }
   ]
 }
