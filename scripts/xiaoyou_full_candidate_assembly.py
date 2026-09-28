@@ -132,6 +132,8 @@ def plan_full_candidate(
         errors.append("candidate_root_must_not_exist")
     if not python.is_file():
         errors.append("base_python_missing")
+    if not home.is_dir():
+        errors.append("runtime_home_missing")
     if _inside(target, core) or _inside(core, target):
         errors.append("candidate_and_core_source_overlap")
     if _inside(home, target) or _inside(target, home):
