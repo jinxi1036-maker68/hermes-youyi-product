@@ -125,3 +125,109 @@ def test_release_self_containment_rejects_console_or_python_outside_candidate(tm
     assert result["ok"] is False
     assert "python_outside_candidate_release" in result["errors"]
     assert "console_outside_candidate_release" in result["errors"]
+
+
+def _local_payload(python, site):
+    return {
+        "sys_executable": str(python),
+        "sys_path": [str(site), "/usr/lib/python3.11"],
+        "modules": {
+            "hermes_cli": {"found": True, "origin": str(site / "hermes_cli/__init__.py"), "locations": []},
+            "plugins.tuoguan_core": {"found": True, "origin": str(site / "plugins/tuoguan_core/__init__.py"), "locations": []},
+            "plugins.agenda_service_work": {"found": True, "origin": str(site / "plugins/agenda_service_work/__init__.py"), "locations": []},
+            "plugins.platforms.http_policy": {"found": True, "origin": str(site / "plugins/platforms/http_policy.py"), "locations": []},
+            "plugins.platforms.wecom": {"found": True, "origin": str(site / "plugins/platforms/wecom/__init__.py"), "locations": []},
+            "plugins.reply_recovery": {"found": True, "origin": str(site / "plugins/reply_recovery/__init__.py"), "locations": []},
+            "plugins.robot_poc": {"found": True, "origin": str(site / "plugins/robot_poc/__init__.py"), "locations": []},
+        },
+    }
+
+
+def test_release_self_containment_rejects_stale_direct_url_even_when_imports_are_local(tmp_path, monkeypatch):
+    from scripts import xiaoyou_release_self_contained_gate as gate
+
+    release, home, python, console, site = _fixture(tmp_path)
+    old = release.parent / "hermes-youyi-old-release" / "hermes-agent"
+    old.mkdir(parents=True)
+    metadata = site / "hermes_agent-0.21.0.dist-info/direct_url.json"
+    metadata.parent.mkdir(parents=True)
+    metadata.write_text(
+        json.dumps({"url": old.as_uri(), "dir_info": {"editable": True}}),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(gate, "_identity", lambda *_args: (os.geteuid(), os.getegid()))
+    payload = _local_payload(python, site)
+
+    result = gate.inspect_release_self_containment(
+        release_root=release,
+        runtime_home=home,
+        python_executable=python,
+        console_executable=console,
+        service_user="svc",
+        service_group="svc",
+        runner=lambda *_args, **_kwargs: SimpleNamespace(returncode=0, stdout=json.dumps(payload), stderr=""),
+    )
+
+    assert result["ok"] is False
+    assert result["sibling_release_sys_path_leaks"] == []
+    assert any(
+        row["kind"] == "direct_url" and row["target_path"] == str(old.resolve())
+        for row in result["install_metadata_path_leaks"]
+    )
+
+
+def test_release_self_containment_rejects_stale_editable_finder_mapping(tmp_path, monkeypatch):
+    from scripts import xiaoyou_release_self_contained_gate as gate
+
+    release, home, python, console, site = _fixture(tmp_path)
+    old = release.parent / "hermes-youyi-old-release" / "hermes-agent"
+    old.mkdir(parents=True)
+    finder = site / "__editable___hermes_agent_0_21_0_finder.py"
+    finder.write_text(
+        "MAPPING = {'hermes_cli': " + repr(str(old / "hermes_cli")) + "}\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(gate, "_identity", lambda *_args: (os.geteuid(), os.getegid()))
+    payload = _local_payload(python, site)
+
+    result = gate.inspect_release_self_containment(
+        release_root=release,
+        runtime_home=home,
+        python_executable=python,
+        console_executable=console,
+        service_user="svc",
+        service_group="svc",
+        runner=lambda *_args, **_kwargs: SimpleNamespace(returncode=0, stdout=json.dumps(payload), stderr=""),
+    )
+
+    assert result["ok"] is False
+    assert any(row["kind"] == "editable_finder" for row in result["install_metadata_path_leaks"])
+
+
+def test_release_self_containment_allows_candidate_local_direct_url(tmp_path, monkeypatch):
+    from scripts import xiaoyou_release_self_contained_gate as gate
+
+    release, home, python, console, site = _fixture(tmp_path)
+    local_source = release / "hermes-agent"
+    local_source.mkdir()
+    metadata = site / "hermes_agent-0.21.0.dist-info/direct_url.json"
+    metadata.parent.mkdir(parents=True)
+    metadata.write_text(
+        json.dumps({"url": local_source.as_uri(), "dir_info": {"editable": False}}),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(gate, "_identity", lambda *_args: (os.geteuid(), os.getegid()))
+    payload = _local_payload(python, site)
+
+    result = gate.inspect_release_self_containment(
+        release_root=release,
+        runtime_home=home,
+        python_executable=python,
+        console_executable=console,
+        service_user="svc",
+        service_group="svc",
+        runner=lambda *_args, **_kwargs: SimpleNamespace(returncode=0, stdout=json.dumps(payload), stderr=""),
+    )
+
+    assert result["ok"] is True
+    assert result["install_metadata_path_leaks"] == []
