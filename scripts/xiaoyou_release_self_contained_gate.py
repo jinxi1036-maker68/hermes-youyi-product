@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import ast
 import json
 import os
 from pathlib import Path
@@ -11,6 +12,7 @@ import pwd
 import grp
 import subprocess
 from typing import Any, Callable
+from urllib.parse import unquote, urlparse
 
 
 DEFAULT_SERVICE_USER = "hermes-youyi"
@@ -44,6 +46,106 @@ def _preexec(user_name: str, uid: int, gid: int) -> Callable[[], None]:
         os.setgid(gid)
         os.setuid(uid)
     return drop_privileges
+
+
+def _site_packages_roots(root: Path) -> list[Path]:
+    rows: list[Path] = []
+    for lib_name in ("lib", "lib64"):
+        lib = root / ".venv" / lib_name
+        if not lib.is_dir():
+            continue
+        rows.extend(
+            path.resolve()
+            for path in sorted(lib.glob("python*/site-packages"))
+            if path.is_dir()
+        )
+    return rows
+
+
+def _metadata_path_leaks(root: Path) -> list[dict[str, str]]:
+    """Detect stale absolute paths that can resurrect a sibling release.
+
+    This deliberately inspects metadata independently of import resolution so a
+    service PYTHONPATH cannot hide stale editable/PTH/direct_url bindings.
+    """
+
+    leaks: list[dict[str, str]] = []
+    seen: set[tuple[str, str, str]] = set()
+
+    def add(kind: str, metadata: Path, target: str) -> None:
+        candidate = Path(target)
+        if not candidate.is_absolute() or _inside(candidate, root):
+            return
+        key = (kind, str(metadata.resolve()), str(candidate.resolve()))
+        if key in seen:
+            return
+        seen.add(key)
+        leaks.append({
+            "kind": kind,
+            "metadata_path": str(metadata.resolve()),
+            "target_path": str(candidate.resolve()),
+        })
+
+    for site in _site_packages_roots(root):
+        for metadata in sorted(site.rglob("direct_url.json")):
+            try:
+                payload = json.loads(metadata.read_text(encoding="utf-8"))
+                raw_url = str(payload.get("url") or "")
+                parsed = urlparse(raw_url)
+                if parsed.scheme == "file":
+                    add("direct_url", metadata, unquote(parsed.path))
+            except (OSError, json.JSONDecodeError):
+                leaks.append({
+                    "kind": "direct_url_invalid",
+                    "metadata_path": str(metadata.resolve()),
+                    "target_path": "",
+                })
+
+        for metadata in sorted(site.rglob("*.pth")):
+            try:
+                for raw in metadata.read_text(encoding="utf-8").splitlines():
+                    value = raw.strip()
+                    if not value or value.startswith("#") or value.startswith("import "):
+                        continue
+                    add("pth", metadata, value)
+            except (OSError, UnicodeDecodeError):
+                leaks.append({
+                    "kind": "pth_invalid",
+                    "metadata_path": str(metadata.resolve()),
+                    "target_path": "",
+                })
+
+        for metadata in sorted(site.rglob("*.egg-link")):
+            try:
+                values = [
+                    line.strip()
+                    for line in metadata.read_text(encoding="utf-8").splitlines()
+                    if line.strip()
+                ]
+                if values:
+                    add("egg_link", metadata, values[0])
+            except (OSError, UnicodeDecodeError):
+                leaks.append({
+                    "kind": "egg_link_invalid",
+                    "metadata_path": str(metadata.resolve()),
+                    "target_path": "",
+                })
+
+        for metadata in sorted(site.rglob("__editable__*_finder.py")):
+            try:
+                tree = ast.parse(metadata.read_text(encoding="utf-8"), filename=str(metadata))
+                for node in ast.walk(tree):
+                    if isinstance(node, ast.Constant) and isinstance(node.value, str):
+                        if Path(node.value).is_absolute():
+                            add("editable_finder", metadata, node.value)
+            except (OSError, UnicodeDecodeError, SyntaxError):
+                leaks.append({
+                    "kind": "editable_finder_invalid",
+                    "metadata_path": str(metadata.resolve()),
+                    "target_path": "",
+                })
+
+    return leaks
 
 
 def _probe_code(module_names: list[str]) -> str:
@@ -94,6 +196,8 @@ def inspect_release_self_containment(
     if errors:
         return {"ok": False, "error": "release_self_containment_failed", "errors": errors}
 
+    metadata_leaks = _metadata_path_leaks(root)
+
     names = list(module_names or DEFAULT_MODULES)
     uid, gid = _identity(service_user, service_group)
     current_uid = os.geteuid()
@@ -103,6 +207,7 @@ def inspect_release_self_containment(
             "error": "executor_cannot_assume_service_identity",
             "current_uid": current_uid,
             "required_uid": uid,
+            "install_metadata_path_leaks": metadata_leaks,
         }
 
     env = os.environ.copy()
@@ -128,12 +233,17 @@ def inspect_release_self_containment(
             "error": "module_origin_probe_failed",
             "returncode": completed.returncode,
             "stderr_tail": str(completed.stderr or "")[-2000:],
+            "install_metadata_path_leaks": metadata_leaks,
         }
 
     try:
         probe = json.loads(completed.stdout)
     except json.JSONDecodeError:
-        return {"ok": False, "error": "module_origin_probe_invalid_json"}
+        return {
+            "ok": False,
+            "error": "module_origin_probe_invalid_json",
+            "install_metadata_path_leaks": metadata_leaks,
+        }
 
     origins: dict[str, dict[str, Any]] = {}
     module_ok = True
@@ -175,7 +285,12 @@ def inspect_release_self_containment(
         if any(resolved == sibling or _inside(resolved, sibling) for sibling in sibling_release_roots):
             sibling_release_leaks.append(str(resolved))
 
-    ok = module_ok and executable_ok and not sibling_release_leaks
+    ok = (
+        module_ok
+        and executable_ok
+        and not sibling_release_leaks
+        and not metadata_leaks
+    )
     return {
         "ok": ok,
         "error": "" if ok else "release_self_containment_failed",
@@ -187,6 +302,7 @@ def inspect_release_self_containment(
         "sys_executable_inside_candidate": executable_ok,
         "module_origins": origins,
         "sibling_release_sys_path_leaks": sibling_release_leaks,
+        "install_metadata_path_leaks": metadata_leaks,
         "runtime_model": "self_contained_release_with_external_home",
         "secret_content_inspected": False,
     }
