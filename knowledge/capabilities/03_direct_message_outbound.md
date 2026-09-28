@@ -1,6 +1,6 @@
 # Stage 3｜Direct Message / Outbound
 
-- Status: **DRAFT — pending Owner scope freeze**
+- Status: **FROZEN — Owner approved first slice**
 - Stage: 3
 - Work item: `WI-2026-09-stage3-direct-message-outbound-v2`
 
@@ -87,10 +87,10 @@ Runtime 不得根据关键词替模型决定“给谁发、为什么发、发什
 9. 真实企业微信验收至少完成一次成功发送和一次阻断场景。
 10. 不引入 Stage 8/9/10 的任务、追问或自主 Agenda 语义。
 
-## Owner 待冻结的第一个范围问题
+## Owner 冻结范围
 
-Stage 3 第一刀是否确定为：
+2026-09-28 Owner 已确认：
 
 > **只做“老板/有权限人员明确下令，小U给机构内部某一个老师/店长发一条工作消息”；先不碰家长、群发和AI自主外发。**
 
-Owner 确认后，本档案从 DRAFT 转为 FROZEN，再进入实现。
+此范围已冻结，后续实现不得扩大到家长、群发、任务催办或 Agenda 自主外发。

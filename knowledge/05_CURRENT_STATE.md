@@ -12,10 +12,10 @@
 
 - ID: `WI-2026-09-stage3-direct-message-outbound-v2`
 - Kind: `capability_stage`
-- Status: `stage3_contract_design`
+- Status: `stage3_implementation_ready`
 - Objective: Freeze and then implement XiaoU's first formal direct outbound capability so an authorized human can ask XiaoU to send a specific work message to a legitimate recipient, with trustworthy recipient resolution, permission checks, execution evidence and truthful delivery semantics.
-- Blocker: Stage 3 capability boundary is not yet Owner-frozen. The initial draft deliberately does not assume parent messaging, bulk/group messaging, or autonomous Agenda outreach.
-- Next: Confirm the Stage 3 first-scope boundary with the Owner. Proposed first slice: explicit human-commanded 1:1 outbound to current authorized internal staff only; no parent/external recipient, no bulk/group send, and no autonomous initiation in Stage 3.
+- Blocker: No product-scope blocker. Owner froze the first slice: explicit human-commanded 1:1 outbound to a current authorized internal staff member only.
+- Next: Inspect current outbound/direct-reply/personnel primitives, then implement the smallest formal Direct Message Tool using existing trusted infrastructure. Do not add parent/external recipients, bulk send, task follow-up or autonomous Agenda behavior.
 
 ## Runtime facts
 

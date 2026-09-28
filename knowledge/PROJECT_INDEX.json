@@ -33,9 +33,9 @@
     "main_last_verified_at": "2026-09-27T23:30:00+08:00",
     "active_work_item_id": "WI-2026-09-stage3-direct-message-outbound-v2",
     "blocker_id": "stage3-capability-contract",
-    "blocker_status": "stage3_contract_design",
-    "blocker_summary": "Latency V1 has Owner real-WeCom acceptance and remains the production baseline. Stage 3 has resumed; its capability proposition and acceptance contract must be frozen before product implementation.",
-    "next_action": "Freeze Stage 3 Direct Message / Outbound scope with the Owner, then implement only the agreed direct outbound capability without pulling in Tasks, Agenda autonomy, student writes or broader people-management stages.",
+    "blocker_status": "stage3_implementation_ready",
+    "blocker_summary": "Owner froze the Stage 3 first slice: explicit human-commanded 1:1 outbound to current authorized internal staff only. Parent/external messaging, bulk/group send and AI-autonomous initiation are out of scope.",
+    "next_action": "Inspect existing outbound primitives and implement the smallest Stage 3 direct-message capability that reuses trusted recipient resolution, permission, delivery evidence and idempotent execution without importing later Tasks/Agenda semantics.",
     "working_method_id": "WM-007",
     "working_method_name": "Harness-Routed Role-Locked Governed Adaptive Method",
     "bootstrap_holding_contract": "ADR-009: transparent-forward / persist-before-ACK / idempotent-replay-complete-after-confirmed-success"

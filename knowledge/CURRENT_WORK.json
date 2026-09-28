@@ -2,7 +2,7 @@
   "schema_version": "xiaoyou_current_work_v1",
   "work_item_id": "WI-2026-09-stage3-direct-message-outbound-v2",
   "kind": "capability_stage",
-  "status": "stage3_contract_design",
+  "status": "stage3_implementation_ready",
   "formal_stage_context": {
     "id": 3,
     "name": "Direct Message / Outbound",
@@ -10,8 +10,8 @@
   },
   "objective": "Freeze and then implement XiaoU's first formal direct outbound capability so an authorized human can ask XiaoU to send a specific work message to a legitimate recipient, with trustworthy recipient resolution, permission checks, execution evidence and truthful delivery semantics.",
   "problem_statement": "XiaoU can identify users and query business truth, but the formal product roadmap has not yet sealed the capability for sending a work message to another person. Sending is an external side effect, so recipient identity, authority, message ownership, delivery truth, idempotency and failure semantics must be fixed before implementation.",
-  "blocker": "Stage 3 capability boundary is not yet Owner-frozen. The initial draft deliberately does not assume parent messaging, bulk/group messaging, or autonomous Agenda outreach.",
-  "next_action": "Confirm the Stage 3 first-scope boundary with the Owner. Proposed first slice: explicit human-commanded 1:1 outbound to current authorized internal staff only; no parent/external recipient, no bulk/group send, and no autonomous initiation in Stage 3.",
+  "blocker": "No product-scope blocker. Owner froze the first slice: explicit human-commanded 1:1 outbound to a current authorized internal staff member only.",
+  "next_action": "Inspect current outbound/direct-reply/personnel primitives, then implement the smallest formal Direct Message Tool using existing trusted infrastructure. Do not add parent/external recipients, bulk send, task follow-up or autonomous Agenda behavior.",
   "acceptance_criteria": [
     "Model remains the only business brain: it understands the human request and chooses whether to use the outbound capability; runtime does not keyword-route business intent.",
     "Human explicit command and future AI-autonomous outreach remain distinct authorization semantics; Stage 3 does not silently import Agenda autonomy.",
@@ -54,5 +54,19 @@
   ],
   "opened_at": "2026-09-28",
   "owner_approved_resume": true,
-  "capability_contract_status": "draft_pending_owner_scope_freeze"
+  "capability_contract_status": "FROZEN_OWNER_APPROVED",
+  "owner_scope_freeze": {
+    "approved": true,
+    "approved_at": "2026-09-28T09:55:00+08:00",
+    "first_slice": "explicit human-commanded 1:1 outbound to current authorized internal staff",
+    "excluded": [
+      "parent_or_external_customer_messaging",
+      "bulk_or_group_send",
+      "AI_autonomous_outbound",
+      "Agenda_followup",
+      "task_chasing",
+      "student_writes",
+      "people_org_mutations"
+    ]
+  }
 }
