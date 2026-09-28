@@ -4,9 +4,9 @@
 
 - work_item_id: `WI-2026-09-stage3-direct-message-outbound-v2`
 - kind: `capability_stage`
-- status: `stage3_merged_awaiting_production_preflight`
+- status: `stage3_predeploy_blocked_runtime_binding`
 - context_profile: `capability_design`
-- formal_stage_context: Stage 3 Direct Message / Outbound / production_preflight
+- formal_stage_context: Stage 3 Direct Message / Outbound / runtime_binding_diagnosis
 
 ## Objective
 
@@ -14,11 +14,11 @@ Freeze and then implement XiaoU's first formal direct outbound capability so an 
 
 ## Current blocker
 
-No product-scope blocker. Owner froze the first slice: explicit human-commanded 1:1 outbound to a current authorized internal staff member only.
+Production preflight found an existing release self-containment defect: active cb843 resolves hermes_cli from sibling e9c942. This is a runtime/deployment blocker, not a Stage 3 capability failure. A standalone exact config rollback copy is also absent.
 
 ## Next action
 
-Run a fresh read-only production preflight against main c4e116c4bd1799dc5532e020c2e8ccc1b7b50223 and current production cb843ccf4545cb40195614f3087cb4efd75cdfa8. If PASS, obtain Owner production authorization for a reversible Stage 3 deployment/technical gate. Do not perform a real WeCom send yet.
+Run a bounded read-only root-cause diagnosis of the active cb843 Core/venv binding (pyvenv.cfg, console shebang, sys.path/.pth, installed distribution metadata and symlink/origin chain) and identify the smallest Git-governed repair plus exact config-backup gate. Do not deploy Stage 3 or change production.
 
 ## Acceptance criteria
 

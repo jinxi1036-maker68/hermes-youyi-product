@@ -1,6 +1,6 @@
 {
   "schema_version": "xiaoyou_evidence_index_v1",
-  "updated_at": "2026-09-28T11:08:00+08:00",
+  "updated_at": "2026-09-28T12:32:00+08:00",
   "repository": "jinxi1036-maker68/hermes-youyi-product",
   "evidence": [
     {
@@ -438,6 +438,16 @@
         "common_baseline": "61 passed, 6 same baseline failures"
       },
       "note": "Isolated detached worktrees, temporary venv, synthetic SQLite/state and fake delivery only. Durable idempotency/restart, fail-closed sender/recipient/tenant/lifecycle/binding checks, manager scope, teacher denial, Agenda/autonomy separation and truthful queued/wecom_accepted semantics PASS. No candidate-only regression. Six common-suite failures plus two release-doctor hermes_cli import failures are identical baseline debt caused by existing assertions / deliberately minimal isolated venv. Production unchanged. PR #31 merged only after isolated PASS."
+    },
+    {
+      "id": "EV-DM-002",
+      "area": "Stage 3 production pre-deploy gate",
+      "judgment": "BLOCKED_RUNTIME_BINDING",
+      "date": "2026-09-28",
+      "main_sha": "c4e116c4bd1799dc5532e020c2e8ccc1b7b50223",
+      "production_sha": "cb843ccf4545cb40195614f3087cb4efd75cdfa8",
+      "source": "Owner-relayed Codex read-only production preflight",
+      "note": "Gateway, Holding Bridge, public callback path, Runtime Topology and Persistent Home are healthy; Bridge FORWARD pending=0; production unchanged. Release Self-contained Gate fails because active cb843 Python resolves hermes_cli from sibling e9c942. Exact-main package build/no-apply stage plan passes, but real candidate runtime compatibility was intentionally not started. No standalone exact config rollback copy was found. Stage 3 capability remains isolated-PASS; deployment is blocked pending runtime binding diagnosis/repair and rollback-copy gate."
     }
   ]
 }
