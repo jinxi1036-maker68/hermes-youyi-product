@@ -7,7 +7,7 @@
 |---|---|---|
 | 1 | Identity + Session | `capabilities/01_identity_session.md` |
 | 2 | Query | `capabilities/02_query.md` |
-| 3 | Direct Message / Outbound | 待进入阶段时建立 |
+| 3 | Direct Message / Outbound | `capabilities/03_direct_message_outbound.md` |
 | 4 | Student Basic Writes | 待进入阶段时建立 |
 | 5 | Student Archive/Delete Semantics | 待进入阶段时建立 |
 | 6 | People & Organization | 待进入阶段时建立 |

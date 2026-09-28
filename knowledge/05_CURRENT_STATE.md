@@ -5,17 +5,17 @@
 ## Formal Stage
 
 - Stage: 3 — Direct Message / Outbound
-- Status: `ready_to_start`
+- Status: `in_progress`
 - Sealed: `false`
 
 ## Current Work
 
-- ID: `WI-2026-09-response-latency-ux-architecture`
-- Kind: `runtime_experience_architecture`
-- Status: `latency_v1_owner_acceptance_window_active`
-- Objective: Redesign XiaoU for low true latency and low perceived latency: simple turns should finish quickly; long work should acknowledge quickly, continue safely in the background, and deliver a truthful final result later.
-- Blocker: Current production has latency telemetry but no current baseline decomposition by turn class, and the user-visible response policy does not separate first-visible response from final task completion.
-- Next: Hold the system unchanged while Owner tests real WeCom behavior. Acceptance must cover perceived speed, simple turn quality, direct read, multi-read, long-session continuity, >8s progress receipt behavior, authority/Unknown correctness and no business-brain regression. On any Owner rejection, perform immediate rollback to the preserved stable release/config.
+- ID: `WI-2026-09-stage3-direct-message-outbound-v2`
+- Kind: `capability_stage`
+- Status: `stage3_contract_design`
+- Objective: Freeze and then implement XiaoU's first formal direct outbound capability so an authorized human can ask XiaoU to send a specific work message to a legitimate recipient, with trustworthy recipient resolution, permission checks, execution evidence and truthful delivery semantics.
+- Blocker: Stage 3 capability boundary is not yet Owner-frozen. The initial draft deliberately does not assume parent messaging, bulk/group messaging, or autonomous Agenda outreach.
+- Next: Confirm the Stage 3 first-scope boundary with the Owner. Proposed first slice: explicit human-commanded 1:1 outbound to current authorized internal staff only; no parent/external recipient, no bulk/group send, and no autonomous initiation in Stage 3.
 
 ## Runtime facts
 
@@ -31,4 +31,4 @@
 
 - Harness: `KH-003`
 - Profile: `capability_design`
-- Work execution state: `paused_before_implementation`
+- Work execution state: `contract_freeze`

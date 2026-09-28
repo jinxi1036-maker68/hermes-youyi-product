@@ -1,217 +1,58 @@
 {
   "schema_version": "xiaoyou_current_work_v1",
-  "work_item_id": "WI-2026-09-response-latency-ux-architecture",
-  "kind": "runtime_experience_architecture",
-  "status": "latency_v1_owner_acceptance_window_active",
+  "work_item_id": "WI-2026-09-stage3-direct-message-outbound-v2",
+  "kind": "capability_stage",
+  "status": "stage3_contract_design",
   "formal_stage_context": {
     "id": 3,
     "name": "Direct Message / Outbound",
-    "execution_state": "paused_before_implementation"
+    "execution_state": "contract_freeze"
   },
-  "objective": "Redesign XiaoU for low true latency and low perceived latency: simple turns should finish quickly; long work should acknowledge quickly, continue safely in the background, and deliver a truthful final result later.",
-  "problem_statement": "Users experience XiaoU as very slow. The cause may span model generation, long sessions, multi-model/tool loops, serial tool execution, context construction, delivery behavior and UX that stays silent until final completion.",
-  "blocker": "Current production has latency telemetry but no current baseline decomposition by turn class, and the user-visible response policy does not separate first-visible response from final task completion.",
-  "next_action": "Hold the system unchanged while Owner tests real WeCom behavior. Acceptance must cover perceived speed, simple turn quality, direct read, multi-read, long-session continuity, >8s progress receipt behavior, authority/Unknown correctness and no business-brain regression. On any Owner rejection, perform immediate rollback to the preserved stable release/config.",
+  "objective": "Freeze and then implement XiaoU's first formal direct outbound capability so an authorized human can ask XiaoU to send a specific work message to a legitimate recipient, with trustworthy recipient resolution, permission checks, execution evidence and truthful delivery semantics.",
+  "problem_statement": "XiaoU can identify users and query business truth, but the formal product roadmap has not yet sealed the capability for sending a work message to another person. Sending is an external side effect, so recipient identity, authority, message ownership, delivery truth, idempotency and failure semantics must be fixed before implementation.",
+  "blocker": "Stage 3 capability boundary is not yet Owner-frozen. The initial draft deliberately does not assume parent messaging, bulk/group messaging, or autonomous Agenda outreach.",
+  "next_action": "Confirm the Stage 3 first-scope boundary with the Owner. Proposed first slice: explicit human-commanded 1:1 outbound to current authorized internal staff only; no parent/external recipient, no bulk/group send, and no autonomous initiation in Stage 3.",
   "acceptance_criteria": [
-    "Separate TTFV (time to first visible value) from TTC (time to complete).",
-    "Identify which latency components are evidenced in XiaoU today and which still require production measurement.",
-    "Define adaptive fast/normal/work lanes without weakening authority or write confirmation boundaries.",
-    "Define a truthful early-response/background-continuation policy that avoids spam on fast turns.",
-    "Define latency observability by turn class using privacy-safe traces.",
-    "Define phased changes with measurable p50/p95 targets and rollback/evaluation criteria.",
-    "Preserve the single-business-brain invariant: the model remains responsible for business understanding, judgment, planning, action/tool selection, and user-facing business expression.",
-    "Latency optimization must reduce orchestration overhead, redundant model/tool rounds, waiting and delivery silence without lowering reasoning quality or removing evidence required for correctness.",
-    "Any concurrency layer may only schedule model-selected operations whose tool metadata proves they are independent and read-only; it must never infer business intent or choose actions for the model.",
-    "Any proposed model downgrade, reasoning-budget reduction, context reduction or deterministic business reply path requires separate evidence that result quality and authority semantics are unchanged.",
-    "All latency optimizations must be deployable behind a reversible release boundary and be testable before becoming the new production baseline.",
-    "Owner must be able to compare speed and answer quality before accepting the optimized runtime.",
-    "Rollback must restore the pre-optimization production behavior without losing business data, session truth or durable work state."
+    "Model remains the only business brain: it understands the human request and chooses whether to use the outbound capability; runtime does not keyword-route business intent.",
+    "Human explicit command and future AI-autonomous outreach remain distinct authorization semantics; Stage 3 does not silently import Agenda autonomy.",
+    "Recipient must resolve to exactly one current legitimate recipient in the same tenant; ambiguous or unknown recipients remain Unknown and require clarification.",
+    "Runtime enforces sender authority, tenant isolation, recipient eligibility, channel binding and message-send safety.",
+    "The model owns the requested business message content; runtime does not invent or rewrite the business meaning.",
+    "Outbound execution is idempotent for the authenticated turn and must not duplicate-send on retry/recovery.",
+    "Truth states remain distinct: prepared/queued/API accepted/sent/received/completed are not conflated.",
+    "Final response may say a message was sent only when delivery evidence supports the exact allowed claim.",
+    "Failure leaves a truthful, recoverable state and never reports success without evidence.",
+    "Stage 3 real acceptance uses a minimal real WeCom 1:1 send test with a known authorized internal recipient after technical gates pass."
   ],
   "stop_rules": [
-    "Do not start Stage 3 capability implementation during this latency architecture work.",
-    "Do not assume knowledge/context size is the main cause without trace evidence.",
-    "Do not make writes or risky actions asynchronous past their confirmation/authority boundary.",
-    "Do not add generic progress spam to every turn.",
-    "Do not introduce a keyword/business router, deterministic business decision tree, or rule-based replacement for model intent/action selection in the name of latency.",
-    "Do not globally reduce reasoning effort, switch to a weaker model, cap necessary tool use, or truncate required context solely to hit a latency target.",
-    "Do not bypass the model for final business expression merely because a tool returned authoritative data; transport/system receipts are the only exception.",
-    "Do not let early progress messages make business claims that the model/tool evidence has not yet established.",
-    "Do not make irreversible production data migrations solely for latency optimization.",
-    "Do not retire the current stable runtime until Owner acceptance of the optimized behavior."
+    "Do not implement parent or external-customer messaging until its authority and privacy contract is separately approved.",
+    "Do not implement group broadcast or bulk messaging in the first Stage 3 slice.",
+    "Do not implement autonomous Agenda outreach or task follow-up; those belong to later roadmap stages.",
+    "Do not mix Student Basic Writes, People & Organization, Tasks or Task Progress into Stage 3.",
+    "Do not let recipient names from natural language bypass authoritative person resolution.",
+    "Do not report API accepted as recipient-read or business-completed.",
+    "Do not create a deterministic business router or canned message decision tree."
   ],
   "context_profile": "capability_design",
   "must_read": [
-    "knowledge/08_RELEASE_AND_RUNTIME.md"
-  ],
-  "on_demand": [
-    "knowledge/EVIDENCE_INDEX.json",
-    "knowledge/12_HISTORY_AND_MILESTONES.md",
-    "knowledge/WORKING_METHOD.json",
+    "knowledge/01_PRODUCT_NORTH_STAR.md",
+    "knowledge/02_ARCHITECTURE_AND_BOUNDARIES.md",
+    "knowledge/07_AUTHORITY_DATA_AND_TRUTH.md",
+    "knowledge/decisions/ADR-002-human-command-vs-ai-autonomy.md",
     "knowledge/09_TESTING_SEALING_AND_EVIDENCE.md"
   ],
-  "evidence_refs": [
-    "EV-KH-001",
-    "EV-RT-020",
-    "EV-LAT-001",
-    "EV-LAT-002",
-    "EV-LAT-003",
-    "EV-LAT-004",
-    "EV-LAT-005",
-    "EV-LAT-006",
-    "EV-LAT-007",
-    "EV-LAT-008"
+  "on_demand": [
+    "knowledge/08_RELEASE_AND_RUNTIME.md",
+    "knowledge/EVIDENCE_INDEX.json",
+    "knowledge/12_HISTORY_AND_MILESTONES.md"
   ],
-  "opened_at": "2026-09-27",
-  "owner_approved": true,
-  "architecture_direction": "Cognition-preserving latency optimization: preserve model-led business reasoning and final expression; optimize only orchestration overhead, redundant rounds, independent read scheduling, session/context mechanics, and truthful delivery timing.",
-  "measurement_summary": {
-    "evidence_id": "EV-LAT-001",
-    "sample_size": 30,
-    "p50_total_ms": 18561,
-    "p95_total_ms": 69409,
-    "p50_context_ms": 86,
-    "p95_context_ms": 128,
-    "p50_model_ms": 13597,
-    "p95_model_ms": 56353,
-    "provider_call_p50_ms": 6878,
-    "provider_call_p95_ms": 19331,
-    "tool_exec_p50_ms": 25,
-    "tool_exec_p95_ms": 1651,
-    "findings": [
-      "Provider/model waiting dominates observed latency.",
-      "Post-tool follow-up model segments multiply wall-clock time.",
-      "Context construction and tool execution are not priority bottlenecks.",
-      "Long provider input is strongly correlated with slower turns.",
-      "Corrective retries and repeated same-tool patterns correlate with slower turns."
-    ]
-  },
-  "phase1_read_bundle": {
-    "status": "PASS_MERGED_NOT_DEPLOYED",
-    "pr": 27,
-    "candidate_sha": "532a215f408b90434c66b96d19fff6f511c7bc2b",
-    "merged_sha": "adb8b031a89f61950d71df005c176b07b9a5e3c1",
-    "production_changed": false,
-    "isolated_result": "4/4 targeted PASS; no candidate-specific regression; synthetic model segments 3 -> 2"
-  },
-  "phase2_context_compaction": {
-    "status": "PASS_MERGED_NOT_DEPLOYED",
-    "pr": 28,
-    "candidate_sha": "f9867f93675066c1a7393997f02fb7e895975e48",
-    "merged_sha": "dec626d34003f5f8ca38134db76441aad1000460",
-    "hermes_version": "0.21.0",
-    "primary_model": "agnes-3.0-flash",
-    "prompt_tokens_a": 93147,
-    "prompt_tokens_b": 15192,
-    "api_duration_p50_a_ms": 13322.65,
-    "api_duration_p50_b_ms": 2029.07,
-    "performance_gain": "84.8% lower P50; 6.57x faster; 11293.58ms saved",
-    "answer_quality_parity": "PASS 3/3",
-    "timeouts_a": 0,
-    "timeouts_b": 0,
-    "production_changed": false
-  },
-  "phase3a_visible_progress": {
-    "status": "PASS_MERGED_NOT_DEPLOYED",
-    "pr": 29,
-    "candidate_sha": "e96f6fe949a16ffd634085e5457be65a2439d0c1",
-    "merged_sha": "570d8a666f0885bcc56d01b721ed269047b080af",
-    "fast_progress_count": 0,
-    "boundary_progress_count": 0,
-    "slow_progress_count": 1,
-    "very_slow_progress_count": 1,
-    "final_reply_preserved": true,
-    "progress_after_final": false,
-    "progress_send_failure_isolated": true,
-    "production_changed": false
-  },
-  "phase3b_missing_argument_diagnosis": {
-    "cases": [
-      {
-        "tool": "tuoguan_people",
-        "missing": [
-          "operation"
-        ],
-        "classification": "model_required_no_fix"
-      },
-      {
-        "tool": "tuoguan_record_confirmed_person_assignment",
-        "missing": [
-          "reference_ids"
-        ],
-        "classification": "safe_optional_default_empty"
-      },
-      {
-        "tool": "tuoguan_activate_confirmed_pending_identity",
-        "missing": [
-          "campus_id",
-          "person_name",
-          "staff_user_id"
-        ],
-        "classification": "campus_already_optional_unique_authority_resolution; person_name_and_staff_user_id_model_required"
-      }
-    ],
-    "candidate_pr": 30,
-    "candidate_sha": "84744ad2f1a43f2f6b150abd72c5705dad8447de"
-  },
-  "phase3b_optional_schema_retry": {
-    "status": "PASS_MERGED_NOT_DEPLOYED",
-    "pr": 30,
-    "candidate_sha": "84744ad2f1a43f2f6b150abd72c5705dad8447de",
-    "merged_sha": "cb843ccf4545cb40195614f3087cb4efd75cdfa8",
-    "targeted_tests": "2/2 PASS",
-    "regression": "47 PASS / 6 same baseline failures; no candidate-specific failures",
-    "synthetic_model_segments_before": 2,
-    "synthetic_model_segments_after": 1,
-    "corrective_round_removed": true,
-    "production_changed": false
-  },
-  "latency_v1_integrated_candidate": {
-    "branch": "rc/latency-v1-owner-acceptance",
-    "sha": "cb843ccf4545cb40195614f3087cb4efd75cdfa8",
-    "production_changed": false,
-    "phases": [
-      "Phase 1 model-selected read bundle PASS",
-      "Phase 2 Hermes-native long-session compaction PASS",
-      "Phase 3A truthful slow-turn processing receipt PASS",
-      "Phase 3B optional-schema corrective retry removal PASS"
-    ],
-    "promotion_gate": "Integrated isolated/shadow certification -> Owner real WeCom speed+quality acceptance -> production promotion only after explicit Owner acceptance"
-  },
-  "latency_v1_integrated_certification": {
-    "status": "PASS_AWAITING_OWNER_ACCEPTANCE",
-    "candidate_branch": "rc/latency-v1-owner-acceptance",
-    "candidate_sha": "cb843ccf4545cb40195614f3087cb4efd75cdfa8",
-    "integrated_tests": "18/18 PASS",
-    "core_compaction_continuity": "15/15 PASS",
-    "regression": "68 passed; 6 same baseline failures; no candidate-specific failures",
-    "model_segments": "12 -> 10 synthetic",
-    "context_budget": "80K -> 24K synthetic",
-    "simple_turn": "PASS 1 segment",
-    "direct_read": "PASS 2 segments",
-    "multi_read": "PASS 3 -> 2 segments",
-    "slow_turn": "PASS 8207ms with exactly 1 progress receipt",
-    "answer_quality_parity": true,
-    "tool_selection_parity": true,
-    "authority_parity": true,
-    "unknown_parity": true,
-    "rollback": true,
-    "production_changed": false
-  },
-  "owner_acceptance_authorization": {
-    "approved": true,
-    "approved_at": "2026-09-27T23:45:00+08:00",
-    "scope": "reversible real-WeCom acceptance window only",
-    "candidate_sha": "cb843ccf4545cb40195614f3087cb4efd75cdfa8",
-    "rollback_baseline_sha": "e9c942454bf0325a90a9df55485ae52b5247ce4e",
-    "final_production_acceptance": false
-  },
-  "owner_acceptance_window": {
-    "status": "ACTIVE_NOT_FINAL_ACCEPTANCE",
-    "candidate_sha": "cb843ccf4545cb40195614f3087cb4efd75cdfa8",
-    "rollback_baseline_sha": "e9c942454bf0325a90a9df55485ae52b5247ce4e",
-    "bridge_pending": 0,
-    "rollback_ready": true,
-    "final_production_acceptance": false,
-    "started_at": "2026-09-28T08:33:00+08:00"
-  }
+  "evidence_refs": [
+    "EV-ID-001",
+    "EV-Q-004",
+    "EV-RT-020",
+    "EV-LAT-009"
+  ],
+  "opened_at": "2026-09-28",
+  "owner_approved_resume": true,
+  "capability_contract_status": "draft_pending_owner_scope_freeze"
 }

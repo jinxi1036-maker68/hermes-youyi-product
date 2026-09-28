@@ -1,6 +1,6 @@
 {
   "schema_version": "xiaoyou_evidence_index_v1",
-  "updated_at": "2026-09-28T08:33:00+08:00",
+  "updated_at": "2026-09-28T09:50:00+08:00",
   "repository": "jinxi1036-maker68/hermes-youyi-product",
   "evidence": [
     {
@@ -406,6 +406,16 @@
       "current_production_sha": "cb843ccf4545cb40195614f3087cb4efd75cdfa8",
       "source": "Owner-relayed Codex production deployment verification",
       "note": "Pre-deploy gate, release stage, candidate preflight, Holding Bridge HOLD/cutover/resume, Gateway start, ports 8866/19092, Plugin Doctor, runtime topology, persistent Home and public callback all passed. Approved context-compaction fields applied with exact original config backup retained. Bridge pending returned to 0. Shared hermes_hub unchanged. Stable release and original config retained for immediate rollback. This is a reversible Owner acceptance window, not final production acceptance."
+    },
+    {
+      "id": "EV-LAT-009",
+      "area": "Latency V1 Owner real-WeCom acceptance",
+      "judgment": "PASS_OWNER_ACCEPTED_AS_CURRENT_BASELINE",
+      "date": "2026-09-28",
+      "candidate_sha": "cb843ccf4545cb40195614f3087cb4efd75cdfa8",
+      "production_sha": "cb843ccf4545cb40195614f3087cb4efd75cdfa8",
+      "source": "Owner real-WeCom acceptance",
+      "note": "Owner reported response speed materially improved. Minor imperfections remain but were explicitly accepted for now, with follow-up deferred. Latency V1 is accepted as the current production baseline and no longer blocks Stage 3."
     }
   ]
 }

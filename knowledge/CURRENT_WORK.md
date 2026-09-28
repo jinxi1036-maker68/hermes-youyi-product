@@ -2,62 +2,59 @@
 
 > **GENERATED — DO NOT EDIT.** 机器权威：`knowledge/CURRENT_WORK.json`。
 
-- work_item_id: `WI-2026-09-response-latency-ux-architecture`
-- kind: `runtime_experience_architecture`
-- status: `latency_v1_owner_acceptance_window_active`
+- work_item_id: `WI-2026-09-stage3-direct-message-outbound-v2`
+- kind: `capability_stage`
+- status: `stage3_contract_design`
 - context_profile: `capability_design`
-- formal_stage_context: Stage 3 Direct Message / Outbound / paused_before_implementation
+- formal_stage_context: Stage 3 Direct Message / Outbound / contract_freeze
 
 ## Objective
 
-Redesign XiaoU for low true latency and low perceived latency: simple turns should finish quickly; long work should acknowledge quickly, continue safely in the background, and deliver a truthful final result later.
+Freeze and then implement XiaoU's first formal direct outbound capability so an authorized human can ask XiaoU to send a specific work message to a legitimate recipient, with trustworthy recipient resolution, permission checks, execution evidence and truthful delivery semantics.
 
 ## Current blocker
 
-Current production has latency telemetry but no current baseline decomposition by turn class, and the user-visible response policy does not separate first-visible response from final task completion.
+Stage 3 capability boundary is not yet Owner-frozen. The initial draft deliberately does not assume parent messaging, bulk/group messaging, or autonomous Agenda outreach.
 
 ## Next action
 
-Hold the system unchanged while Owner tests real WeCom behavior. Acceptance must cover perceived speed, simple turn quality, direct read, multi-read, long-session continuity, >8s progress receipt behavior, authority/Unknown correctness and no business-brain regression. On any Owner rejection, perform immediate rollback to the preserved stable release/config.
+Confirm the Stage 3 first-scope boundary with the Owner. Proposed first slice: explicit human-commanded 1:1 outbound to current authorized internal staff only; no parent/external recipient, no bulk/group send, and no autonomous initiation in Stage 3.
 
 ## Acceptance criteria
 
-- Separate TTFV (time to first visible value) from TTC (time to complete).
-- Identify which latency components are evidenced in XiaoU today and which still require production measurement.
-- Define adaptive fast/normal/work lanes without weakening authority or write confirmation boundaries.
-- Define a truthful early-response/background-continuation policy that avoids spam on fast turns.
-- Define latency observability by turn class using privacy-safe traces.
-- Define phased changes with measurable p50/p95 targets and rollback/evaluation criteria.
-- Preserve the single-business-brain invariant: the model remains responsible for business understanding, judgment, planning, action/tool selection, and user-facing business expression.
-- Latency optimization must reduce orchestration overhead, redundant model/tool rounds, waiting and delivery silence without lowering reasoning quality or removing evidence required for correctness.
-- Any concurrency layer may only schedule model-selected operations whose tool metadata proves they are independent and read-only; it must never infer business intent or choose actions for the model.
-- Any proposed model downgrade, reasoning-budget reduction, context reduction or deterministic business reply path requires separate evidence that result quality and authority semantics are unchanged.
-- All latency optimizations must be deployable behind a reversible release boundary and be testable before becoming the new production baseline.
-- Owner must be able to compare speed and answer quality before accepting the optimized runtime.
-- Rollback must restore the pre-optimization production behavior without losing business data, session truth or durable work state.
+- Model remains the only business brain: it understands the human request and chooses whether to use the outbound capability; runtime does not keyword-route business intent.
+- Human explicit command and future AI-autonomous outreach remain distinct authorization semantics; Stage 3 does not silently import Agenda autonomy.
+- Recipient must resolve to exactly one current legitimate recipient in the same tenant; ambiguous or unknown recipients remain Unknown and require clarification.
+- Runtime enforces sender authority, tenant isolation, recipient eligibility, channel binding and message-send safety.
+- The model owns the requested business message content; runtime does not invent or rewrite the business meaning.
+- Outbound execution is idempotent for the authenticated turn and must not duplicate-send on retry/recovery.
+- Truth states remain distinct: prepared/queued/API accepted/sent/received/completed are not conflated.
+- Final response may say a message was sent only when delivery evidence supports the exact allowed claim.
+- Failure leaves a truthful, recoverable state and never reports success without evidence.
+- Stage 3 real acceptance uses a minimal real WeCom 1:1 send test with a known authorized internal recipient after technical gates pass.
 
 ## Stop rules
 
-- Do not start Stage 3 capability implementation during this latency architecture work.
-- Do not assume knowledge/context size is the main cause without trace evidence.
-- Do not make writes or risky actions asynchronous past their confirmation/authority boundary.
-- Do not add generic progress spam to every turn.
-- Do not introduce a keyword/business router, deterministic business decision tree, or rule-based replacement for model intent/action selection in the name of latency.
-- Do not globally reduce reasoning effort, switch to a weaker model, cap necessary tool use, or truncate required context solely to hit a latency target.
-- Do not bypass the model for final business expression merely because a tool returned authoritative data; transport/system receipts are the only exception.
-- Do not let early progress messages make business claims that the model/tool evidence has not yet established.
-- Do not make irreversible production data migrations solely for latency optimization.
-- Do not retire the current stable runtime until Owner acceptance of the optimized behavior.
+- Do not implement parent or external-customer messaging until its authority and privacy contract is separately approved.
+- Do not implement group broadcast or bulk messaging in the first Stage 3 slice.
+- Do not implement autonomous Agenda outreach or task follow-up; those belong to later roadmap stages.
+- Do not mix Student Basic Writes, People & Organization, Tasks or Task Progress into Stage 3.
+- Do not let recipient names from natural language bypass authoritative person resolution.
+- Do not report API accepted as recipient-read or business-completed.
+- Do not create a deterministic business router or canned message decision tree.
 
 ## Context routing
 
 Profile: `capability_design`
 
 Must read:
-- `knowledge/08_RELEASE_AND_RUNTIME.md`
+- `knowledge/01_PRODUCT_NORTH_STAR.md`
+- `knowledge/02_ARCHITECTURE_AND_BOUNDARIES.md`
+- `knowledge/07_AUTHORITY_DATA_AND_TRUTH.md`
+- `knowledge/decisions/ADR-002-human-command-vs-ai-autonomy.md`
+- `knowledge/09_TESTING_SEALING_AND_EVIDENCE.md`
 
 On demand:
+- `knowledge/08_RELEASE_AND_RUNTIME.md`
 - `knowledge/EVIDENCE_INDEX.json`
 - `knowledge/12_HISTORY_AND_MILESTONES.md`
-- `knowledge/WORKING_METHOD.json`
-- `knowledge/09_TESTING_SEALING_AND_EVIDENCE.md`
