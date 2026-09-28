@@ -71,6 +71,7 @@ WRITE_TOOLS = {
     "tuoguan_submit_institution_fact_gap",
     "tuoguan_submit_fact_gap_candidate",
     "tuoguan_submit_staff_voice_signal",
+    "tuoguan_send_internal_message",
     "tuoguan_submit_relationship_touch_candidate",
     "tuoguan_submit_proactive_authorization",
     "tuoguan_execute_relationship_touch",
@@ -107,6 +108,7 @@ WRITE_TOOLS = {
 }
 
 OUTREACH_TOOLS = {
+    "tuoguan_send_internal_message",
     "tuoguan_submit_relationship_touch_candidate",
     "tuoguan_execute_relationship_touch",
     "tuoguan_update_relationship_touch",
@@ -1028,6 +1030,7 @@ def write_authorization_for(user_id: str, operation: str) -> dict[str, str] | No
         "submit_institution_fact_gap",
         "submit_fact_gap_candidate",
         "submit_staff_voice_signal",
+        "send_internal_message",
         "submit_relationship_touch_candidate",
         "submit_proactive_authorization",
         "execute_relationship_touch",
