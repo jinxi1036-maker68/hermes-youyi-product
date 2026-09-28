@@ -71,6 +71,7 @@ WRITE_TOOLS = {
     "tuoguan_submit_institution_fact_gap",
     "tuoguan_submit_fact_gap_candidate",
     "tuoguan_submit_staff_voice_signal",
+    "tuoguan_send_internal_message",
     "tuoguan_submit_relationship_touch_candidate",
     "tuoguan_submit_proactive_authorization",
     "tuoguan_execute_relationship_touch",
@@ -107,6 +108,7 @@ WRITE_TOOLS = {
 }
 
 OUTREACH_TOOLS = {
+    "tuoguan_send_internal_message",
     "tuoguan_submit_relationship_touch_candidate",
     "tuoguan_execute_relationship_touch",
     "tuoguan_update_relationship_touch",
@@ -459,9 +461,9 @@ def _sanitize_external_reply(
     if outreach_guard_applies and any(term in value for term in sent_claim_terms) and outreach_state != "sent":
         if outreach_state == "queued":
             return "这条消息已经安排发送，但目前只有入队回执，是否送达还没有确认。"
-        return "我已经形成了主动联系候选，但还没有真实发送回执，不能说已经通知对方。"
+        return "当前没有真实发送回执，不能说已经通知对方。"
     if outreach_guard_applies and any(term in value for term in queued_claim_terms) and outreach_state not in {"queued", "sent"}:
-        return "我已经形成了主动联系候选，但它尚未进入发送队列；我不能把候选说成已经在执行。"
+        return "当前还没有进入可验证发送队列，不能说已经在执行。"
     if str(actor_role or "") in {"teacher", "manager"}:
         staff_side_leak_terms = (
             "汇报给老板",
@@ -1028,6 +1030,7 @@ def write_authorization_for(user_id: str, operation: str) -> dict[str, str] | No
         "submit_institution_fact_gap",
         "submit_fact_gap_candidate",
         "submit_staff_voice_signal",
+        "send_internal_message",
         "submit_relationship_touch_candidate",
         "submit_proactive_authorization",
         "execute_relationship_touch",

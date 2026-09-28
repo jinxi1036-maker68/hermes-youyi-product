@@ -1416,6 +1416,21 @@ TUOGUAN_SUBMIT_GOAL_ACTION_SCHEMA = _schema(
     ["user_id", "goal_id", "action_type", "summary", "operation_id"],
 )
 
+TUOGUAN_SEND_INTERNAL_MESSAGE_SCHEMA = _schema(
+    "仅当当前已认证的人类老板或有管理权限的店长明确要求“现在给机构内部某一位老师/店长发一条工作消息”时使用。"
+    "这是人类明确下令的一对一直发，不是小优自主触达、Agenda 跟进、任务催办、家长消息或群发。"
+    "模型负责决定是否调用、选择人类明确指定的对象并形成消息正文；系统只做当前人员身份、tenant、权限、企业微信可达性、"
+    "幂等和真实投递状态校验。target_user_id 只能来自可信人员目录；不确定对象时先查人员目录。"
+    "Tool 返回 queued 只代表已进入可验证发送队列，只有真实 delivery evidence 才能表述企业微信已接受，绝不能声称对方已读或已完成。",
+    _identity_props({
+        "target_name": {"type": "string", "description": "人类明确指定的当前内部老师或店长姓名。"},
+        "target_user_id": {"type": "string", "description": "可选；仅使用可信人员目录返回的企业微信 user_id，不得编造。"},
+        "message": {"type": "string", "description": "要原样传达给该内部人员的一条工作消息，由模型依据人类明确指令形成。"},
+        "operation_id": {"type": "string", "description": "由当前可信消息 id 自动绑定，模型不要编造。"},
+    }),
+    ["user_id", "target_name", "message", "operation_id"],
+)
+
 TUOGUAN_QUERY_RELATIONSHIP_TOUCH_CANDIDATES_SCHEMA = _schema(
     "只读查询小优主动找老板/店长/老师的关系触达候选和当前策略。老板问“现在能不能主动找相关老师/准备问谁/为什么没问”时应先用本工具核对候选、白名单和策略状态，不能凭旧认知回答。",
     _identity_props({
@@ -1744,6 +1759,7 @@ TOOLS = (
     ("tuoguan_query_active_work_context", TUOGUAN_QUERY_ACTIVE_WORK_CONTEXT_SCHEMA, _handler("query_active_work_context")),
     ("tuoguan_query_attention_threads", TUOGUAN_QUERY_ATTENTION_THREADS_SCHEMA, _handler("query_attention_threads")),
     ("tuoguan_update_attention_thread", TUOGUAN_UPDATE_ATTENTION_THREAD_SCHEMA, _handler("update_attention_thread")),
+    ("tuoguan_send_internal_message", TUOGUAN_SEND_INTERNAL_MESSAGE_SCHEMA, _handler("send_internal_message")),
     ("tuoguan_query_relationship_touch_candidates", TUOGUAN_QUERY_RELATIONSHIP_TOUCH_CANDIDATES_SCHEMA, _handler("query_relationship_touch_candidates")),
     ("tuoguan_submit_relationship_touch_candidate", TUOGUAN_SUBMIT_RELATIONSHIP_TOUCH_CANDIDATE_SCHEMA, _handler("submit_relationship_touch_candidate")),
     ("tuoguan_query_proactive_authorizations", TUOGUAN_QUERY_PROACTIVE_AUTHORIZATIONS_SCHEMA, _handler("query_proactive_authorizations")),

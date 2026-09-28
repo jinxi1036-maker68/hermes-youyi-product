@@ -638,6 +638,69 @@ class DirectReplyRecoveryManager:
                     raise WorkRuntimeRejected("agenda_user_message_write_conflict")
         return {"state": "prepared", "text": message}
 
+    def stage_human_command_notice(
+        self,
+        *,
+        tenant_id: str,
+        actor_id: str,
+        actor_role: str,
+        recipient_id: str,
+        notice_id: str,
+        notice_text: str,
+        trace_ref: str,
+    ) -> ReplyJob:
+        """Stage one explicit-human-commanded internal message durably.
+
+        This is intentionally separate from proactive/Agenda outreach. The
+        model already selected the Direct Message Tool and supplied the human-
+        requested message; this method only binds the trusted actor, tenant and
+        server-resolved recipient to the existing durable delivery outbox.
+        """
+
+        tenant = str(tenant_id or "").strip()
+        actor = str(actor_id or "").strip()
+        role = str(actor_role or "").strip().lower()
+        recipient = str(recipient_id or "").strip()
+        key = str(notice_id or "").strip()
+        text = str(notice_text or "").strip()
+        trace = str(trace_ref or "").strip()
+        if role not in {"boss", "manager"}:
+            raise WorkRuntimeRejected("human_command_sender_role_denied")
+        if not all((tenant, actor, recipient, key, text, trace)):
+            raise WorkRuntimeRejected("human_command_notice_required_fields_missing")
+        source_identity = "human_command:" + tenant + ":" + actor
+        material = "\x1f".join((tenant, actor, recipient, key))
+        partition = TrustedPartition(
+            partition_id="human_command_" + sha256(material.encode("utf-8")).hexdigest()[:32],
+            tenant_id=tenant,
+            canonical_actor_id=actor,
+            principal_kind="human",
+            trusted_session_id="human_command:" + key,
+            continuity_id=None,
+            source_identity=source_identity,
+        )
+        destination = ReplyDestination(
+            tenant_id=tenant,
+            channel="wecom_callback",
+            recipient_id=recipient,
+            source_identity=source_identity,
+        )
+        operation_id = "human-command-notice:" + tenant + ":" + key
+        job = self.outbox.observe_agent_notice(
+            notice_id=operation_id,
+            partition=partition,
+            destination=destination,
+            agent_attempt_id="human-command:" + sha256(material.encode("utf-8")).hexdigest()[:32],
+            terminal_state="completed",
+            provider_succeeded=None,
+            raw_trace_ref=trace,
+            final_reply_text=text,
+            delivery_hold=False,
+        )
+        if job is None:
+            raise WorkRuntimeRejected("human_command_notice_not_staged")
+        return job
+
     def stage_proactive_notice(
         self,
         *,

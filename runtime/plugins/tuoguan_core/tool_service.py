@@ -1449,6 +1449,7 @@ class TuoguanToolService:
             "submit_action_execution",
             "submit_fact_gap_candidate",
             "submit_staff_voice_signal",
+            "send_internal_message",
             "submit_relationship_touch_candidate",
             "submit_proactive_authorization",
             "execute_relationship_touch",
@@ -5502,6 +5503,221 @@ class TuoguanToolService:
             return result if not result.get("ok") else self._ok("update_attention_thread", data=result, message=str(result.get("rendered_text") or ""))
 
         return self._operation(operation_id, "update_attention_thread", execute)
+
+    def _resolve_internal_message_target(
+        self,
+        *,
+        target_name: str,
+        target_user_id: str = "",
+    ) -> tuple[dict[str, Any] | None, dict[str, Any] | None]:
+        """Resolve exactly one current internal WeCom recipient.
+
+        The model chooses the Tool and states the intended person. This helper
+        only maps that already-selected person onto current authoritative
+        directory identity; it never reads natural-language intent.
+        """
+
+        requested_name = str(target_name or "").strip()
+        requested_id = str(target_user_id or "").strip()
+        if not requested_name and not requested_id:
+            return None, self._error("internal_message_target_required", "请明确要发送给哪位老师或店长。")
+
+        by_id: list[dict[str, Any]] = []
+        if requested_id:
+            report = build_staff_directory_report(
+                self.store, query=requested_id, include_inactive=False, limit=20,
+            )
+            by_id = [
+                row for row in (report.get("staff") or [])
+                if isinstance(row, dict) and str(row.get("user_id") or "") == requested_id
+            ]
+
+        by_name: list[dict[str, Any]] = []
+        if requested_name:
+            report = build_staff_directory_report(
+                self.store, query=requested_name, include_inactive=False, limit=20,
+            )
+            by_name = [
+                row for row in (report.get("staff") or [])
+                if isinstance(row, dict) and int(row.get("match_score") or 0) == 100
+            ]
+
+        if requested_id and len({str(row.get("user_id") or "") for row in by_id}) != 1:
+            return None, self._error("internal_message_target_not_found", "当前可信人员目录没有找到这个企业微信账号，本轮未发送。")
+        if requested_name and len({str(row.get("user_id") or "") for row in by_name}) != 1:
+            return None, self._error(
+                "internal_message_target_ambiguous" if by_name else "internal_message_target_not_found",
+                "当前人员目录无法唯一确认这位联系人，请补充完整姓名或企业微信账号，本轮未发送。",
+            )
+        selected = (by_id[0] if by_id else by_name[0]) if (by_id or by_name) else None
+        if requested_id and requested_name:
+            if str(by_id[0].get("user_id") or "") != str(by_name[0].get("user_id") or ""):
+                return None, self._error("internal_message_target_ambiguous", "姓名和企业微信账号指向不同人员，本轮未发送。")
+            selected = by_id[0]
+        if not isinstance(selected, dict):
+            return None, self._error("internal_message_target_not_found", "当前可信人员目录没有找到这位联系人，本轮未发送。")
+        if not bool(selected.get("is_active_staff")):
+            return None, self._error("internal_message_target_inactive", "该人员当前不是有效在职状态，本轮未发送。")
+        if str(selected.get("role") or "") not in {"teacher", "manager"}:
+            return None, self._error("internal_message_target_role_denied", "当前阶段只允许给机构内部老师或店长一对一发送工作消息。")
+        if not bool(selected.get("has_wecom_recipient_binding")):
+            return None, self._error("internal_message_target_unreachable", "该人员当前没有可信企业微信收件绑定，本轮未发送。")
+        return selected, None
+
+    def _manager_can_send_internal_message_to(self, target: dict[str, Any]) -> bool:
+        """Enforce deterministic manager scope without guessing business intent."""
+
+        if self.identity.role != "manager":
+            return True
+        if str(target.get("role") or "") != "teacher":
+            return False
+        target_user_id = str(target.get("user_id") or "").strip()
+        tenant = str(current_tenant_id() or "").strip()
+
+        # Prefer the current personnel authority when the institution has
+        # migrated. The scope is a permission fact, not a model judgment.
+        try:
+            from .personnel_identity_authority import authority_is_enforced
+            governance = self.store.read_json("personnel_service_governance_v1.json", {})
+            if isinstance(governance, dict) and authority_is_enforced(governance):
+                employments = [
+                    row for row in (governance.get("employments") or [])
+                    if isinstance(row, dict)
+                    and str(row.get("tenant_id") or "") == tenant
+                    and str(row.get("state") or "") == "active"
+                    and not str(row.get("effective_until") or "")
+                ]
+                manager_row = next(
+                    (row for row in employments if str(row.get("staff_user_id") or "") == self.identity.canonical_user_id),
+                    None,
+                )
+                target_row = next(
+                    (row for row in employments if str(row.get("staff_user_id") or "") == target_user_id),
+                    None,
+                )
+                if not isinstance(manager_row, dict) or not isinstance(target_row, dict):
+                    return False
+                managed = {
+                    str(value).strip()
+                    for value in (manager_row.get("managed_campus_ids") or [])
+                    if str(value).strip() and str(value).strip() != "*"
+                }
+                if not managed:
+                    campus = str(manager_row.get("campus_id") or "").strip()
+                    if campus and campus != "*":
+                        managed.add(campus)
+                target_campus = str(target_row.get("campus_id") or "").strip()
+                return bool(target_campus and target_campus in managed)
+        except Exception:
+            return False
+
+        # Before personnel-authority migration, use only explicit legacy scope
+        # facts. Missing scope fails closed rather than making every teacher
+        # reachable to a manager.
+        staff = self.store.read_json("staff.json", {})
+        if not isinstance(staff, dict):
+            return False
+        manager = staff.get(self.identity.canonical_user_id, {})
+        teacher = staff.get(target_user_id, {})
+        if not isinstance(manager, dict) or not isinstance(teacher, dict):
+            return False
+        manager_campuses = {
+            str(value).strip() for value in (manager.get("campus_ids") or [])
+            if str(value).strip()
+        }
+        teacher_campuses = {
+            str(value).strip() for value in (teacher.get("campus_ids") or [])
+            if str(value).strip()
+        }
+        manager_campus = str(manager.get("campus_id") or "").strip()
+        teacher_campus = str(teacher.get("campus_id") or "").strip()
+        if manager_campus:
+            manager_campuses.add(manager_campus)
+        if teacher_campus:
+            teacher_campuses.add(teacher_campus)
+        return bool(manager_campuses and teacher_campuses and manager_campuses & teacher_campuses)
+
+    def send_internal_message(
+        self,
+        *,
+        target_name: str,
+        message: str,
+        operation_id: str,
+        target_user_id: str = "",
+    ) -> dict[str, Any]:
+        """Stage one explicit-human-commanded internal 1:1 work message."""
+
+        denied = self._approved()
+        if denied:
+            return denied
+        if self.identity.role not in {"boss", "manager"}:
+            return self._error("permission_denied", "当前阶段只有老板或有管理权限的店长可以让小优代发内部工作消息。")
+        text = str(message or "").strip()
+        if not text:
+            return self._error("internal_message_empty", "消息正文不能为空，本轮未发送。")
+        if len(text) > 2000:
+            return self._error("internal_message_too_long", "单条内部消息超过当前安全长度，请缩短到 2000 字以内后再发送。")
+
+        def execute() -> dict[str, Any]:
+            target, target_error = self._resolve_internal_message_target(
+                target_name=target_name,
+                target_user_id=target_user_id,
+            )
+            if target_error is not None:
+                return target_error
+            assert isinstance(target, dict)
+            if self.identity.role == "manager" and not self._manager_can_send_internal_message_to(target):
+                return self._error(
+                    "internal_message_target_out_of_scope",
+                    "该对象不在当前店长可确认的管理范围内，本轮未发送。",
+                )
+            tenant = str(current_tenant_id() or "").strip()
+            from .direct_reply_recovery import get_direct_reply_recovery_manager
+            manager = get_direct_reply_recovery_manager()
+            trace_ref = "stage3_direct_message:" + hashlib.sha256(
+                (tenant + "\x1f" + str(operation_id)).encode("utf-8")
+            ).hexdigest()[:24]
+            job = manager.stage_human_command_notice(
+                tenant_id=tenant,
+                actor_id=self.identity.canonical_user_id,
+                actor_role=self.identity.role,
+                recipient_id=str(target.get("user_id") or ""),
+                notice_id=str(operation_id),
+                notice_text=text,
+                trace_ref=trace_ref,
+            )
+            staged_ok = bool(
+                job
+                and job.tenant_id == tenant
+                and job.destination.recipient_id == str(target.get("user_id") or "")
+                and job.reply_text == text
+                and job.delivery_state in {"pending", "leased", "delivered"}
+            )
+            if not staged_ok:
+                return self._error("internal_message_stage_unverified", "消息没有形成可验证的投递记录，本轮不能说已发送。")
+            delivery_truth = (
+                "wecom_accepted" if job.delivery_state == "delivered"
+                else "delivery_in_progress" if job.delivery_state == "leased"
+                else "queued"
+            )
+            return self._ok(
+                "send_internal_message",
+                data={
+                    "recipient_user_id": str(target.get("user_id") or ""),
+                    "recipient_name": str(target.get("business_name") or target_name),
+                    "recipient_role": str(target.get("role") or ""),
+                    "delivery_state": str(job.delivery_state),
+                    "delivery_truth": delivery_truth,
+                    "writeback_verified": True,
+                },
+                message=(
+                    "企业微信已接受这条内部消息。"
+                    if delivery_truth == "wecom_accepted"
+                    else "这条内部消息已进入可验证的发送队列；当前还不能声称对方已经收到或阅读。"
+                ),
+            )
+
+        return self._operation(operation_id, "send_internal_message", execute)
 
     def query_relationship_touch_candidates(
         self,

@@ -7,7 +7,7 @@ import json
 from typing import Any, Callable
 
 
-CAPABILITY_MANIFEST_VERSION = "xiaoyou-capabilities-v1.5-25"
+CAPABILITY_MANIFEST_VERSION = "xiaoyou-capabilities-v1.6-26"
 
 
 DOMAIN_OPERATIONS: dict[str, tuple[str, ...]] = {
@@ -35,7 +35,7 @@ DOMAIN_OPERATIONS: dict[str, tuple[str, ...]] = {
         "query_work_commitments", "submit_work_commitment", "update_work_commitment",
     ),
     "proactive_work": (
-        "submit_relationship_touch_candidate", "query_active_work_context",
+        "send_internal_message", "submit_relationship_touch_candidate", "query_active_work_context",
         "query_proactive_authorizations", "execute_relationship_touch", "update_relationship_touch",
         "query_relationship_touch_candidates",
         "query_hermes_work_items", "submit_hermes_work_item", "update_hermes_work_item",
@@ -96,6 +96,7 @@ DOMAIN_ROLES = {
 }
 
 OPERATION_ROLES = {
+    "send_internal_message": ("boss", "manager"),
     "offboard_staff": ("boss",),
     "query_project_opportunities": ("boss",),
     "review_project_opportunity": ("boss",),
@@ -107,6 +108,7 @@ OPERATION_ROLES = {
 # while these explicit tools avoid making the model rediscover an operation
 # name for routine work on every turn.
 FAST_PATH_TOOL_NAMES = (
+    "tuoguan_send_internal_message",
     "tuoguan_submit_relationship_touch_candidate",
     "tuoguan_query_students",
     "tuoguan_query_tasks",
@@ -134,7 +136,7 @@ FAST_PATH_TOOL_NAMES = (
 MODEL_VISIBLE_DOMAIN_NAMES = tuple(DOMAIN_OPERATIONS)
 
 _WRITE_PREFIXES = (
-    "register_", "create_", "record_", "change_", "report_", "submit_", "update_",
+    "register_", "create_", "record_", "change_", "report_", "send_", "submit_", "update_",
     "cancel_", "confirm_", "execute_", "offboard_", "review_learning_", "review_project_",
 )
 
@@ -155,7 +157,7 @@ def operation_manifest() -> dict[str, Any]:
     return {
         "manifest_version": CAPABILITY_MANIFEST_VERSION,
         "frozen": True,
-        "surface": "12_fast_paths_plus_12_domain_facades_plus_read_bundle",
+        "surface": "13_fast_paths_plus_12_domain_facades_plus_read_bundle",
         "model_visible_tool_count": len(FAST_PATH_TOOL_NAMES) + len(MODEL_VISIBLE_DOMAIN_NAMES) + 1,
         "fast_paths": list(FAST_PATH_TOOL_NAMES),
         "domains": len(MODEL_VISIBLE_DOMAIN_NAMES),
@@ -215,9 +217,9 @@ def _domain_schema(domain: str, legacy: dict[str, tuple[dict[str, Any], Callable
             "没有写后反查不得把讨论说成已经承诺或已经完成。"
         ),
         "proactive_work": (
-            "选择提示：用户明确要求现在主动找授权对象时，第一选择必须是 submit_relationship_touch_candidate，"
-            "并显式设置 execute_if_authorized=true；查询目标、人员、工作事项或看板都不等于主动执行。"
-            "只有确实需要消除对象歧义时才先查 query_active_work_context；不能把查询或候选说成已经发送。"
+            "选择提示：当前人类老板/店长明确要求现在给某位内部老师或店长发一条单独工作消息时，第一选择是 send_internal_message；"
+            "它不需要也不得伪装成小优自主触达候选。submit_relationship_touch_candidate 仅用于既有主动工作/自主触达语义。"
+            "查询目标、人员、工作事项或看板都不等于执行发送；不能把 queued 或候选说成对方已经收到。"
         ),
         "reports": (
             "选择提示：老板要早报、晚报或今日重点用 query_operations_report；要看板链接用 dashboard_link。"

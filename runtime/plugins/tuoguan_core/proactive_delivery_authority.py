@@ -99,6 +99,17 @@ def _source_kind_for_tenant(source_identity: object, tenant_id: object) -> str:
     return kind if kind in PERMITTED_SOURCE_KINDS and source_tenant == tenant else ""
 
 
+def _human_command_actor_for_tenant(source_identity: object, tenant_id: object) -> str:
+    """Resolve a server-bound explicit-human source, otherwise empty."""
+
+    source = str(source_identity or "").strip()
+    tenant = str(tenant_id or "").strip()
+    prefix = "human_command:" + tenant + ":"
+    if not tenant or not source.startswith(prefix):
+        return ""
+    return source[len(prefix):].strip()
+
+
 @dataclass(frozen=True)
 class DeliveryDecision:
     allowed: bool
@@ -223,6 +234,49 @@ class ProactiveDeliveryAuthority:
         source = str(destination.source_identity or "")
         tenant = str(destination.tenant_id or "").strip()
         source_kind = _source_kind_for_tenant(source, tenant)
+        human_actor = _human_command_actor_for_tenant(source, tenant)
+
+        # Stage 3 explicit human commands are not AI-autonomous outreach and
+        # therefore do not require the institution's proactive-work grant.
+        # They still fail closed at delivery time unless both the authenticated
+        # sender and the pre-resolved recipient remain current internal staff.
+        if source.startswith("human_command:"):
+            if not human_actor or destination.channel != "wecom_callback":
+                return DeliveryDecision(False, "human_command_source_invalid")
+            directory = self._directory()
+            allowed = {str(item).strip() for item in (directory.get("allowed_users") or []) if str(item).strip()}
+            contacts = directory.get("wecom_contacts") if isinstance(directory.get("wecom_contacts"), dict) else {}
+            pending = {str(item).strip() for item in (directory.get("pending_users") or []) if str(item).strip()}
+            rejected = {str(item).strip() for item in (directory.get("rejected_users") or []) if str(item).strip()}
+            offboarded = _offboarded_user_ids(directory.get("offboarded_users"))
+            actor = _recipient_key(human_actor)
+            recipient = _recipient_key(destination.recipient_id)
+            actor_role = _effective_directory_role(directory, actor)
+            recipient_role = _effective_directory_role(directory, recipient)
+            if actor not in allowed or actor in pending or actor in rejected or actor in offboarded:
+                return DeliveryDecision(False, "human_command_sender_not_current_internal", recipient_role)
+            actor_lifecycle = self._recipient_lifecycle_denial(tenant_id=tenant, recipient=actor)
+            if actor_lifecycle:
+                return DeliveryDecision(False, "human_command_sender_inactive", recipient_role)
+            if actor_role not in {"boss", "manager"}:
+                return DeliveryDecision(False, "human_command_sender_role_denied", recipient_role)
+            if recipient not in allowed:
+                return DeliveryDecision(False, "human_command_recipient_identity_untrusted", recipient_role)
+            if recipient not in contacts:
+                return DeliveryDecision(False, "human_command_recipient_wecom_binding_missing", recipient_role)
+            if recipient in pending:
+                return DeliveryDecision(False, "human_command_recipient_pending", recipient_role)
+            if recipient in rejected:
+                return DeliveryDecision(False, "human_command_recipient_rejected", recipient_role)
+            if recipient in offboarded:
+                return DeliveryDecision(False, "human_command_recipient_offboarded", recipient_role)
+            lifecycle_reason = self._recipient_lifecycle_denial(tenant_id=tenant, recipient=recipient)
+            if lifecycle_reason:
+                return DeliveryDecision(False, lifecycle_reason, recipient_role)
+            if recipient_role not in {"teacher", "manager"}:
+                return DeliveryDecision(False, "human_command_recipient_role_denied", recipient_role)
+            return DeliveryDecision(True, "explicit_human_command_internal_recipient", recipient_role)
+
         # Existing direct replies have an authenticated human ingress and do
         # not require the owner's proactive-delivery grant.  The Work Runtime
         # has already bound their destination; no recipient is selected here.

@@ -146,7 +146,7 @@ class WeComCallbackOutboxPort:
                     error="wecom_" + decision.reason,
                     trace_ref=_trace_ref(channel=self.channel, delivery_id=delivery_id, stage="failed", detail=decision.reason),
                 )
-        elif str(destination.source_identity or "").split(":", 1)[0] in {"agenda", "task_delivery", "relationship_touch"}:
+        elif str(destination.source_identity or "").split(":", 1)[0] in {"agenda", "task_delivery", "relationship_touch", "human_command"}:
             if self._proactive_authority is None:
                 return ChannelDeliveryOutcome(
                     DELIVERY_FAILED,
