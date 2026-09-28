@@ -12,10 +12,10 @@
 
 - ID: `WI-2026-09-stage3-direct-message-outbound-v2`
 - Kind: `capability_stage`
-- Status: `stage3_implementation_ready`
+- Status: `stage3_candidate_isolated_verification`
 - Objective: Freeze and then implement XiaoU's first formal direct outbound capability so an authorized human can ask XiaoU to send a specific work message to a legitimate recipient, with trustworthy recipient resolution, permission checks, execution evidence and truthful delivery semantics.
 - Blocker: No product-scope blocker. Owner froze the first slice: explicit human-commanded 1:1 outbound to a current authorized internal staff member only.
-- Next: Inspect current outbound/direct-reply/personnel primitives, then implement the smallest formal Direct Message Tool using existing trusted infrastructure. Do not add parent/external recipients, bulk send, task follow-up or autonomous Agenda behavior.
+- Next: Verify PR #31 candidate c218b8a193f8d2c0ed94a27bc5ed2182dc37a4e2 in isolation. Require no candidate-specific regressions, one durable delivery on retry, fail-closed recipient/sender checks, no Agenda/Robot exposure, and truthful queued/sent semantics. Keep production unchanged.
 
 ## Runtime facts
 

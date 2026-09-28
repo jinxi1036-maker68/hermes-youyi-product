@@ -33,9 +33,9 @@
     "main_last_verified_at": "2026-09-27T23:30:00+08:00",
     "active_work_item_id": "WI-2026-09-stage3-direct-message-outbound-v2",
     "blocker_id": "stage3-capability-contract",
-    "blocker_status": "stage3_implementation_ready",
-    "blocker_summary": "Owner froze the Stage 3 first slice: explicit human-commanded 1:1 outbound to current authorized internal staff only. Parent/external messaging, bulk/group send and AI-autonomous initiation are out of scope.",
-    "next_action": "Inspect existing outbound primitives and implement the smallest Stage 3 direct-message capability that reuses trusted recipient resolution, permission, delivery evidence and idempotent execution without importing later Tasks/Agenda semantics.",
+    "blocker_status": "stage3_candidate_isolated_verification",
+    "blocker_summary": "Stage 3 first-slice implementation is complete on PR #31. Candidate c218b8a193f8d2c0ed94a27bc5ed2182dc37a4e2 requires isolated verification before merge. Production remains unchanged.",
+    "next_action": "Run one bounded isolated verification of PR #31: human-command direct send semantics, recipient/permission boundaries, durable idempotency, delivery truth, and strict separation from Agenda/autonomous outreach. Do not change production.",
     "working_method_id": "WM-007",
     "working_method_name": "Harness-Routed Role-Locked Governed Adaptive Method",
     "bootstrap_holding_contract": "ADR-009: transparent-forward / persist-before-ACK / idempotent-replay-complete-after-confirmed-success"

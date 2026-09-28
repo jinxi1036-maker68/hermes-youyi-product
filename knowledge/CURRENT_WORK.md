@@ -4,7 +4,7 @@
 
 - work_item_id: `WI-2026-09-stage3-direct-message-outbound-v2`
 - kind: `capability_stage`
-- status: `stage3_implementation_ready`
+- status: `stage3_candidate_isolated_verification`
 - context_profile: `capability_design`
 - formal_stage_context: Stage 3 Direct Message / Outbound / contract_freeze
 
@@ -18,7 +18,7 @@ No product-scope blocker. Owner froze the first slice: explicit human-commanded 
 
 ## Next action
 
-Inspect current outbound/direct-reply/personnel primitives, then implement the smallest formal Direct Message Tool using existing trusted infrastructure. Do not add parent/external recipients, bulk send, task follow-up or autonomous Agenda behavior.
+Verify PR #31 candidate c218b8a193f8d2c0ed94a27bc5ed2182dc37a4e2 in isolation. Require no candidate-specific regressions, one durable delivery on retry, fail-closed recipient/sender checks, no Agenda/Robot exposure, and truthful queued/sent semantics. Keep production unchanged.
 
 ## Acceptance criteria
 
