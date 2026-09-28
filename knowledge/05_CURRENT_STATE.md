@@ -12,14 +12,14 @@
 
 - ID: `WI-2026-09-stage3-direct-message-outbound-v2`
 - Kind: `capability_stage`
-- Status: `stage3_candidate_isolated_verification`
+- Status: `stage3_merged_awaiting_production_preflight`
 - Objective: Freeze and then implement XiaoU's first formal direct outbound capability so an authorized human can ask XiaoU to send a specific work message to a legitimate recipient, with trustworthy recipient resolution, permission checks, execution evidence and truthful delivery semantics.
 - Blocker: No product-scope blocker. Owner froze the first slice: explicit human-commanded 1:1 outbound to a current authorized internal staff member only.
-- Next: Verify PR #31 candidate c218b8a193f8d2c0ed94a27bc5ed2182dc37a4e2 in isolation. Require no candidate-specific regressions, one durable delivery on retry, fail-closed recipient/sender checks, no Agenda/Robot exposure, and truthful queued/sent semantics. Keep production unchanged.
+- Next: Run a fresh read-only production preflight against main c4e116c4bd1799dc5532e020c2e8ccc1b7b50223 and current production cb843ccf4545cb40195614f3087cb4efd75cdfa8. If PASS, obtain Owner production authorization for a reversible Stage 3 deployment/technical gate. Do not perform a real WeCom send yet.
 
 ## Runtime facts
 
-- main: `cb843ccf4545cb40195614f3087cb4efd75cdfa8`
+- main: `c4e116c4bd1799dc5532e020c2e8ccc1b7b50223`
 - production: `cb843ccf4545cb40195614f3087cb4efd75cdfa8`
 
 ## Sealed capabilities
@@ -31,4 +31,4 @@
 
 - Harness: `KH-003`
 - Profile: `capability_design`
-- Work execution state: `contract_freeze`
+- Work execution state: `production_preflight`

@@ -1,6 +1,6 @@
 {
   "schema_version": "xiaoyou_evidence_index_v1",
-  "updated_at": "2026-09-28T09:50:00+08:00",
+  "updated_at": "2026-09-28T11:08:00+08:00",
   "repository": "jinxi1036-maker68/hermes-youyi-product",
   "evidence": [
     {
@@ -416,6 +416,28 @@
       "production_sha": "cb843ccf4545cb40195614f3087cb4efd75cdfa8",
       "source": "Owner real-WeCom acceptance",
       "note": "Owner reported response speed materially improved. Minor imperfections remain but were explicitly accepted for now, with follow-up deferred. Latency V1 is accepted as the current production baseline and no longer blocks Stage 3."
+    },
+    {
+      "id": "EV-DM-001",
+      "area": "Stage 3 Direct Message / Outbound isolated verification",
+      "judgment": "PASS_SERVER_ISOLATED_MERGED",
+      "date": "2026-09-28",
+      "pr": 31,
+      "candidate_sha": "c218b8a193f8d2c0ed94a27bc5ed2182dc37a4e2",
+      "merged_sha": "c4e116c4bd1799dc5532e020c2e8ccc1b7b50223",
+      "baseline_sha": "cb843ccf4545cb40195614f3087cb4efd75cdfa8",
+      "production_sha": "cb843ccf4545cb40195614f3087cb4efd75cdfa8",
+      "verification_comment_id": 5863081276,
+      "source": "Owner-relayed Codex isolated verification; reviewed and merged by ChatGPT",
+      "metrics": {
+        "stage3_targeted": "9 passed",
+        "identity_authority": "15 passed",
+        "query_authority": "6 passed",
+        "adjacent_boundary_suite": "31 passed",
+        "common_candidate": "70 passed, 6 baseline failures",
+        "common_baseline": "61 passed, 6 same baseline failures"
+      },
+      "note": "Isolated detached worktrees, temporary venv, synthetic SQLite/state and fake delivery only. Durable idempotency/restart, fail-closed sender/recipient/tenant/lifecycle/binding checks, manager scope, teacher denial, Agenda/autonomy separation and truthful queued/wecom_accepted semantics PASS. No candidate-only regression. Six common-suite failures plus two release-doctor hermes_cli import failures are identical baseline debt caused by existing assertions / deliberately minimal isolated venv. Production unchanged. PR #31 merged only after isolated PASS."
     }
   ]
 }

@@ -4,9 +4,9 @@
 
 - work_item_id: `WI-2026-09-stage3-direct-message-outbound-v2`
 - kind: `capability_stage`
-- status: `stage3_candidate_isolated_verification`
+- status: `stage3_merged_awaiting_production_preflight`
 - context_profile: `capability_design`
-- formal_stage_context: Stage 3 Direct Message / Outbound / contract_freeze
+- formal_stage_context: Stage 3 Direct Message / Outbound / production_preflight
 
 ## Objective
 
@@ -18,7 +18,7 @@ No product-scope blocker. Owner froze the first slice: explicit human-commanded 
 
 ## Next action
 
-Verify PR #31 candidate c218b8a193f8d2c0ed94a27bc5ed2182dc37a4e2 in isolation. Require no candidate-specific regressions, one durable delivery on retry, fail-closed recipient/sender checks, no Agenda/Robot exposure, and truthful queued/sent semantics. Keep production unchanged.
+Run a fresh read-only production preflight against main c4e116c4bd1799dc5532e020c2e8ccc1b7b50223 and current production cb843ccf4545cb40195614f3087cb4efd75cdfa8. If PASS, obtain Owner production authorization for a reversible Stage 3 deployment/technical gate. Do not perform a real WeCom send yet.
 
 ## Acceptance criteria
 
