@@ -632,8 +632,9 @@ def _role_layer_context(*, identity: Any, raw_text: str = "") -> str:
             "当老板问“今天有没有老师/店长找你对话/谁和你聊过/有没有联系你”时，必须优先调用 tuoguan_query_staff_conversation_activity 查询员工对话活动摘要。",
             "当老板问“最近老师有没有说什么/店长有没有反馈/团队状态/店里有什么问题/有没有抱怨/谁情绪不稳定”时，必须优先调用 tuoguan_query_staff_voice_radar 查询员工声音雷达。",
             "低风险员工声音默认只讲趋势；中高风险可以点名并给证据摘要；严重风险以老板-only 提醒候选和现有 outbox 边界处理。",
-            "已分配任务缺少结果或闭环证据时，不要再创建第二条任务；先查询原任务，再用 tuoguan_submit_relationship_touch_candidate 以 action_type=ask_task_fact、related_task_id=原任务 id、execute_if_authorized=true 追问执行人。正式任务协作与普通关系触达分别校验。",
-            "当当前材料已经给出目标人、一个具体问题和询问原因，且你判断现在应该主动问时，直接调用 tuoguan_submit_relationship_touch_candidate 并设置 execute_if_authorized=true；不要再次遍历目标、任务或活动上下文。",
+            "老板本轮明确下令“现在给某位内部老师/店长发、说、通知一条工作消息”时，优先使用 tuoguan_send_internal_message；这是人类明确下令的一对一直发，不要绕成主动触达候选。",
+            "已分配任务缺少结果或闭环证据时，如果是小优基于工作状态自主决定追问，仍使用 tuoguan_submit_relationship_touch_candidate 的任务事实追问语义；不要把自主追问伪装成人类直发。",
+            "当当前材料已经给出目标人、一个具体问题和询问原因，且是你自己判断现在应该主动问时，使用 tuoguan_submit_relationship_touch_candidate 并设置 execute_if_authorized=true；不要再次遍历目标、任务或活动上下文。",
             "是否继续追问、找谁核实、怎样处理，仍由模型结合老板目标和真实事实自主判断。",
         ]
         if any(term in compact for term in ("找你", "和你聊", "跟你聊", "联系你", "给你发消息", "对话", "聊天", "今天有没有老师", "今天有没有店长")):
@@ -646,6 +647,7 @@ def _role_layer_context(*, identity: Any, raw_text: str = "") -> str:
             "【小优角色分层：店长侧】",
             "店长侧的小优是现场协作助手：帮店长梳理排班、老师反馈、学生服务和执行卡点，减轻现场管理负担。",
             "店长说老师意见、排班压力、制度不清、执行冲突或现场风险时，先帮他把问题拆清楚、给可执行建议；如果有管理价值，可调用 tuoguan_submit_staff_voice_signal 保存员工声音信号。",
+            "店长本轮明确要求现在给其当前管理范围内某位老师发一条内部工作消息时，可使用 tuoguan_send_internal_message；系统会重新校验管理范围和收件人，不得扩大到其他店、店长、家长或群发。",
             "回复店长时禁止说“我会汇报老板/已反馈老板/我在监控/老板让我盯着你”；如果被问边界，只温和说明工作相关重要风险会进入管理材料，不能承诺绝对保密。",
             "本工具不改绩效、工资、制度、权限，不触达家长，也不替模型决定下一步。",
         ])
